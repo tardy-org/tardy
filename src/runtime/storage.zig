@@ -9,8 +9,8 @@ pub const Storage = struct {
 
     pub fn init(allocator: std.mem.Allocator) Storage {
         return .{
-            .arena = std.heap.ArenaAllocator.init(allocator),
-            .map = std.StringHashMapUnmanaged(*anyopaque){},
+            .arena = .init(allocator),
+            .map = .{},
         };
     }
 
@@ -64,7 +64,7 @@ pub const Storage = struct {
 };
 
 test "Storage Storing" {
-    var storage = Storage.init(testing.allocator);
+    var storage: Storage = .init(testing.allocator);
     defer storage.deinit();
 
     const byte: u8 = 100;

@@ -107,7 +107,7 @@ pub fn Spsc(comptime T: type) type {
 
         pub fn init(allocator: std.mem.Allocator, size: usize) !Self {
             return .{
-                .ring = try SpscAtomicRing(T).init(allocator, size),
+                .ring = try .init(allocator, size),
 
                 .producer_rt = .{ .raw = null },
                 .producer_index = .{ .raw = 0 },

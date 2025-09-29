@@ -78,7 +78,7 @@ pub fn Ring(comptime T: type) type {
 
 test "Ring Send and Recv" {
     const size: u32 = 100;
-    var ring = try Ring(usize).init(testing.allocator, size);
+    var ring: Ring(usize) = try .init(testing.allocator, size);
     defer ring.deinit();
 
     for (0..size) |i| {

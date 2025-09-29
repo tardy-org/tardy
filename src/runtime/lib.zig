@@ -33,12 +33,12 @@ pub const Runtime = struct {
     current_task: ?usize = null,
 
     pub fn init(allocator: std.mem.Allocator, aio: Async, options: RuntimeOptions) !Runtime {
-        const scheduler = try Scheduler.init(
+        const scheduler: Scheduler = try .init(
             allocator,
             options.size_tasks_initial,
             options.pooling,
         );
-        const storage = Storage.init(allocator);
+        const storage: Storage = .init(allocator);
 
         return .{
             .allocator = allocator,

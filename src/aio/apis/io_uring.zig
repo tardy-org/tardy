@@ -116,7 +116,7 @@ pub const AsyncIoUring = struct {
                 const uring = try allocator.create(std.os.linux.IoUring);
                 errdefer allocator.destroy(uring);
 
-                uring.* = try std.os.linux.IoUring.init_params(submit_size, &params);
+                uring.* = try .init_params(submit_size, &params);
                 errdefer uring.deinit();
 
                 break :blk uring;
@@ -125,7 +125,7 @@ pub const AsyncIoUring = struct {
                 const uring = try allocator.create(std.os.linux.IoUring);
                 errdefer allocator.destroy(uring);
 
-                uring.* = try std.os.linux.IoUring.init(submit_size, base_flags);
+                uring.* = try .init(submit_size, base_flags);
                 errdefer uring.deinit();
 
                 break :blk uring;
@@ -134,7 +134,7 @@ pub const AsyncIoUring = struct {
         errdefer allocator.destroy(uring);
         errdefer uring.deinit();
 
-        var jobs = try Pool(JobBundle).init(allocator, size, options.pooling);
+        var jobs: Pool(JobBundle) = try .init(allocator, size, options.pooling);
         errdefer jobs.deinit();
 
         const index = jobs.borrow_assume_unset(0);

@@ -131,13 +131,13 @@ test "ZeroCopy: Growth" {
     var zc: ZeroCopy(u8) = try .init(testing.allocator, 16);
     defer zc.deinit();
 
-    const large_data = &[_]u8{1} ** 32;
+    const large_data: [32]u8 = @splat(1);
     const write_area = try zc.get_write_area(large_data.len);
-    @memcpy(write_area, large_data);
+    @memcpy(write_area, &large_data);
     zc.mark_written(write_area.len);
 
     try testing.expect(zc.capacity >= 32);
-    try testing.expectEqualSlices(u8, large_data, zc.as_slice());
+    try testing.expectEqualSlices(u8, large_data[0..], zc.as_slice());
 }
 
 test "ZeroCopy: Multiple Writes" {
