@@ -19,11 +19,11 @@ pub fn Spsc(comptime T: type) type {
         const Self = @This();
 
         fn trigger_consumer(self: *Self) !void {
-            try self.consumer_rt.load(.acquire).?.trigger(self.consumer_index.load(.acquire));
+            try self.producer_rt.load(.acquire).?.trigger(self.consumer_rt.load(.acquire).?, self.consumer_index.load(.acquire));
         }
 
         fn trigger_producer(self: *Self) !void {
-            try self.producer_rt.load(.acquire).?.trigger(self.producer_index.load(.acquire));
+            try self.consumer_rt.load(.acquire).?.trigger(self.producer_rt.load(.acquire).?, self.producer_index.load(.acquire));
         }
 
         pub const Producer = struct {
@@ -31,7 +31,7 @@ pub fn Spsc(comptime T: type) type {
             rt: *Runtime,
 
             pub fn send(self: Producer, message: T) !void {
-                std.log.debug("producer sending...", .{});
+                log.debug("producer sending...", .{});
                 while (true) switch (self.inner.state.load(.acquire)) {
                     // Both ends must be open.
                     .starting => try self.rt.scheduler.trigger_await(),
@@ -41,10 +41,10 @@ pub fn Spsc(comptime T: type) type {
                         if (!self.inner.consumer_open.load(.acquire)) return error.Closed;
                         self.inner.ring.push(message) catch |e| switch (e) {
                             error.RingFull => {
+                                log.debug("{d} - producer ring full index={d}", .{ self.rt.id, self.rt.current_task.? });
                                 self.inner.producer_index.store(self.rt.current_task.?, .release);
                                 try self.inner.trigger_consumer();
                                 try self.rt.scheduler.trigger_await();
-                                continue;
                             },
                         };
 
@@ -53,7 +53,14 @@ pub fn Spsc(comptime T: type) type {
                 };
             }
 
+            pub fn trigger_consumer(self: Producer) !void {
+                if (!self.inner.ring.empty()) {
+                    return self.inner.trigger_consumer();
+                }
+            }
+
             pub fn close(self: Producer) void {
+                std.debug.assert(self.inner.producer_open.load(.acquire));
                 self.inner.producer_open.store(false, .release);
                 self.inner.trigger_consumer() catch unreachable;
             }
@@ -74,6 +81,7 @@ pub fn Spsc(comptime T: type) type {
                         const data = self.inner.ring.pop() catch |e| switch (e) {
                             // If we are empty, trigger the producer to run.
                             error.RingEmpty => {
+                                log.debug("{d} - consumer ring empty index={d}", .{ self.rt.id, self.rt.current_task.? });
                                 if (!self.inner.producer_open.load(.acquire)) return error.Closed;
                                 self.inner.consumer_index.store(self.rt.current_task.?, .release);
                                 try self.inner.trigger_producer();
@@ -88,6 +96,7 @@ pub fn Spsc(comptime T: type) type {
             }
 
             pub fn close(self: Consumer) void {
+                std.debug.assert(self.inner.consumer_open.load(.acquire));
                 self.inner.consumer_open.store(false, .release);
                 self.inner.trigger_producer() catch unreachable;
             }

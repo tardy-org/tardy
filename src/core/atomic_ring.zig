@@ -34,18 +34,27 @@ pub fn SpscAtomicRing(comptime T: type) type {
 
         pub fn push(self: *Self, item: T) !void {
             const write = self.write_index.load(.acquire);
-            const next: usize = (write + 1) % self.items.len;
-            if (next == self.read_index.load(.acquire)) return error.RingFull;
-            self.items[write] = item;
-            self.write_index.store((write + 1) % self.items.len, .release);
+            if (write - self.read_index.load(.acquire) > self.items.len - 1) return error.RingFull;
+            const next: usize = write + 1;
+            self.items[write % self.items.len] = item;
+            self.write_index.store(next, .release);
+            if (next - self.read_index.load(.acquire) > self.items.len - 1) return error.RingFull;
         }
 
         pub fn pop(self: *Self) !T {
             const read = self.read_index.load(.acquire);
             if (read == self.write_index.load(.acquire)) return error.RingEmpty;
-            const item = self.items[read];
-            self.read_index.store((read + 1) % self.items.len, .release);
+            const item = self.items[read % self.items.len];
+            self.read_index.store(read + 1, .release);
             return item;
+        }
+
+        pub fn empty(self: *const Self) bool {
+            return (self.read_index.load(.acquire) == self.write_index.load(.acquire));
+        }
+
+        pub fn len(self: *const Self) usize {
+            return (self.write_index.load(.acquire) - self.read_index.load(.acquire));
         }
     };
 }
@@ -57,7 +66,12 @@ test "SpscAtomicRing: Fill and Empty" {
 
     try testing.expectError(error.RingEmpty, ring.pop());
     for (0..size - 1) |i| try ring.push(i);
-    try testing.expectError(error.RingFull, ring.push(1));
-    for (0..size - 1) |i| try testing.expectEqual(i, try ring.pop());
+    try testing.expectError(error.RingFull, ring.push(127));
+    try testing.expectError(error.RingFull, ring.push(127));
+    try testing.expectEqual(128, ring.len());
+    try testing.expectEqual(0, try ring.pop());
+    try testing.expectEqual(127, ring.len());
+    try testing.expectError(error.RingFull, ring.push(128));
+    for (1..size + 1) |i| try testing.expectEqual(i, try ring.pop());
     try testing.expectError(error.RingEmpty, ring.pop());
 }

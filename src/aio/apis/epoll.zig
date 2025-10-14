@@ -274,8 +274,8 @@ pub const AsyncEpoll = struct {
         try std.posix.epoll_ctl(self.epoll_fd, std.os.linux.EPOLL.CTL_DEL, fd, null);
     }
 
-    pub fn wake(runner: *anyopaque) !void {
-        const epoll: *AsyncEpoll = @ptrCast(@alignCast(runner));
+    pub fn wake(_: *anyopaque, target_runner: *anyopaque) !void {
+        const epoll: *AsyncEpoll = @ptrCast(@alignCast(target_runner));
 
         const bytes: []const u8 = "00000000";
         var i: usize = 0;

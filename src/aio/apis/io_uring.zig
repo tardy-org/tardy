@@ -40,6 +40,8 @@ const AsyncOpenFlags = @import("../lib.zig").AsyncOpenFlags;
 
 const log = std.log.scoped(.@"tardy/aio/io_uring");
 
+const WAKE_INDEX = 0;
+
 const JobBundle = struct {
     job: Job,
     statx: *std.os.linux.Statx = undefined,
@@ -73,8 +75,6 @@ pub const AsyncIoUring = struct {
 
     allocator: std.mem.Allocator,
     inner: *std.os.linux.IoUring,
-    wake_event_fd: std.posix.fd_t,
-    wake_event_buffer: []u8,
 
     // Currently, the batch size is predetermined.
     // You basically define how large you want your batches to be.
@@ -82,16 +82,8 @@ pub const AsyncIoUring = struct {
     jobs: Pool(JobBundle),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncOptions) !AsyncIoUring {
-        // Extra job for the wake event_fd.
+        // Extra job for the wake
         const size = options.size_tasks_initial + 1;
-
-        const wake_event_fd: std.posix.fd_t = @intCast(
-            std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC),
-        );
-        errdefer std.posix.close(wake_event_fd);
-
-        const wake_event_buffer = try allocator.alloc(u8, 8);
-        errdefer allocator.free(wake_event_buffer);
 
         const submit_size: u16 = @min(
             // 4096 is the max uring submit size.
@@ -140,7 +132,6 @@ pub const AsyncIoUring = struct {
         const index = jobs.borrow_assume_unset(0);
         const item = jobs.get_ptr(index);
         item.* = .{ .job = .{ .index = index, .type = .wake, .task = undefined } };
-        _ = try uring.read(index, wake_event_fd, .{ .buffer = wake_event_buffer }, 0);
 
         const cqes = try allocator.alloc(std.os.linux.io_uring_cqe, options.size_aio_reap_max);
         errdefer allocator.free(cqes);
@@ -148,18 +139,14 @@ pub const AsyncIoUring = struct {
         return AsyncIoUring{
             .inner = uring,
             .allocator = allocator,
-            .wake_event_fd = wake_event_fd,
-            .wake_event_buffer = wake_event_buffer,
             .jobs = jobs,
             .cqes = cqes,
         };
     }
 
     pub fn inner_deinit(self: *AsyncIoUring, allocator: std.mem.Allocator) void {
-        std.posix.close(self.wake_event_fd);
         self.inner.deinit();
         self.jobs.deinit();
-        allocator.free(self.wake_event_buffer);
         allocator.free(self.cqes);
         allocator.destroy(self.inner);
     }
@@ -477,32 +464,16 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.send(index, socket, buffer, 0);
     }
 
-    inline fn queue_wake(self: *AsyncIoUring) !void {
-        if (self.wake_event_fd == Cross.fd.INVALID_FD) return;
-
-        const index = try self.jobs.borrow();
-        errdefer self.jobs.release(index);
-
-        const item = self.jobs.get_ptr(index);
-        item.job = .{
-            .index = index,
-            .type = .wake,
-            .task = undefined,
-        };
-
-        _ = try self.inner.read(
-            index,
-            self.wake_event_fd,
-            .{ .buffer = self.wake_event_buffer },
-            0,
-        );
-    }
-
-    fn wake(runner: *anyopaque) !void {
+    fn wake(runner: *anyopaque, target_runner: *anyopaque) !void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
-        const bytes: []const u8 = "00000000";
-        var i: usize = 0;
-        while (i < bytes.len) i += try std.posix.write(uring.wake_event_fd, bytes);
+        const target_uring: *AsyncIoUring = @ptrCast(@alignCast(target_runner));
+        var sqe = try uring.inner.get_sqe();
+        sqe.prep_nop();
+        sqe.fd = target_uring.inner.fd;
+        sqe.opcode = .MSG_RING;
+        sqe.off = WAKE_INDEX;
+        sqe.user_data = WAKE_INDEX;
+        sqe.flags = std.os.linux.IOSQE_CQE_SKIP_SUCCESS;
     }
 
     fn submit(runner: *anyopaque) !void {
@@ -533,7 +504,8 @@ pub const AsyncIoUring = struct {
         for (uring.cqes[0..count], 0..) |cqe, i| {
             var job_with_data: JobBundle = uring.jobs.get(cqe.user_data);
             const job: *Job = &job_with_data.job;
-            uring.jobs.release(job.index);
+            if (job.index != WAKE_INDEX)
+                uring.jobs.release(job.index);
 
             const result: Result = blk: {
                 if (cqe.res < 0) {
@@ -544,7 +516,8 @@ pub const AsyncIoUring = struct {
                 }
                 switch (job.type) {
                     .wake => {
-                        try uring.queue_wake();
+                        // error posting wake sqe
+                        if (cqe.res < 0) continue;
                         break :blk .wake;
                     },
                     .timer => {

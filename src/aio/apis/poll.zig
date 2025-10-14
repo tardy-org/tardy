@@ -214,8 +214,8 @@ pub const AsyncPoll = struct {
         });
     }
 
-    pub fn wake(runner: *anyopaque) !void {
-        const poll: *AsyncPoll = @ptrCast(@alignCast(runner));
+    pub fn wake(_: *anyopaque, target_runner: *anyopaque) !void {
+        const poll: *AsyncPoll = @ptrCast(@alignCast(target_runner));
 
         const bytes: []const u8 = "00000000";
         var i: usize = 0;

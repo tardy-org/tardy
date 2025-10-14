@@ -185,7 +185,7 @@ pub const Async = struct {
     const VTable = struct {
         queue_job: *const fn (*anyopaque, usize, AsyncSubmission) anyerror!void,
         deinit: *const fn (*anyopaque, std.mem.Allocator) void,
-        wake: *const fn (*anyopaque) anyerror!void,
+        wake: *const fn (*anyopaque, *anyopaque) anyerror!void,
         reap: *const fn (*anyopaque, []Completion, bool) anyerror![]Completion,
         submit: *const fn (*anyopaque) anyerror!void,
     };
@@ -221,11 +221,11 @@ pub const Async = struct {
         try self.vtable.queue_job(self.runner, task, job);
     }
 
-    pub fn wake(self: *Async) !void {
+    pub fn wake(self: *Async, target_runner: *anyopaque) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
         assert(self.attached);
-        try self.vtable.wake(self.runner);
+        try self.vtable.wake(self.runner, target_runner);
     }
 
     pub fn reap(self: *Async, wait: bool) ![]Completion {
