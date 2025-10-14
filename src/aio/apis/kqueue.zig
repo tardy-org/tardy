@@ -279,8 +279,8 @@ pub const AsyncKqueue = struct {
         } else return error.ChangeQueueFull;
     }
 
-    pub fn wake(runner: *anyopaque) !void {
-        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(runner));
+    pub fn wake(_: *anyopaque, target_runner: *anyopaque) !void {
+        const kqueue: *AsyncKqueue = @ptrCast(@alignCast(target_runner));
 
         const event: std.posix.Kevent = .{
             .ident = WAKE_IDENT,

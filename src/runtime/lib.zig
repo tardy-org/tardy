@@ -60,17 +60,17 @@ pub const Runtime = struct {
 
     /// Wake the given Runtime.
     /// Safe to call from a different Runtime.
-    pub fn wake(self: *Runtime) !void {
-        if (self.running) try self.aio.wake();
+    pub fn wake(self: *Runtime, target_rt: *Runtime) !void {
+        if (self.running) try self.aio.wake(target_rt.aio.runner);
     }
 
     /// Trigger a waiting (`.wait_for_trigger`) Task.
     /// Safe to call from a different Runtime.
-    pub fn trigger(self: *Runtime, index: usize) !void {
+    pub fn trigger(self: *Runtime, target_rt: *Runtime, index: usize) !void {
         if (self.running) {
             log.debug("{d} - triggering {d}", .{ self.id, index });
-            try self.scheduler.trigger(index);
-            try self.wake();
+            try target_rt.scheduler.trigger(index);
+            try self.wake(target_rt);
         }
     }
 
@@ -79,7 +79,7 @@ pub const Runtime = struct {
     pub fn stop(self: *Runtime) void {
         if (self.running) {
             self.running = false;
-            self.aio.wake() catch unreachable;
+            self.aio.wake(self.aio.runner) catch unreachable;
         }
     }
 
@@ -113,9 +113,6 @@ pub const Runtime = struct {
                 // if frames are long lived (as they should be) and most data is
                 // stack allocated within that context, i think it should be ok?
                 frame.deinit(self.allocator);
-
-                // if we have no more tasks, we are done and can set our running status to false.
-                if (self.scheduler.tasks.empty()) self.running = false;
             },
             .errored => {
                 const index = self.current_task.?;
@@ -160,15 +157,13 @@ pub const Runtime = struct {
             }
 
             if (!self.running) break;
-            // If we have no tasks, we might as well exit.
-            if (self.scheduler.tasks.empty()) break;
 
             // I/O Section
             try self.aio.submit();
 
             // If we don't have any runnable tasks, we just want to wait for an Async I/O.
             // Otherwise, we want to just reap whatever completion we have and continue running.
-            const wait_for_io = self.scheduler.runnable == 0;
+            const wait_for_io = self.scheduler.runnable == 0 and !self.scheduler.tasks.empty();
             log.debug("{d} - Wait for I/O: {}", .{ self.id, wait_for_io });
 
             const completions = try self.aio.reap(wait_for_io);
