@@ -138,14 +138,14 @@ pub const Socket = struct {
             const task = rt.scheduler.tasks.get(index);
             return try task.result.accept.unwrap();
         } else {
-            var addr: std.net.Address = undefined;
-            var addr_len = addr.getOsSockLen();
+            var sa: std.posix.sockaddr.storage = undefined;
+            var salen: std.posix.socklen_t = @sizeOf(std.posix.sockaddr.storage);
 
             const socket: std.posix.socket_t = blk: while (true) {
                 break :blk std.posix.accept(
                     self.handle,
-                    &addr.any,
-                    &addr_len,
+                    @ptrCast(&sa),
+                    &salen,
                     std.posix.SOCK.NONBLOCK,
                 ) catch |e| return switch (e) {
                     std.posix.AcceptError.WouldBlock => {
@@ -164,9 +164,10 @@ pub const Socket = struct {
                 };
             };
 
+            const addr: *std.posix.sockaddr = @ptrCast(&sa);
             return .{
                 .handle = socket,
-                .addr = addr,
+                .addr = .{ .any = addr.* },
                 .kind = self.kind,
             };
         }
