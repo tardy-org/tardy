@@ -2,7 +2,7 @@
     .name = .tardy,
     .fingerprint = 0x36d7fa71c5250acf,
     .version = "0.3.0",
-    .minimum_zig_version = "0.13.0",
+    .minimum_zig_version = "0.14.1",
     .dependencies = .{},
 
     .paths = .{
