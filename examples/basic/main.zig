@@ -17,7 +17,9 @@ fn log_frame(rt: *Runtime) !void {
 }
 
 pub fn main() !void {
-    const allocator = std.heap.page_allocator;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    const allocator = gpa.allocator();
+    defer _ = gpa.deinit();
 
     var tardy: Tardy = try .init(allocator, .{
         .threading = .single,

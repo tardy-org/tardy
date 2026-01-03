@@ -42,7 +42,7 @@ pub const AsyncKqueue = struct {
 
         const events = try allocator.alloc(std.posix.Kevent, options.size_aio_reap_max);
         const changes = try allocator.alloc(std.posix.Kevent, options.size_aio_reap_max);
-        var jobs = try Pool(Job).init(allocator, options.size_tasks_initial + 1, options.pooling);
+        var jobs: Pool(Job) = try .init(allocator, options.size_tasks_initial + 1, options.pooling);
 
         const index = jobs.borrow_assume_unset(0);
         const item = jobs.get_ptr(index);
@@ -503,7 +503,7 @@ pub const AsyncKqueue = struct {
     pub fn to_async(self: *AsyncKqueue) Async {
         return Async{
             .runner = self,
-            .features = AsyncFeatures.init(&.{
+            .features = .init(&.{
                 .timer,
                 .accept,
                 .connect,

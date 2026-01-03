@@ -32,8 +32,6 @@ fn echo_frame(rt: *Runtime, server: *const Socket) !void {
     // spawn off a new frame.
     try rt.spawn(.{ rt, server }, echo_frame, 1024 * 16);
 
-    //TODO: investigate why using readSliceShort with a buffer bigger
-    // than reader size leads to a connection reset (try to get a repro)
     var buffer: [501]u8 = undefined;
     while (true) {
         const recv_length = sock_r.readSliceShort(&buffer) catch |e| {
@@ -41,9 +39,7 @@ fn echo_frame(rt: *Runtime, server: *const Socket) !void {
             break;
         };
 
-        if (recv_length == 0) {
-            break;
-        }
+        if (recv_length == 0) return;
 
         sock_w.writeAll(buffer[0..recv_length]) catch |e| {
             log.err("Failed to send on socket | {t}", .{e});

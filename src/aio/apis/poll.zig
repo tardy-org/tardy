@@ -53,7 +53,7 @@ pub const AsyncPoll = struct {
                 const server_socket = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.STREAM, 0);
                 defer std.posix.close(server_socket);
 
-                const addr = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 0);
+                const addr: std.net.Address = .initIp4(.{ 127, 0, 0, 1 }, 0);
                 try std.posix.bind(server_socket, &addr.any, addr.getOsSockLen());
 
                 var binded_addr: std.posix.sockaddr = undefined;
@@ -89,10 +89,10 @@ pub const AsyncPoll = struct {
             try fd_job_map.put(pipe[0], .{ .index = 0, .type = .wake, .task = 0 });
         }
 
-        const timers = TimerQueue.init(allocator, {});
+        const timers: TimerQueue = .init(allocator, {});
         errdefer timers.deinit();
 
-        return AsyncPoll{
+        return .{
             .allocator = allocator,
             .wake_pipe = pipe,
             .fd_list = fd_list,
@@ -405,7 +405,7 @@ pub const AsyncPoll = struct {
     pub fn to_async(self: *AsyncPoll) Async {
         return Async{
             .runner = self,
-            .features = AsyncFeatures.init(&.{
+            .features = .init(&.{
                 .timer,
                 .accept,
                 .connect,

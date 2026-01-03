@@ -52,7 +52,7 @@ pub fn SpscAtomicRing(comptime T: type) type {
 
 test "SpscAtomicRing: Fill and Empty" {
     const size: u32 = 128;
-    var ring = try SpscAtomicRing(usize).init(testing.allocator, size);
+    var ring: SpscAtomicRing(usize) = try .init(testing.allocator, size);
     defer ring.deinit();
 
     try testing.expectError(error.RingEmpty, ring.pop());

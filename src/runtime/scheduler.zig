@@ -19,17 +19,17 @@ pub const Scheduler = struct {
     allocator: std.mem.Allocator,
     tasks: Pool(Task),
     runnable: usize,
-    released: std.ArrayListUnmanaged(usize),
+    released: std.ArrayList(usize),
     triggers: AtomicDynamicBitSet,
 
     pub fn init(allocator: std.mem.Allocator, size: usize, pooling: PoolKind) !Scheduler {
-        var tasks = try Pool(Task).init(allocator, size, pooling);
+        var tasks: Pool(Task) = try .init(allocator, size, pooling);
         errdefer tasks.deinit();
 
-        var released = try std.ArrayListUnmanaged(usize).initCapacity(allocator, size);
+        var released: std.ArrayList(usize) = try .initCapacity(allocator, size);
         errdefer released.deinit(allocator);
 
-        const triggers = try AtomicDynamicBitSet.init(allocator, size, false);
+        const triggers: AtomicDynamicBitSet = try .init(allocator, size, false);
         errdefer triggers.deinit(allocator);
 
         return .{
@@ -96,7 +96,7 @@ pub const Scheduler = struct {
             }
         };
 
-        const frame = try Frame.init(self.allocator, stack_size, frame_ctx, frame_fn);
+        const frame: *Frame = try .init(self.allocator, stack_size, frame_ctx, frame_fn);
 
         const item: Task = .{ .index = index, .frame = frame, .state = .dead };
         const item_ptr = self.tasks.get_ptr(index);

@@ -46,7 +46,7 @@ pub const AsyncEpoll = struct {
         const events = try allocator.alloc(std.os.linux.epoll_event, options.size_aio_reap_max);
         errdefer allocator.free(events);
 
-        var jobs = try Pool(Job).init(allocator, size, options.pooling);
+        var jobs: Pool(Job) = try .init(allocator, size, options.pooling);
         errdefer jobs.deinit();
 
         // Queue the wake task.
@@ -65,7 +65,7 @@ pub const AsyncEpoll = struct {
 
         try std.posix.epoll_ctl(epoll_fd, std.os.linux.EPOLL.CTL_ADD, wake_event_fd, &event);
 
-        return AsyncEpoll{
+        return .{
             .epoll_fd = epoll_fd,
             .wake_event_fd = wake_event_fd,
             .events = events,
@@ -463,7 +463,7 @@ pub const AsyncEpoll = struct {
     pub fn to_async(self: *AsyncEpoll) Async {
         return Async{
             .runner = self,
-            .features = AsyncFeatures.init(&.{
+            .features = .init(&.{
                 .timer,
                 .accept,
                 .connect,
