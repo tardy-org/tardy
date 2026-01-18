@@ -381,7 +381,7 @@ pub const AsyncKqueue = struct {
 
                             break :blk .{ .accept = result };
                         },
-                        .connect => |_| {
+                        .connect => {
                             assert(event.filter == std.posix.system.EVFILT.WRITE);
 
                             const result: ConnectResult = result: {

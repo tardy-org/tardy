@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 
 const AsyncKind = @import("src/aio/lib.zig").AsyncKind;
 
-const zig_version = std.SemanticVersion{ .major = 0, .minor = 15, .patch = 2 };
+const zig_version = std.SemanticVersion{ .major = 0, .minor = 16, .patch = 0 };
 comptime {
     // Compare versions while allowing different pre/patch metadata.
     const zig_version_eq = zig_version.major == builtin.zig_version.major and
@@ -17,6 +17,8 @@ comptime {
         ));
     }
 }
+
+
 
 const Example = enum {
     none,
@@ -75,6 +77,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = target.result.os.tag == .windows, 
     });
 
     // build and run examples
@@ -294,11 +297,6 @@ fn build_static_lib(
         .name = "tardy",
         .root_module = options.tardy_mod,
     });
-
-    // need libc for windows sockets
-    if (options.target.result.os.tag == .windows) {
-        static_lib.linkLibC();
-    }
 
     // depend on static step
     const install_artifact = b.addInstallArtifact(static_lib, .{});

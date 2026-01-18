@@ -581,7 +581,7 @@ pub const AsyncIoUring = struct {
 
                         break :blk .{ .accept = result };
                     },
-                    .connect => |_| {
+                    .connect => {
                         if (cqe.res >= 0) break :blk .{ .connect = .actual };
 
                         const result: ConnectResult = result: {
