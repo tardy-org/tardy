@@ -1,6 +1,8 @@
+// TODO: move imports of all files to the bottom
 const std = @import("std");
 const assert = std.debug.assert;
 const LinuxError = std.os.linux.E;
+const Io = std.Io;
 const builtin = @import("builtin");
 
 const Pool = @import("../../core/pool.zig").Pool;
@@ -81,14 +83,14 @@ pub const AsyncIoUring = struct {
     cqes: []std.os.linux.io_uring_cqe,
     jobs: Pool(JobBundle),
 
-    pub fn init(allocator: std.mem.Allocator, options: AsyncOptions) !AsyncIoUring {
+    pub fn init(allocator: std.mem.Allocator, io: Io, options: AsyncOptions) !AsyncIoUring {
         // Extra job for the wake event_fd.
         const size = options.size_tasks_initial + 1;
 
         const wake_event_fd: std.posix.fd_t = @intCast(
             std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC),
         );
-        errdefer std.posix.close(wake_event_fd);
+        errdefer std.Io.File.close(.{ .handle = wake_event_fd, .flags = .{ .nonblocking = true } }, io);
 
         const wake_event_buffer = try allocator.alloc(u8, 8);
         errdefer allocator.free(wake_event_buffer);
@@ -581,7 +583,7 @@ pub const AsyncIoUring = struct {
 
                         break :blk .{ .accept = result };
                     },
-                    .connect => |_| {
+                    .connect => {
                         if (cqe.res >= 0) break :blk .{ .connect = .actual };
 
                         const result: ConnectResult = result: {

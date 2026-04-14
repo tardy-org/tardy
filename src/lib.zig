@@ -93,13 +93,15 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
         const Self = @This();
         aios: std.ArrayList(*AioInnerType),
         allocator: std.mem.Allocator,
+        io: std.Io,
         options: TardyOptions,
-        mutex: std.Thread.Mutex = .{},
+        mutex: std.Io.Mutex = .init,
 
-        pub fn init(allocator: std.mem.Allocator, options: TardyOptions) !Self {
+        pub fn init(allocator: std.mem.Allocator, io: std.Io, options: TardyOptions) !Self {
             log.debug("aio backend: {t}", .{aio_type});
 
             return .{
+                .io = io,
                 .allocator = allocator,
                 .options = options,
                 .aios = try .initCapacity(allocator, 0),
@@ -113,18 +115,18 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
 
         /// This will spawn a new Runtime.
         fn spawn_runtime(self: *Self, id: usize, options: AsyncOptions) !Runtime {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            self.mutex.lockUncancelable(self.io);
+            defer self.mutex.unlock(self.io);
 
             var aio: AsyncIO = blk: {
-                var io = try self.allocator.create(AioInnerType);
-                errdefer self.allocator.destroy(io);
+                var io_inner = try self.allocator.create(AioInnerType);
+                errdefer self.allocator.destroy(io_inner);
 
-                io.* = try .init(self.allocator, options);
-                errdefer io.inner_deinit(self.allocator);
+                io_inner.* = try .init(self.allocator, self.io, options);
+                errdefer io_inner.inner_deinit(self.allocator);
 
-                try self.aios.append(self.allocator, io);
-                var aio = io.to_async();
+                try self.aios.append(self.allocator, io_inner);
+                var aio = io_inner.to_async();
 
                 const completions = try self.allocator.alloc(Completion, self.options.size_aio_reap_max);
                 errdefer self.allocator.free(completions);
@@ -134,7 +136,7 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
             };
             errdefer aio.deinit(self.allocator);
 
-            return try .init(self.allocator, aio, .{
+            return try .init(self.allocator, self.io, aio, .{
                 .id = id,
                 .pooling = self.options.pooling,
                 .size_tasks_initial = self.options.size_tasks_initial,

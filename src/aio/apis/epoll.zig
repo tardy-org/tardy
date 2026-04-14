@@ -365,7 +365,7 @@ pub const AsyncEpoll = struct {
 
                             break :blk .{ .accept = result };
                         },
-                        .connect => |_| {
+                        .connect => {
                             assert(event.events & std.os.linux.EPOLL.OUT != 0);
 
                             const result: ConnectResult = result: {

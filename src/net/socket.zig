@@ -1,6 +1,7 @@
 const std = @import("std");
 const debug = std.debug;
 const builtin = @import("builtin");
+const Io = std.Io;
 
 const AcceptResult = @import("../aio/completion.zig").AcceptResult;
 const AcceptError = @import("../aio/completion.zig").AcceptError;
@@ -38,26 +39,32 @@ pub const Socket = struct {
         unix: []const u8,
     };
 
+    pub const Address = union(enum) {
+        ip: Io.net.IpAddress,
+        unix: Io.net.UnixAddress,
+    };
+
     handle: std.posix.socket_t,
-    addr: std.net.Address,
+    addr: Address,
+    io: std.Io,
     kind: Kind,
 
-    pub fn init(kind: InitKind) !Socket {
-        const addr = switch (kind) {
+    pub fn init(io: std.Io, kind: InitKind) !Socket {
+        const addr: Address = switch (kind) {
             .tcp, .udp => |inner| blk: {
                 break :blk if (comptime builtin.os.tag == .linux)
-                    try std.net.Address.resolveIp(inner.host, inner.port)
+                    .{ .ip = try .resolve(io, inner.host, inner.port) }
                 else
-                    try std.net.Address.parseIp(inner.host, inner.port);
+                    .{ .ip = try .parse(inner.host, inner.port) };
             },
             // Not supported on Windows at the moment.
-            .unix => |path| if (builtin.os.tag == .windows) unreachable else try std.net.Address.initUnix(path),
+            .unix => |path| if (builtin.os.tag == .windows) unreachable else .{ .unix = try .init(path) },
         };
 
         return try init_with_address(kind, addr);
     }
 
-    pub fn init_with_address(kind: Kind, addr: std.net.Address) !Socket {
+    pub fn init_with_address(kind: Kind, addr: Address) !Socket {
         const sock_type: u32 = switch (kind) {
             .tcp, .unix => std.posix.SOCK.STREAM,
             .udp => std.posix.SOCK.DGRAM,
@@ -70,7 +77,9 @@ pub const Socket = struct {
         };
 
         const flags: u32 = sock_type | std.posix.SOCK.CLOEXEC | std.posix.SOCK.NONBLOCK;
-        const socket = try std.posix.socket(addr.any.family, flags, protocol);
+
+        // TODO: audit these and posix uses across tardy
+        const socket = try std.os.linux.socket(addr.any.family, flags, protocol);
 
         if (kind != .unix) {
             if (@hasDecl(std.posix.SO, "REUSEPORT_LB")) {
@@ -78,21 +87,21 @@ pub const Socket = struct {
                     socket,
                     std.posix.SOL.SOCKET,
                     std.posix.SO.REUSEPORT_LB,
-                    &std.mem.toBytes(@as(c_int, 1)),
+                    &std.mem.toBytes(@as(u32, 1)),
                 );
             } else if (@hasDecl(std.posix.SO, "REUSEPORT")) {
                 try std.posix.setsockopt(
                     socket,
                     std.posix.SOL.SOCKET,
                     std.posix.SO.REUSEPORT,
-                    &std.mem.toBytes(@as(c_int, 1)),
+                    &std.mem.toBytes(@as(u32, 1)),
                 );
             } else {
                 try std.posix.setsockopt(
                     socket,
                     std.posix.SOL.SOCKET,
                     std.posix.SO.REUSEADDR,
-                    &std.mem.toBytes(@as(c_int, 1)),
+                    &std.mem.toBytes(@as(u32, 1)),
                 );
             }
         }

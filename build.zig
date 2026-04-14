@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 
 const AsyncKind = @import("src/aio/lib.zig").AsyncKind;
 
-const zig_version = std.SemanticVersion{ .major = 0, .minor = 15, .patch = 2 };
+const zig_version: std.SemanticVersion = .{ .major = 0, .minor = 17, .patch = 0 };
 comptime {
     // Compare versions while allowing different pre/patch metadata.
     const zig_version_eq = zig_version.major == builtin.zig_version.major and
@@ -297,7 +297,7 @@ fn build_static_lib(
 
     // need libc for windows sockets
     if (options.target.result.os.tag == .windows) {
-        static_lib.linkLibC();
+        options.tardy_mod.link_libc = true;
     }
 
     // depend on static step

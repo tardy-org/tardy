@@ -25,6 +25,8 @@ pub const Runtime = struct {
     allocator: std.mem.Allocator,
     storage: Storage,
     scheduler: Scheduler,
+    // TODO: audit if this is needed, or all request can go through `aio`
+    io: std.Io,
     aio: Async,
     id: usize,
     running: bool,
@@ -32,7 +34,7 @@ pub const Runtime = struct {
     // The currently running Task's index.
     current_task: ?usize = null,
 
-    pub fn init(allocator: std.mem.Allocator, aio: Async, options: RuntimeOptions) !Runtime {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, aio: Async, options: RuntimeOptions) !Runtime {
         const scheduler: Scheduler = try .init(
             allocator,
             options.size_tasks_initial,
@@ -45,6 +47,7 @@ pub const Runtime = struct {
             .storage = storage,
             .scheduler = scheduler,
             .aio = aio,
+            .io = io,
             .id = options.id,
             .current_task = null,
             .running = false,

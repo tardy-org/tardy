@@ -325,7 +325,7 @@ pub const AsyncPoll = struct {
                                 },
                             };
                         },
-                        .connect => |_| {
+                        .connect => {
                             assert(pfd.revents & std.posix.POLL.OUT != 0);
 
                             if (pfd.revents & std.posix.POLL.ERR != 0) {

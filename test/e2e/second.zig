@@ -1,8 +1,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
-
-const Runtime = @import("tardy").Runtime;
-const Socket = @import("tardy").Socket;
+const tardy = @import("tardy");
+const Runtime = tardy.Runtime;
+const Socket = tardy.Socket;
 
 const log = @import("lib.zig").log;
 const SharedParams = @import("lib.zig").SharedParams;
@@ -19,7 +19,7 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
 
     const port: u16 = rand.intRangeLessThan(u16, 30000, @intCast(std.math.maxInt(u16)));
     log.debug("tcp chain port: {d}", .{port});
-    const socket = try Socket.init(.{ .tcp = .{ .host = "127.0.0.1", .port = port } });
+    const socket: Socket = try .init(rt.io, .{ .tcp = .{ .host = "127.0.0.1", .port = port } });
     try socket.bind();
     try socket.listen(128);
 

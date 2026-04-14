@@ -64,7 +64,7 @@ pub fn auto_async_match() AsyncType {
         .windows => return AsyncType.poll,
         .ios, .macos, .watchos, .tvos, .visionos => return AsyncType.kqueue,
         .freebsd, .openbsd, .netbsd, .dragonfly => return AsyncType.kqueue,
-        .solaris, .illumos => return AsyncType.poll,
+        .illumos => return AsyncType.poll,
         else => @compileError("Unsupported platform! Provide a custom Async I/O backend."),
     }
 }
@@ -168,7 +168,7 @@ pub const AsyncSubmission = union(AsyncOp) {
     },
     connect: struct {
         socket: std.posix.socket_t,
-        addr: std.net.Address,
+        addr: std.Io.net.IpAddress,
         kind: Socket.Kind,
     },
     recv: struct {
@@ -196,7 +196,7 @@ pub const Async = struct {
 
     attached: bool = false,
     completions: []Completion = undefined,
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
 
     // List of Async features that this Async I/O backend has.
     // Stored as a bitmask.

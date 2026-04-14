@@ -1,6 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const StdDir = std.fs.Dir;
+const StdDir = std.Io.Dir;
 const builtin = @import("builtin");
 
 const Resulted = @import("../aio/completion.zig").Resulted;
@@ -25,6 +25,9 @@ const Path = @import("lib.zig").Path;
 const Stat = @import("lib.zig").Stat;
 
 const log = std.log.scoped(.@"tardy/fs/dir");
+
+const Io = std.Io;
+
 pub const Dir = packed struct {
     handle: std.posix.fd_t,
 
@@ -34,13 +37,13 @@ pub const Dir = packed struct {
     }
 
     /// Create a Dir from the std.fs.Dir
-    pub fn from_std(self: std.fs.Dir) Dir {
-        return .{ .handle = self.fd };
+    pub fn from_std(self: Io.Dir) Dir {
+        return .{ .handle = self.handle };
     }
 
     /// Get `cwd` as a Dir.
     pub fn cwd() Dir {
-        return .{ .handle = std.fs.cwd().fd };
+        return .{ .handle = Io.Dir.cwd().handle };
     }
 
     /// Close the underlying Handle of this Dir.
@@ -48,7 +51,7 @@ pub const Dir = packed struct {
         if (rt.aio.features.has_capability(.close))
             try rt.scheduler.io_await(.{ .close = self.handle })
         else
-            std.posix.close(self.handle);
+            std.Io.File.close(.{ .handle = self.handle, .flags = .{ .nonblocking = false } }, rt.io);
     }
 
     pub fn close_blocking(self: Dir) void {
