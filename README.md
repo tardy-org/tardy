@@ -19,9 +19,9 @@ tardy is a thread-local, I/O driven runtime for Zig, providing the core implemen
 ## Installing
 Compatible Zig Version: `0.15.2`
 
-Latest Release: `0.3.0`
+Latest Release: `0.3.1`
 ```
-zig fetch --save git+https://github.com/tardy-org/tardy#v0.3.0
+zig fetch --save git+https://github.com/tardy-org/tardy#v0.3.1
 ```
 
 You can then add the dependency in your `build.zig` file:
