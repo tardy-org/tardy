@@ -1,6 +1,5 @@
 const std = @import("std");
 
-const Timespec = @import("../lib.zig").Timespec;
 pub const Dir = @import("dir.zig").Dir;
 pub const File = @import("file.zig").File;
 
@@ -24,11 +23,11 @@ pub const Path = union(enum) {
         }
     }
 };
-
+const Io = std.Io;
 pub const Stat = struct {
     size: u64,
-    mode: u64 = 0,
-    accessed: ?Timespec = null,
-    modified: ?Timespec = null,
-    changed: ?Timespec = null,
+    mode: u32 = 0,
+    accessed: ?Io.Timestamp = null,
+    modified: ?Io.Timestamp = null,
+    changed: ?Io.Timestamp = null,
 };

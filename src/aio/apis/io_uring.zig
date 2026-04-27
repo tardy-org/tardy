@@ -1,7 +1,8 @@
 // TODO: move imports of all files to the bottom
 const std = @import("std");
 const assert = std.debug.assert;
-const LinuxError = std.os.linux.E;
+const linux = std.os.linux;
+const LinuxError = linux.E;
 const Io = std.Io;
 const builtin = @import("builtin");
 
@@ -9,7 +10,6 @@ const Pool = @import("../../core/pool.zig").Pool;
 const Cross = @import("../../cross/lib.zig");
 const Stat = @import("../../fs/lib.zig").Stat;
 const Path = @import("../../fs/lib.zig").Path;
-const Timespec = @import("../../lib.zig").Timespec;
 const Socket = @import("../../net/lib.zig").Socket;
 const Completion = @import("../completion.zig").Completion;
 const Result = @import("../completion.zig").Result;
@@ -39,13 +39,14 @@ const AsyncOptions = @import("../lib.zig").AsyncOptions;
 const AsyncFeatures = @import("../lib.zig").AsyncFeatures;
 const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 const AsyncOpenFlags = @import("../lib.zig").AsyncOpenFlags;
+const tposix = @import("../../tposix.zig");
 
 const log = std.log.scoped(.@"tardy/aio/io_uring");
 
 const JobBundle = struct {
     job: Job,
-    statx: *std.os.linux.Statx = undefined,
-    timespec: *std.os.linux.kernel_timespec = undefined,
+    statx: *linux.Statx = undefined,
+    timespec: *linux.kernel_timespec = undefined,
 };
 
 pub const AsyncIoUring = struct {
@@ -59,7 +60,7 @@ pub const AsyncIoUring = struct {
             .linux,
             .{ .major = 6, .minor = 0, .patch = 0 },
         )) |is_atleast| {
-            if (is_atleast) flags |= std.os.linux.IORING_SETUP_SINGLE_ISSUER;
+            if (is_atleast) flags |= linux.IORING_SETUP_SINGLE_ISSUER;
         }
 
         // COOP_TASKRUN requires 5.19
@@ -67,20 +68,20 @@ pub const AsyncIoUring = struct {
             .linux,
             .{ .major = 5, .minor = 19, .patch = 0 },
         )) |is_atleast| {
-            if (is_atleast) flags |= std.os.linux.IORING_SETUP_COOP_TASKRUN;
+            if (is_atleast) flags |= linux.IORING_SETUP_COOP_TASKRUN;
         }
 
         break :blk flags;
     };
 
     allocator: std.mem.Allocator,
-    inner: *std.os.linux.IoUring,
+    inner: *linux.IoUring,
     wake_event_fd: std.posix.fd_t,
     wake_event_buffer: []u8,
 
     // Currently, the batch size is predetermined.
     // You basically define how large you want your batches to be.
-    cqes: []std.os.linux.io_uring_cqe,
+    cqes: []linux.io_uring_cqe,
     jobs: Pool(JobBundle),
 
     pub fn init(allocator: std.mem.Allocator, io: Io, options: AsyncOptions) !AsyncIoUring {
@@ -88,9 +89,9 @@ pub const AsyncIoUring = struct {
         const size = options.size_tasks_initial + 1;
 
         const wake_event_fd: std.posix.fd_t = @intCast(
-            std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC),
+            linux.eventfd(0, linux.EFD.CLOEXEC),
         );
-        errdefer std.Io.File.close(.{ .handle = wake_event_fd, .flags = .{ .nonblocking = true } }, io);
+        errdefer Io.File.close(.{ .handle = wake_event_fd, .flags = .{ .nonblocking = false } }, io);
 
         const wake_event_buffer = try allocator.alloc(u8, 8);
         errdefer allocator.free(wake_event_buffer);
@@ -109,13 +110,13 @@ pub const AsyncIoUring = struct {
                 assert(parent_uring.inner.fd >= 0);
 
                 // Initialize using the WQ from the parent ring.
-                const flags: u32 = base_flags | std.os.linux.IORING_SETUP_ATTACH_WQ;
-                var params = std.mem.zeroInit(std.os.linux.io_uring_params, .{
+                const flags: u32 = base_flags | linux.IORING_SETUP_ATTACH_WQ;
+                var params = std.mem.zeroInit(linux.io_uring_params, .{
                     .flags = flags,
                     .wq_fd = @as(u32, @intCast(parent_uring.inner.fd)),
                 });
 
-                const uring = try allocator.create(std.os.linux.IoUring);
+                const uring = try allocator.create(linux.IoUring);
                 errdefer allocator.destroy(uring);
 
                 uring.* = try .init_params(submit_size, &params);
@@ -124,7 +125,7 @@ pub const AsyncIoUring = struct {
                 break :blk uring;
             } else {
                 // Initalize IO Uring
-                const uring = try allocator.create(std.os.linux.IoUring);
+                const uring = try allocator.create(linux.IoUring);
                 errdefer allocator.destroy(uring);
 
                 uring.* = try .init(submit_size, base_flags);
@@ -144,10 +145,10 @@ pub const AsyncIoUring = struct {
         item.* = .{ .job = .{ .index = index, .type = .wake, .task = undefined } };
         _ = try uring.read(index, wake_event_fd, .{ .buffer = wake_event_buffer }, 0);
 
-        const cqes = try allocator.alloc(std.os.linux.io_uring_cqe, options.size_aio_reap_max);
+        const cqes = try allocator.alloc(linux.io_uring_cqe, options.size_aio_reap_max);
         errdefer allocator.free(cqes);
 
-        return AsyncIoUring{
+        return .{
             .inner = uring,
             .allocator = allocator,
             .wake_event_fd = wake_event_fd,
@@ -158,7 +159,7 @@ pub const AsyncIoUring = struct {
     }
 
     pub fn inner_deinit(self: *AsyncIoUring, allocator: std.mem.Allocator) void {
-        std.posix.close(self.wake_event_fd);
+        tposix.close(self.wake_event_fd);
         self.inner.deinit();
         self.jobs.deinit();
         allocator.free(self.wake_event_buffer);
@@ -196,7 +197,7 @@ pub const AsyncIoUring = struct {
         } else return e;
     }
 
-    fn queue_timer(self: *AsyncIoUring, task: usize, timespec: Timespec) !void {
+    fn queue_timer(self: *AsyncIoUring, task: usize, timespec: Io.Timestamp) !void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -207,12 +208,12 @@ pub const AsyncIoUring = struct {
             .type = .{ .timer = .none },
         };
 
-        const timespec_ptr = try self.allocator.create(std.os.linux.kernel_timespec);
+        // TODO: make copierble types none pointers
+        const timespec_ptr = try self.allocator.create(linux.kernel_timespec);
         errdefer self.allocator.destroy(timespec_ptr);
-
-        timespec_ptr.* = std.os.linux.kernel_timespec{
-            .sec = @intCast(timespec.seconds),
-            .nsec = @intCast(timespec.nanos),
+        timespec_ptr.* = .{
+            .sec = @intCast(@divTrunc(timespec.nanoseconds, std.time.ns_per_s)),
+            .nsec = @intCast(@mod(timespec.nanoseconds, std.time.ns_per_s)),
         };
         item.timespec = timespec_ptr;
 
@@ -236,8 +237,8 @@ pub const AsyncIoUring = struct {
             .task = task,
         };
 
-        const o_flags: std.os.linux.O = blk: {
-            var o: std.os.linux.O = .{};
+        const o_flags: linux.O = blk: {
+            var o: linux.O = .{};
 
             switch (flags.mode) {
                 .read => o.ACCMODE = .RDONLY,
@@ -312,7 +313,7 @@ pub const AsyncIoUring = struct {
         const item = self.jobs.get_ptr(index);
         item.job = .{ .index = index, .type = .{ .stat = fd }, .task = task };
 
-        const statx_ptr = try self.allocator.create(std.os.linux.Statx);
+        const statx_ptr = try self.allocator.create(linux.Statx);
         errdefer self.allocator.destroy(statx_ptr);
         item.statx = statx_ptr;
 
@@ -320,8 +321,8 @@ pub const AsyncIoUring = struct {
             index,
             fd,
             "",
-            std.os.linux.AT.EMPTY_PATH,
-            std.os.linux.STATX_BASIC_STATS,
+            linux.AT.EMPTY_PATH,
+            linux.STATX.BASIC_STATS,
             statx_ptr,
         );
     }
@@ -385,6 +386,7 @@ pub const AsyncIoUring = struct {
         errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
+        var sockaddr, var socklen = item.job.type.accept.addr.toPosix();
         item.job = .{
             .index = index,
             .type = .{
@@ -392,7 +394,7 @@ pub const AsyncIoUring = struct {
                     .socket = socket,
                     .kind = kind,
                     .addr = undefined,
-                    .addr_len = @sizeOf(std.net.Address),
+                    .addr_len = socklen,
                 },
             },
             .task = task,
@@ -401,8 +403,8 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.accept(
             index,
             socket,
-            &item.job.type.accept.addr.any,
-            @ptrCast(&item.job.type.accept.addr_len),
+            &sockaddr,
+            &socklen,
             0,
         );
     }
@@ -411,12 +413,13 @@ pub const AsyncIoUring = struct {
         self: *AsyncIoUring,
         task: usize,
         socket: std.posix.socket_t,
-        addr: std.net.Address,
+        addr: Socket.Address,
         kind: Socket.Kind,
     ) !void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
         const item = self.jobs.get_ptr(index);
+        const sockaddr, const socklen = item.job.type.connect.addr.toPosix();
         item.job = .{
             .index = index,
             .type = .{
@@ -432,8 +435,8 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.connect(
             index,
             socket,
-            &item.job.type.connect.addr.any,
-            addr.getOsSockLen(),
+            &sockaddr,
+            socklen,
         );
     }
 
@@ -504,7 +507,7 @@ pub const AsyncIoUring = struct {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         const bytes: []const u8 = "00000000";
         var i: usize = 0;
-        while (i < bytes.len) i += try std.posix.write(uring.wake_event_fd, bytes);
+        while (i < bytes.len) i += try tposix.write(uring.wake_event_fd, bytes);
     }
 
     fn submit(runner: *anyopaque) !void {
@@ -558,7 +561,11 @@ pub const AsyncIoUring = struct {
                         if (cqe.res >= 0) switch (inner.kind) {
                             .tcp, .unix => break :blk .{
                                 .accept = .{
-                                    .actual = .{ .handle = cqe.res, .addr = inner.addr, .kind = inner.kind },
+                                    .actual = .{
+                                        .handle = cqe.res,
+                                        .addr = inner.addr,
+                                        .kind = inner.kind,
+                                    },
                                 },
                             },
                             .udp => unreachable,
@@ -794,19 +801,16 @@ pub const AsyncIoUring = struct {
                         if (cqe.res == 0) {
                             const statx = job_with_data.statx;
                             const stat: Stat = .{
-                                .size = @intCast(statx.size),
-                                .mode = @intCast(statx.mode),
+                                .size = statx.size,
+                                .mode = statx.mode,
                                 .accessed = .{
-                                    .seconds = @intCast(statx.atime.sec),
-                                    .nanos = @intCast(statx.atime.nsec),
+                                    .nanoseconds = (statx.atime.sec * std.time.ns_per_s) + statx.atime.nsec,
                                 },
                                 .modified = .{
-                                    .seconds = @intCast(statx.mtime.sec),
-                                    .nanos = @intCast(statx.mtime.nsec),
+                                    .nanoseconds = (statx.mtime.sec * std.time.ns_per_s) + statx.mtime.nsec,
                                 },
                                 .changed = .{
-                                    .seconds = @intCast(statx.ctime.sec),
-                                    .nanos = @intCast(statx.ctime.nsec),
+                                    .nanoseconds = (statx.ctime.sec * std.time.ns_per_s) + statx.ctime.nsec,
                                 },
                             };
                             break :blk .{ .stat = .{ .actual = stat } };

@@ -1,9 +1,9 @@
+const std = @import("std");
 const Frame = @import("../frame/lib.zig").Frame;
-const Timespec = @import("../lib.zig").Timespec;
 const Runtime = @import("lib.zig").Runtime;
 
 pub const Timer = struct {
-    pub fn delay(rt: *Runtime, timespec: Timespec) !void {
+    pub fn delay(rt: *Runtime, timespec: std.Io.Timestamp) !void {
         try rt.scheduler.io_await(.{ .timer = timespec });
     }
 };

@@ -31,8 +31,6 @@ pub const AcceptError = error{
     ProcessFdQuotaExceeded,
     SystemFdQuotaExceeded,
     OutOfMemory,
-    NotASocket,
-    OperationNotSupported,
     Unexpected,
 };
 

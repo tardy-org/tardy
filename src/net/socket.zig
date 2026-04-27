@@ -13,6 +13,9 @@ const SendResult = @import("../aio/completion.zig").SendResult;
 const SendError = @import("../aio/completion.zig").SendError;
 const Frame = @import("../frame/lib.zig").Frame;
 const Runtime = @import("../runtime/lib.zig").Runtime;
+const posix = std.posix;
+const tposix = @import("../tposix.zig");
+const mem = std.mem;
 
 pub const Socket = struct {
     pub const Kind = enum {
@@ -42,13 +45,48 @@ pub const Socket = struct {
     pub const Address = union(enum) {
         ip: Io.net.IpAddress,
         unix: Io.net.UnixAddress,
+
+        pub fn toPosix(addr: Address) struct { posix.sockaddr, posix.socklen_t } {
+            switch (addr) {
+                .ip => |ip| {
+                    switch (ip) {
+                        .ip4 => |ip4| {
+                            const saddr: posix.sockaddr.in = .{
+                                .addr = @bitCast(ip4.bytes),
+                                .port = mem.nativeToBig(u16, ip4.port),
+                            };
+                            const addr_: posix.sockaddr = @as(*const posix.sockaddr, @ptrCast(&saddr)).*;
+                            return .{ addr_, @sizeOf(@TypeOf(saddr)) };
+                        },
+                        .ip6 => |ip6| {
+                            const saddr: posix.sockaddr.in6 = .{
+                                .addr = ip6.bytes,
+                                .flowinfo = ip6.flow,
+                                .scope_id = ip6.interface.index,
+                                .port = mem.nativeToBig(u16, ip6.port),
+                            };
+                            const addr_: posix.sockaddr = @as(*const posix.sockaddr, @ptrCast(&saddr)).*;
+                            return .{ addr_, @sizeOf(@TypeOf(saddr)) };
+                        },
+                    }
+                },
+                .unix => |unix| {
+                    var saddr: posix.sockaddr.un = .{
+                        .path = @splat(0x0),
+                    };
+                    @memcpy(saddr.path[0..], unix.path[0..unix.path.len]);
+                    const addr_: posix.sockaddr = @as(*const posix.sockaddr, @ptrCast(&saddr)).*;
+                    return .{ addr_, @sizeOf(@TypeOf(saddr)) };
+                },
+            }
+        }
     };
 
-    handle: std.posix.socket_t,
+    handle: posix.socket_t,
     addr: Address,
-    io: std.Io,
     kind: Kind,
 
+    // TODO: we shouldn't need Io here
     pub fn init(io: std.Io, kind: InitKind) !Socket {
         const addr: Address = switch (kind) {
             .tcp, .udp => |inner| blk: {
@@ -66,41 +104,49 @@ pub const Socket = struct {
 
     pub fn init_with_address(kind: Kind, addr: Address) !Socket {
         const sock_type: u32 = switch (kind) {
-            .tcp, .unix => std.posix.SOCK.STREAM,
-            .udp => std.posix.SOCK.DGRAM,
+            .tcp, .unix => posix.SOCK.STREAM,
+            .udp => posix.SOCK.DGRAM,
         };
 
         const protocol: u32 = switch (kind) {
-            .tcp => std.posix.IPPROTO.TCP,
-            .udp => std.posix.IPPROTO.UDP,
+            .tcp => posix.IPPROTO.TCP,
+            .udp => posix.IPPROTO.UDP,
             .unix => 0,
         };
 
-        const flags: u32 = sock_type | std.posix.SOCK.CLOEXEC | std.posix.SOCK.NONBLOCK;
+        const family: u32 = switch (addr) {
+            .ip => |ip| switch (ip) {
+                .ip4 => posix.AF.INET,
+                .ip6 => posix.AF.INET6,
+            },
+            .unix => posix.AF.UNIX,
+        };
+
+        const flags: u32 = sock_type | posix.SOCK.CLOEXEC | posix.SOCK.NONBLOCK;
 
         // TODO: audit these and posix uses across tardy
-        const socket = try std.os.linux.socket(addr.any.family, flags, protocol);
+        const socket = try tposix.socket(family, flags, protocol);
 
         if (kind != .unix) {
-            if (@hasDecl(std.posix.SO, "REUSEPORT_LB")) {
-                try std.posix.setsockopt(
+            if (@hasDecl(posix.SO, "REUSEPORT_LB")) {
+                try tposix.setsockopt(
                     socket,
-                    std.posix.SOL.SOCKET,
-                    std.posix.SO.REUSEPORT_LB,
+                    posix.SOL.SOCKET,
+                    posix.SO.REUSEPORT_LB,
                     &std.mem.toBytes(@as(u32, 1)),
                 );
-            } else if (@hasDecl(std.posix.SO, "REUSEPORT")) {
-                try std.posix.setsockopt(
+            } else if (@hasDecl(posix.SO, "REUSEPORT")) {
+                try tposix.setsockopt(
                     socket,
-                    std.posix.SOL.SOCKET,
-                    std.posix.SO.REUSEPORT,
+                    posix.SOL.SOCKET,
+                    posix.SO.REUSEPORT,
                     &std.mem.toBytes(@as(u32, 1)),
                 );
             } else {
-                try std.posix.setsockopt(
+                try tposix.setsockopt(
                     socket,
-                    std.posix.SOL.SOCKET,
-                    std.posix.SO.REUSEADDR,
+                    posix.SOL.SOCKET,
+                    posix.SO.REUSEADDR,
                     &std.mem.toBytes(@as(u32, 1)),
                 );
             }
@@ -110,27 +156,29 @@ pub const Socket = struct {
     }
 
     /// Bind the current Socket
-    pub fn bind(self: Socket) !void {
-        try std.posix.bind(self.handle, &self.addr.any, self.addr.getOsSockLen());
+    pub fn bind(sock: Socket) !void {
+        const sockaddr, const socklen = sock.addr.toPosix();
+        try tposix.bind(sock.handle, &sockaddr, socklen);
     }
 
     /// Listen on the Current Socket.
     pub fn listen(self: Socket, backlog: usize) !void {
         debug.assert(self.kind.listenable());
-        try std.posix.listen(self.handle, @truncate(backlog));
+        try tposix.listen(self.handle, @truncate(backlog));
     }
 
+    // TODO: rethink the aio to io approach
     pub fn close(self: Socket, rt: *Runtime) !void {
         if (rt.aio.features.has_capability(.close))
             try rt.scheduler.io_await(.{ .close = self.handle })
         else
-            std.posix.close(self.handle);
+            tposix.close(self.handle);
     }
 
     pub fn close_blocking(self: Socket) void {
         // todo: delete the unix socket if the
         // server is being closed
-        std.posix.close(self.handle);
+        tposix.close(self.handle);
     }
 
     pub fn accept(self: Socket, rt: *Runtime) !Socket {
@@ -147,28 +195,26 @@ pub const Socket = struct {
             const task = rt.scheduler.tasks.get(index);
             return try task.result.accept.unwrap();
         } else {
-            var addr: std.net.Address = undefined;
-            var addr_len = addr.getOsSockLen();
+            var addr: Socket.Address = .{ .ip = undefined };
+            var sockaddr, var socklen = addr.toPosix();
 
-            const socket: std.posix.socket_t = blk: while (true) {
-                break :blk std.posix.accept(
+            const socket: posix.socket_t = blk: while (true) {
+                break :blk tposix.accept(
                     self.handle,
-                    &addr.any,
-                    &addr_len,
-                    std.posix.SOCK.NONBLOCK,
+                    &sockaddr,
+                    &socklen,
+                    posix.SOCK.NONBLOCK,
                 ) catch |e| return switch (e) {
-                    std.posix.AcceptError.WouldBlock => {
+                    error.WouldBlock => {
                         Frame.yield();
                         continue;
                     },
-                    std.posix.AcceptError.ConnectionAborted,
-                    std.posix.AcceptError.ConnectionResetByPeer,
+                    error.ConnectionAborted,
+                    error.ConnectionResetByPeer,
                     => AcceptError.ConnectionAborted,
-                    std.posix.AcceptError.SocketNotListening => AcceptError.NotListening,
-                    std.posix.AcceptError.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
-                    std.posix.AcceptError.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
-                    std.posix.AcceptError.FileDescriptorNotASocket => AcceptError.NotASocket,
-                    std.posix.AcceptError.OperationNotSupported => AcceptError.OperationNotSupported,
+                    error.SocketNotListening => AcceptError.NotListening,
+                    error.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
+                    error.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
                     else => AcceptError.Unexpected,
                 };
             };
@@ -195,13 +241,14 @@ pub const Socket = struct {
             const task = rt.scheduler.tasks.get(index);
             try task.result.connect.unwrap();
         } else {
+            const sockaddr, const socklen = self.addr.toPosix();
             while (true) {
-                break std.posix.connect(
+                break tposix.connect(
                     self.handle,
-                    &self.addr.any,
-                    self.addr.getOsSockLen(),
+                    &sockaddr,
+                    socklen,
                 ) catch |e| return switch (e) {
-                    std.posix.ConnectError.WouldBlock => {
+                    error.WouldBlock => {
                         Frame.yield();
                         continue;
                     },
@@ -225,8 +272,8 @@ pub const Socket = struct {
             return try task.result.recv.unwrap();
         } else {
             const count: usize = blk: while (true) {
-                break :blk std.posix.recv(self.handle, buffer, 0) catch |e| return switch (e) {
-                    std.posix.RecvFromError.WouldBlock => {
+                break :blk tposix.recv(self.handle, buffer, 0) catch |e| return switch (e) {
+                    posix.RecvFromError.WouldBlock => {
                         Frame.yield();
                         continue;
                     },
@@ -268,13 +315,13 @@ pub const Socket = struct {
             return try task.result.send.unwrap();
         } else {
             const count: usize = blk: while (true) {
-                break :blk std.posix.send(self.handle, buffer, 0) catch |e| return switch (e) {
-                    std.posix.SendError.WouldBlock => {
+                break :blk posix.send(self.handle, buffer, 0) catch |e| return switch (e) {
+                    posix.SendError.WouldBlock => {
                         Frame.yield();
                         continue;
                     },
-                    std.posix.SendError.ConnectionResetByPeer,
-                    std.posix.SendError.BrokenPipe,
+                    posix.SendError.ConnectionResetByPeer,
+                    posix.SendError.BrokenPipe,
                     => SendError.Closed,
                     else => SendError.Unexpected,
                 };

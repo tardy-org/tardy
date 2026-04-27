@@ -171,7 +171,7 @@ pub const TcpClientChain = struct {
         defer chain.deinit();
         errdefer unreachable;
 
-        var socket: Socket = try .init(.{ .tcp = .{ .host = "127.0.0.1", .port = port } });
+        var socket: Socket = try .init(rt.io, .{ .tcp = .{ .host = "127.0.0.1", .port = port } });
 
         chain: while (chain.index < chain.steps.len) : (chain.index += 1) {
             const current_step = chain.steps[chain.index];

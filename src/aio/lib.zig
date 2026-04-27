@@ -5,9 +5,10 @@ const builtin = @import("builtin");
 
 const PoolKind = @import("../core/pool.zig").PoolKind;
 const Path = @import("../fs/lib.zig").Path;
-const Timespec = @import("../lib.zig").Timespec;
+// TODO: let Socket be a file
 const Socket = @import("../net/lib.zig").Socket;
 const Completion = @import("completion.zig").Completion;
+const Io = std.Io;
 
 const log = std.log.scoped(.@"tardy/aio");
 pub const AsyncKind = enum {
@@ -137,7 +138,7 @@ pub const AsyncFeatures = struct {
 };
 
 pub const AsyncSubmission = union(AsyncOp) {
-    timer: Timespec,
+    timer: Io.Timestamp,
     open: struct {
         path: Path,
         flags: AsyncOpenFlags,
@@ -168,7 +169,7 @@ pub const AsyncSubmission = union(AsyncOp) {
     },
     connect: struct {
         socket: std.posix.socket_t,
-        addr: std.Io.net.IpAddress,
+        addr: Socket.Address,
         kind: Socket.Kind,
     },
     recv: struct {
@@ -209,9 +210,10 @@ pub const Async = struct {
         self.attached = true;
     }
 
-    pub fn deinit(self: *Async, allocator: std.mem.Allocator) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    pub fn deinit(self: *Async, allocator: std.mem.Allocator, io: std.Io) void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+
         self.vtable.deinit(self.runner, allocator);
     }
 
@@ -221,9 +223,10 @@ pub const Async = struct {
         try self.vtable.queue_job(self.runner, task, job);
     }
 
-    pub fn wake(self: *Async) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    pub fn wake(self: *Async, io: std.Io) !void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+
         assert(self.attached);
         try self.vtable.wake(self.runner);
     }

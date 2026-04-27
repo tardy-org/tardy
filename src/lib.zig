@@ -134,7 +134,7 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
                 aio.attach(completions);
                 break :blk aio;
             };
-            errdefer aio.deinit(self.allocator);
+            errdefer aio.deinit(self.allocator, self.io);
 
             return try .init(self.allocator, self.io, aio, .{
                 .id = id,
@@ -223,7 +223,7 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
                         // this is because the runtime is allocate on our stack and others might be checking
                         // our running status or attempting to wake us.
                         _ = count.fetchSub(1, .acquire);
-                        while (count.load(.acquire) > 0) std.Thread.sleep(std.time.ns_per_s);
+                        while (count.load(.acquire) > 0) tardy.io.sleep(.fromSeconds(1), .awake) catch unreachable;
                     }
                 }.thread_init, .{
                     self,
@@ -268,8 +268,3 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
         }
     };
 }
-
-pub const Timespec = struct {
-    seconds: u64 = 0,
-    nanos: u64 = 0,
-};

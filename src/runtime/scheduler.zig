@@ -41,10 +41,10 @@ pub const Scheduler = struct {
         };
     }
 
-    pub fn deinit(self: *Scheduler) void {
-        self.tasks.deinit();
-        self.released.deinit(self.allocator);
-        self.triggers.deinit(self.allocator);
+    pub fn deinit(sched: *Scheduler, io: std.Io) void {
+        sched.tasks.deinit();
+        sched.released.deinit(sched.allocator);
+        sched.triggers.deinit(sched.allocator, io);
     }
 
     pub fn set_runnable(self: *Scheduler, index: usize) !void {
@@ -98,7 +98,11 @@ pub const Scheduler = struct {
 
         const frame: *Frame = try .init(self.allocator, stack_size, frame_ctx, frame_fn);
 
-        const item: Task = .{ .index = index, .frame = frame, .state = .dead };
+        const item: Task = .{
+            .index = index,
+            .frame = frame,
+            .state = .dead,
+        };
         const item_ptr = self.tasks.get_ptr(index);
         item_ptr.* = item;
         try self.set_runnable(index);

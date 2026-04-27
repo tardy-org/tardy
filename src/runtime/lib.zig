@@ -54,50 +54,50 @@ pub const Runtime = struct {
         };
     }
 
-    pub fn deinit(self: *Runtime) void {
-        self.storage.deinit();
-        self.scheduler.deinit();
-        self.allocator.free(self.aio.completions);
-        self.aio.deinit(self.allocator);
+    pub fn deinit(rt: *Runtime) void {
+        rt.storage.deinit();
+        rt.scheduler.deinit(rt.io);
+        rt.allocator.free(rt.aio.completions);
+        rt.aio.deinit(rt.allocator, rt.io);
     }
 
     /// Wake the given Runtime.
     /// Safe to call from a different Runtime.
-    pub fn wake(self: *Runtime) !void {
-        if (self.running) try self.aio.wake();
+    pub fn wake(rt: *Runtime) !void {
+        if (rt.running) try rt.aio.wake(rt.io);
     }
 
     /// Trigger a waiting (`.wait_for_trigger`) Task.
     /// Safe to call from a different Runtime.
-    pub fn trigger(self: *Runtime, index: usize) !void {
-        if (self.running) {
-            log.debug("{d} - triggering {d}", .{ self.id, index });
-            try self.scheduler.trigger(index);
-            try self.wake();
+    pub fn trigger(rt: *Runtime, index: usize) !void {
+        if (rt.running) {
+            log.debug("{d} - triggering {d}", .{ rt.id, index });
+            try rt.scheduler.trigger(index);
+            try rt.wake();
         }
     }
 
     /// Stop the given Runtime.
     /// Safe to call from a different Runtime.
-    pub fn stop(self: *Runtime) void {
-        if (self.running) {
-            self.running = false;
-            self.aio.wake() catch unreachable;
+    pub fn stop(rt: *Runtime) void {
+        if (rt.running) {
+            rt.running = false;
+            rt.aio.wake(rt.io) catch unreachable;
         }
     }
 
     /// Spawns a new Frame. This creates a new heap-allocated stack for the Frame to run.
     pub fn spawn(
-        self: *Runtime,
+        rt: *Runtime,
         frame_ctx: anytype,
         comptime frame_fn: anytype,
         stack_size: usize,
     ) !void {
-        try self.scheduler.spawn(frame_ctx, frame_fn, stack_size);
+        try rt.scheduler.spawn(frame_ctx, frame_fn, stack_size);
     }
 
-    fn run_task(self: *Runtime, task: *Task) !void {
-        self.current_task = task.index;
+    fn run_task(rt: *Runtime, task: *Task) !void {
+        rt.current_task = task.index;
 
         const frame = task.frame;
         frame.proceed();
@@ -107,91 +107,91 @@ pub const Runtime = struct {
             .done => {
                 // remember: task is invalid IF it resizes.
                 // so we only hit that condition sometimes in here.
-                const index = self.current_task.?;
+                const index = rt.current_task.?;
                 // If the frame is done, clean it up.
-                try self.scheduler.release(index);
+                try rt.scheduler.release(index);
                 // frees the heap-allocated stack.
                 //
                 // this should be evaluted as it does have a perf impact but
                 // if frames are long lived (as they should be) and most data is
                 // stack allocated within that context, i think it should be ok?
-                frame.deinit(self.allocator);
+                frame.deinit(rt.allocator);
 
                 // if we have no more tasks, we are done and can set our running status to false.
-                if (self.scheduler.tasks.empty()) self.running = false;
+                if (rt.scheduler.tasks.empty()) rt.running = false;
             },
             .errored => {
-                const index = self.current_task.?;
+                const index = rt.current_task.?;
                 log.warn("cleaning up failed frame...", .{});
-                try self.scheduler.release(index);
-                frame.deinit(self.allocator);
+                try rt.scheduler.release(index);
+                frame.deinit(rt.allocator);
             },
         }
     }
 
-    pub fn run(self: *Runtime) !void {
-        defer self.running = false;
-        self.running = true;
+    pub fn run(rt: *Runtime) !void {
+        defer rt.running = false;
+        rt.running = true;
 
         while (true) {
             var force_woken = false;
 
             // Processing Section
-            var iter = self.scheduler.tasks.dirty.iterator(.{ .kind = .set });
+            var iter = rt.scheduler.tasks.dirty.iterator(.{ .kind = .set });
             while (iter.next()) |index| {
-                log.debug("{d} - processing index={d}", .{ self.id, index });
-                const task = self.scheduler.tasks.get_ptr(index);
+                log.debug("{d} - processing index={d}", .{ rt.id, index });
+                const task = rt.scheduler.tasks.get_ptr(index);
                 switch (task.state) {
                     .runnable => {
-                        log.debug("{d} - running index={d}", .{ self.id, index });
-                        try self.run_task(task);
-                        self.current_task = null;
+                        log.debug("{d} - running index={d}", .{ rt.id, index });
+                        try rt.run_task(task);
+                        rt.current_task = null;
                     },
-                    .wait_for_trigger => if (self.scheduler.triggers.is_set(index)) {
+                    .wait_for_trigger => if (rt.scheduler.triggers.is_set(rt.io, index)) {
                         log.debug("{d} - trigger={d} | state={t}", .{
-                            self.id,
+                            rt.id,
                             index,
                             task.state,
                         });
 
-                        self.scheduler.triggers.unset(index);
-                        try self.scheduler.set_runnable(index);
+                        rt.scheduler.triggers.unset(rt.io, index);
+                        try rt.scheduler.set_runnable(index);
                     },
                     .wait_for_io => continue,
                     .dead => unreachable,
                 }
             }
 
-            if (!self.running) break;
+            if (!rt.running) break;
             // If we have no tasks, we might as well exit.
-            if (self.scheduler.tasks.empty()) break;
+            if (rt.scheduler.tasks.empty()) break;
 
             // I/O Section
-            try self.aio.submit();
+            try rt.aio.submit();
 
             // If we don't have any runnable tasks, we just want to wait for an Async I/O.
             // Otherwise, we want to just reap whatever completion we have and continue running.
-            const wait_for_io = self.scheduler.runnable == 0;
-            log.debug("{d} - Wait for I/O: {}", .{ self.id, wait_for_io });
+            const wait_for_io = rt.scheduler.runnable == 0;
+            log.debug("{d} - Wait for I/O: {}", .{ rt.id, wait_for_io });
 
-            const completions = try self.aio.reap(wait_for_io);
+            const completions = try rt.aio.reap(wait_for_io);
             for (completions) |completion| {
                 if (completion.result == .wake) {
                     force_woken = true;
-                    log.debug("{d} - waking up", .{self.id});
-                    if (!self.running) return;
+                    log.debug("{d} - waking up", .{rt.id});
+                    if (!rt.running) return;
                     continue;
                 }
 
                 const index = completion.task;
-                log.debug("{d} - completion={d}", .{ self.id, index });
-                const task = self.scheduler.tasks.get_ptr(index);
+                log.debug("{d} - completion={d}", .{ rt.id, index });
+                const task = rt.scheduler.tasks.get_ptr(index);
                 assert(task.state == .wait_for_io);
                 task.result = completion.result;
-                try self.scheduler.set_runnable(index);
+                try rt.scheduler.set_runnable(index);
             }
 
-            if (self.scheduler.runnable == 0 and !force_woken) {
+            if (rt.scheduler.runnable == 0 and !force_woken) {
                 log.warn("no more runnable tasks", .{});
                 break;
             }

@@ -116,7 +116,7 @@ fn timeout_task(rt: *Runtime, other: *const ?*Runtime) !void {
 
     // Checks every second to see if the other Runtime is done.
     for (0..TIMEOUT_LENGTH_S) |_| {
-        try Timer.delay(rt, .{ .seconds = 1 });
+        try Timer.delay(rt, .{ .nanoseconds = 1 * std.time.ns_per_s });
         if (other.*) |o| if (!o.running) break;
     }
 

@@ -62,14 +62,13 @@ const WriteJob = struct {
 
 const AcceptJob = struct {
     socket: std.posix.socket_t,
-    addr: std.net.Address,
-    addr_len: usize = @sizeOf(std.net.Address),
+    addr: Socket.Address,
     kind: Socket.Kind,
 };
 
 const ConnectJob = struct {
     socket: std.posix.socket_t,
-    addr: std.net.Address,
+    addr: Socket.Address,
     kind: Socket.Kind,
 };
 
