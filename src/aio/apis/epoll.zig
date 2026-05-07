@@ -1,6 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const LinuxError = std.os.linux.E;
+const linux = std.os.linux;
 
 const Pool = @import("../../core/pool.zig").Pool;
 const Queue = @import("../../core/queue.zig").Queue;
@@ -30,7 +30,7 @@ const log = std.log.scoped(.@"tardy/aio/epoll");
 pub const AsyncEpoll = struct {
     epoll_fd: std.posix.fd_t,
     wake_event_fd: std.posix.fd_t,
-    events: []std.os.linux.epoll_event,
+    events: []linux.epoll_event,
 
     jobs: Pool(Job),
 
@@ -40,10 +40,10 @@ pub const AsyncEpoll = struct {
         assert(epoll_fd > -1);
         errdefer std.posix.close(epoll_fd);
 
-        const wake_event_fd: std.posix.fd_t = @intCast(std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC));
+        const wake_event_fd: std.posix.fd_t = @intCast(linux.eventfd(0, linux.EFD.CLOEXEC));
         errdefer std.posix.close(wake_event_fd);
 
-        const events = try allocator.alloc(std.os.linux.epoll_event, options.size_aio_reap_max);
+        const events = try allocator.alloc(linux.epoll_event, options.size_aio_reap_max);
         errdefer allocator.free(events);
 
         var jobs: Pool(Job) = try .init(allocator, size, options.pooling);
@@ -58,12 +58,12 @@ pub const AsyncEpoll = struct {
             .task = @bitCast(@as(isize, -1)),
         };
 
-        var event: std.os.linux.epoll_event = .{
-            .events = std.os.linux.EPOLL.IN,
+        var event: linux.epoll_event = .{
+            .events = linux.EPOLL.IN,
             .data = .{ .u64 = index },
         };
 
-        try std.posix.epoll_ctl(epoll_fd, std.os.linux.EPOLL.CTL_ADD, wake_event_fd, &event);
+        try std.posix.epoll_ctl(epoll_fd, linux.EPOLL.CTL_ADD, wake_event_fd, &event);
 
         return .{
             .epoll_fd = epoll_fd,
@@ -104,12 +104,12 @@ pub const AsyncEpoll = struct {
 
         const item = self.jobs.get_ptr(index);
 
-        const timer_fd_usize = std.os.linux.timerfd_create(
-            std.os.linux.TIMERFD_CLOCK.MONOTONIC,
+        const timer_fd_usize = linux.timerfd_create(
+            linux.TIMERFD_CLOCK.MONOTONIC,
             .{ .NONBLOCK = true },
         );
         const timer_fd: i32 = @intCast(timer_fd_usize);
-        const ktimerspec: std.os.linux.itimerspec = .{
+        const ktimerspec: linux.itimerspec = .{
             .it_value = .{
                 .sec = @intCast(timespec.seconds),
                 .nsec = @intCast(timespec.nanos),
@@ -117,8 +117,8 @@ pub const AsyncEpoll = struct {
             .it_interval = .{ .sec = 0, .nsec = 0 },
         };
 
-        const rc = std.os.linux.timerfd_settime(timer_fd, .{}, &ktimerspec, null);
-        const e: LinuxError = std.posix.errno(rc);
+        const rc = linux.timerfd_settime(timer_fd, .{}, &ktimerspec, null);
+        const e: linux.E = std.posix.errno(rc);
         if (e != .SUCCESS) return error.SetTimerFailed;
 
         item.* = .{
@@ -127,8 +127,8 @@ pub const AsyncEpoll = struct {
             .task = task,
         };
 
-        var event: std.os.linux.epoll_event = .{
-            .events = std.os.linux.EPOLL.IN,
+        var event: linux.epoll_event = .{
+            .events = linux.EPOLL.IN,
             .data = .{ .u64 = index },
         };
 
@@ -158,8 +158,8 @@ pub const AsyncEpoll = struct {
             .task = task,
         };
 
-        var event: std.os.linux.epoll_event = .{
-            .events = std.os.linux.EPOLL.IN,
+        var event: linux.epoll_event = .{
+            .events = linux.EPOLL.IN,
             .data = .{ .u64 = index },
         };
 
@@ -198,8 +198,8 @@ pub const AsyncEpoll = struct {
             else => return e,
         };
 
-        var event: std.os.linux.epoll_event = .{
-            .events = std.os.linux.EPOLL.OUT,
+        var event: linux.epoll_event = .{
+            .events = linux.EPOLL.OUT,
             .data = .{ .u64 = index },
         };
 
@@ -222,8 +222,8 @@ pub const AsyncEpoll = struct {
             .task = task,
         };
 
-        var event: std.os.linux.epoll_event = .{
-            .events = std.os.linux.EPOLL.IN,
+        var event: linux.epoll_event = .{
+            .events = linux.EPOLL.IN,
             .data = .{ .u64 = index },
         };
 
@@ -246,15 +246,15 @@ pub const AsyncEpoll = struct {
             .task = task,
         };
 
-        var event: std.os.linux.epoll_event = .{
-            .events = std.os.linux.EPOLL.OUT,
+        var event: linux.epoll_event = .{
+            .events = linux.EPOLL.OUT,
             .data = .{ .u64 = index },
         };
 
         try self.add_or_mod_fd(socket, &event);
     }
 
-    fn add_or_mod_fd(self: *AsyncEpoll, fd: std.posix.fd_t, event: *std.os.linux.epoll_event) !void {
+    fn add_or_mod_fd(self: *AsyncEpoll, fd: std.posix.fd_t, event: *linux.epoll_event) !void {
         self.add_fd(fd, event) catch |e| {
             if (e == error.FileDescriptorAlreadyPresentInSet) {
                 try self.mod_fd(fd, event);
@@ -262,16 +262,16 @@ pub const AsyncEpoll = struct {
         };
     }
 
-    inline fn add_fd(self: *AsyncEpoll, fd: std.posix.fd_t, event: *std.os.linux.epoll_event) !void {
-        try std.posix.epoll_ctl(self.epoll_fd, std.os.linux.EPOLL.CTL_ADD, fd, event);
+    inline fn add_fd(self: *AsyncEpoll, fd: std.posix.fd_t, event: *linux.epoll_event) !void {
+        try std.posix.epoll_ctl(self.epoll_fd, linux.EPOLL.CTL_ADD, fd, event);
     }
 
-    inline fn mod_fd(self: *AsyncEpoll, fd: std.posix.fd_t, event: *std.os.linux.epoll_event) !void {
-        try std.posix.epoll_ctl(self.epoll_fd, std.os.linux.EPOLL.CTL_MOD, fd, event);
+    inline fn mod_fd(self: *AsyncEpoll, fd: std.posix.fd_t, event: *linux.epoll_event) !void {
+        try std.posix.epoll_ctl(self.epoll_fd, linux.EPOLL.CTL_MOD, fd, event);
     }
 
     inline fn remove_fd(self: *AsyncEpoll, fd: std.posix.fd_t) !void {
-        try std.posix.epoll_ctl(self.epoll_fd, std.os.linux.EPOLL.CTL_DEL, fd, null);
+        try std.posix.epoll_ctl(self.epoll_fd, linux.EPOLL.CTL_DEL, fd, null);
     }
 
     pub fn wake(runner: *anyopaque) !void {
@@ -324,7 +324,7 @@ pub const AsyncEpoll = struct {
                         .timer => |inner| {
                             const timer_fd = inner.fd;
                             defer epoll.remove_fd(timer_fd) catch unreachable;
-                            assert(event.events & std.os.linux.EPOLL.IN != 0);
+                            assert(event.events & linux.EPOLL.IN != 0);
 
                             var buffer: [8]u8 = undefined;
                             // Should NEVER fail.
@@ -336,7 +336,7 @@ pub const AsyncEpoll = struct {
                             break :blk .none;
                         },
                         .accept => |*inner| {
-                            assert(event.events & std.os.linux.EPOLL.IN != 0);
+                            assert(event.events & linux.EPOLL.IN != 0);
 
                             const result: AcceptResult = result: {
                                 const handle = std.posix.accept(
@@ -366,10 +366,10 @@ pub const AsyncEpoll = struct {
                             break :blk .{ .accept = result };
                         },
                         .connect => {
-                            assert(event.events & std.os.linux.EPOLL.OUT != 0);
+                            assert(event.events & linux.EPOLL.OUT != 0);
 
                             const result: ConnectResult = result: {
-                                if (event.events & std.os.linux.EPOLL.ERR != 0) {
+                                if (event.events & linux.EPOLL.ERR != 0) {
                                     break :result .{ .err = ConnectError.Unexpected };
                                 } else {
                                     break :result .actual;
@@ -379,7 +379,7 @@ pub const AsyncEpoll = struct {
                             break :blk .{ .connect = result };
                         },
                         .recv => |inner| {
-                            assert(event.events & std.os.linux.EPOLL.IN != 0);
+                            assert(event.events & linux.EPOLL.IN != 0);
 
                             const result: RecvResult = result: {
                                 const length = std.posix.recv(
@@ -408,7 +408,7 @@ pub const AsyncEpoll = struct {
                             break :blk .{ .recv = result };
                         },
                         .send => |inner| {
-                            assert(event.events & std.os.linux.EPOLL.OUT != 0);
+                            assert(event.events & linux.EPOLL.OUT != 0);
 
                             const result: SendResult = result: {
                                 const length = std.posix.send(

@@ -115,13 +115,13 @@ pub fn ZeroCopy(comptime T: type) type {
 }
 
 test "ZeroCopy: First" {
-    const garbage: []const u8 = &[_]u8{212} ** 128;
+    const garbage: [128]u8 = @splat(212);
 
     var zc: ZeroCopy(u8) = try .init(testing.allocator, 512);
     defer zc.deinit();
 
     const write_area = try zc.get_write_area(garbage.len);
-    @memcpy(write_area, garbage);
+    @memcpy(write_area, garbage[0..]);
     zc.mark_written(write_area.len);
 
     try testing.expectEqualSlices(u8, garbage[0..], zc.as_slice()[0..write_area.len]);

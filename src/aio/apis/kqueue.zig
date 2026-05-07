@@ -1,6 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const PosixError = std.posix.E;
+const posix = std.posix;
 const Atomic = std.atomic.Value;
 
 const Pool = @import("../../core/pool.zig").Pool;
@@ -27,21 +27,21 @@ const log = std.log.scoped(.@"tardy/aio/kqueue");
 const WAKE_IDENT = 1;
 
 pub const AsyncKqueue = struct {
-    kqueue_fd: std.posix.fd_t,
+    kqueue_fd: posix.fd_t,
 
-    changes: []std.posix.Kevent,
+    changes: []posix.Kevent,
     change_count: usize = 0,
-    events: []std.posix.Kevent,
+    events: []posix.Kevent,
 
     jobs: Pool(Job),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncOptions) !AsyncKqueue {
-        const kqueue_fd = try std.posix.kqueue();
+        const kqueue_fd = try posix.kqueue();
         assert(kqueue_fd > -1);
-        errdefer std.posix.close(kqueue_fd);
+        errdefer posix.close(kqueue_fd);
 
-        const events = try allocator.alloc(std.posix.Kevent, options.size_aio_reap_max);
-        const changes = try allocator.alloc(std.posix.Kevent, options.size_aio_reap_max);
+        const events = try allocator.alloc(posix.Kevent, options.size_aio_reap_max);
+        const changes = try allocator.alloc(posix.Kevent, options.size_aio_reap_max);
         var jobs: Pool(Job) = try .init(allocator, options.size_tasks_initial + 1, options.pooling);
 
         const index = jobs.borrow_assume_unset(0);
@@ -52,16 +52,16 @@ pub const AsyncKqueue = struct {
             .task = undefined,
         };
 
-        const event: std.posix.Kevent = .{
+        const event: posix.Kevent = .{
             .ident = WAKE_IDENT,
-            .filter = std.posix.system.EVFILT.USER,
-            .flags = std.posix.system.EV.ADD | std.posix.system.EV.CLEAR,
+            .filter = posix.system.EVFILT.USER,
+            .flags = posix.system.EV.ADD | posix.system.EV.CLEAR,
             .fflags = 0,
             .data = 0,
             .udata = 0,
         };
 
-        _ = try std.posix.kevent(kqueue_fd, &.{event}, &.{}, null);
+        _ = try posix.kevent(kqueue_fd, &.{event}, &.{}, null);
 
         return AsyncKqueue{
             .kqueue_fd = kqueue_fd,
@@ -73,7 +73,7 @@ pub const AsyncKqueue = struct {
     }
 
     pub fn inner_deinit(self: *AsyncKqueue, allocator: std.mem.Allocator) void {
-        std.posix.close(self.kqueue_fd);
+        posix.close(self.kqueue_fd);
         allocator.free(self.events);
         allocator.free(self.changes);
         self.jobs.deinit();
@@ -122,8 +122,8 @@ pub const AsyncKqueue = struct {
 
             event.* = .{
                 .ident = index,
-                .filter = std.posix.system.EVFILT.TIMER,
-                .flags = std.posix.system.EV.ADD | std.posix.system.EV.ONESHOT,
+                .filter = posix.system.EVFILT.TIMER,
+                .flags = posix.system.EV.ADD | posix.system.EV.ONESHOT,
                 .fflags = 0,
                 .data = milliseconds,
                 .udata = index,
@@ -131,7 +131,7 @@ pub const AsyncKqueue = struct {
         } else return error.ChangeQueueFull;
     }
 
-    fn queue_accept(self: *AsyncKqueue, task: usize, socket: std.posix.socket_t, kind: Socket.Kind) !void {
+    fn queue_accept(self: *AsyncKqueue, task: usize, socket: posix.socket_t, kind: Socket.Kind) !void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
         const item = self.jobs.get_ptr(index);
@@ -154,8 +154,8 @@ pub const AsyncKqueue = struct {
 
             event.* = .{
                 .ident = @intCast(socket),
-                .filter = std.posix.system.EVFILT.READ,
-                .flags = std.posix.system.EV.ADD | std.posix.system.EV.ONESHOT,
+                .filter = posix.system.EVFILT.READ,
+                .flags = posix.system.EV.ADD | posix.system.EV.ONESHOT,
                 .fflags = 0,
                 .data = 0,
                 .udata = index,
@@ -166,7 +166,7 @@ pub const AsyncKqueue = struct {
     fn queue_connect(
         self: *AsyncKqueue,
         task: usize,
-        socket: std.posix.socket_t,
+        socket: posix.socket_t,
         addr: std.net.Address,
         kind: Socket.Kind,
     ) !void {
@@ -186,12 +186,12 @@ pub const AsyncKqueue = struct {
         };
 
         if (self.change_count < self.changes.len) {
-            std.posix.connect(
+            posix.connect(
                 socket,
                 &addr.any,
                 addr.getOsSockLen(),
             ) catch |e| switch (e) {
-                std.posix.ConnectError.WouldBlock => {},
+                posix.ConnectError.WouldBlock => {},
                 else => return e,
             };
 
@@ -200,8 +200,8 @@ pub const AsyncKqueue = struct {
 
             event.* = .{
                 .ident = @intCast(socket),
-                .filter = std.posix.system.EVFILT.WRITE,
-                .flags = std.posix.system.EV.ADD | std.posix.system.EV.ONESHOT,
+                .filter = posix.system.EVFILT.WRITE,
+                .flags = posix.system.EV.ADD | posix.system.EV.ONESHOT,
                 .fflags = 0,
                 .data = 0,
                 .udata = index,
@@ -212,7 +212,7 @@ pub const AsyncKqueue = struct {
     fn queue_recv(
         self: *AsyncKqueue,
         task: usize,
-        socket: std.posix.socket_t,
+        socket: posix.socket_t,
         buffer: []u8,
     ) !void {
         const index = try self.jobs.borrow_hint(task);
@@ -235,8 +235,8 @@ pub const AsyncKqueue = struct {
 
             event.* = .{
                 .ident = @intCast(socket),
-                .filter = std.posix.system.EVFILT.READ,
-                .flags = std.posix.system.EV.ADD | std.posix.system.EV.ONESHOT,
+                .filter = posix.system.EVFILT.READ,
+                .flags = posix.system.EV.ADD | posix.system.EV.ONESHOT,
                 .fflags = 0,
                 .data = 0,
                 .udata = index,
@@ -247,7 +247,7 @@ pub const AsyncKqueue = struct {
     fn queue_send(
         self: *AsyncKqueue,
         task: usize,
-        socket: std.posix.socket_t,
+        socket: posix.socket_t,
         buffer: []const u8,
     ) !void {
         const index = try self.jobs.borrow_hint(task);
@@ -270,8 +270,8 @@ pub const AsyncKqueue = struct {
 
             event.* = .{
                 .ident = @intCast(socket),
-                .filter = std.posix.system.EVFILT.WRITE,
-                .flags = std.posix.system.EV.ADD | std.posix.system.EV.ONESHOT,
+                .filter = posix.system.EVFILT.WRITE,
+                .flags = posix.system.EV.ADD | posix.system.EV.ONESHOT,
                 .fflags = 0,
                 .data = 0,
                 .udata = index,
@@ -282,22 +282,22 @@ pub const AsyncKqueue = struct {
     pub fn wake(runner: *anyopaque) !void {
         const kqueue: *AsyncKqueue = @ptrCast(@alignCast(runner));
 
-        const event: std.posix.Kevent = .{
+        const event: posix.Kevent = .{
             .ident = WAKE_IDENT,
-            .filter = std.posix.system.EVFILT.USER,
-            .flags = std.posix.system.EV.ADD | std.posix.system.EV.ONESHOT,
-            .fflags = std.posix.system.NOTE.TRIGGER,
+            .filter = posix.system.EVFILT.USER,
+            .flags = posix.system.EV.ADD | posix.system.EV.ONESHOT,
+            .fflags = posix.system.NOTE.TRIGGER,
             .data = 0,
             .udata = 0,
         };
 
         // add a new event to the change list.
-        _ = try std.posix.kevent(kqueue.kqueue_fd, &.{event}, &.{}, null);
+        _ = try posix.kevent(kqueue.kqueue_fd, &.{event}, &.{}, null);
     }
 
     pub fn submit(runner: *anyopaque) !void {
         const kqueue: *AsyncKqueue = @ptrCast(@alignCast(runner));
-        _ = try std.posix.kevent(kqueue.kqueue_fd, kqueue.changes[0..kqueue.change_count], &.{}, null);
+        _ = try posix.kevent(kqueue.kqueue_fd, kqueue.changes[0..kqueue.change_count], &.{}, null);
         kqueue.change_count = 0;
     }
 
@@ -309,12 +309,12 @@ pub const AsyncKqueue = struct {
             const remaining = completions.len - reaped;
             if (remaining == 0) break;
 
-            const timeout_spec: std.posix.timespec = .{ .sec = 0, .nsec = 0 };
-            const timeout: ?*const std.posix.timespec = if (!wait or reaped > 0) &timeout_spec else null;
+            const timeout_spec: posix.timespec = .{ .sec = 0, .nsec = 0 };
+            const timeout: ?*const posix.timespec = if (!wait or reaped > 0) &timeout_spec else null;
             log.debug("remaining count={d}", .{remaining});
 
             // Handle all of the kqueue I/O
-            const kqueue_events = try std.posix.kevent(
+            const kqueue_events = try posix.kevent(
                 kqueue.kqueue_fd,
                 &.{},
                 kqueue.events[0..remaining],
@@ -333,19 +333,19 @@ pub const AsyncKqueue = struct {
                 const result: Result = blk: {
                     switch (job.type) {
                         .wake => {
-                            assert(event.filter == std.posix.system.EVFILT.USER);
+                            assert(event.filter == posix.system.EVFILT.USER);
                             assert(event.ident == WAKE_IDENT);
                             job_complete = false;
                             break :blk .wake;
                         },
                         .timer => |inner| {
-                            assert(event.filter == std.posix.system.EVFILT.TIMER);
+                            assert(event.filter == posix.system.EVFILT.TIMER);
                             assert(inner == .none);
                             break :blk .none;
                         },
                         .accept => |*inner| {
-                            assert(event.filter == std.posix.system.EVFILT.READ);
-                            const rc = std.posix.system.accept(
+                            assert(event.filter == posix.system.EVFILT.READ);
+                            const rc = posix.system.accept(
                                 inner.socket,
                                 &inner.addr.any,
                                 @ptrCast(&inner.addr_len),
@@ -360,19 +360,19 @@ pub const AsyncKqueue = struct {
                             } };
 
                             const result: AcceptResult = result: {
-                                const e: PosixError = std.posix.errno(rc);
+                                const e: posix.E = posix.errno(rc);
                                 const err = switch (e) {
-                                    PosixError.AGAIN => AcceptError.WouldBlock,
-                                    PosixError.BADF => AcceptError.InvalidFd,
-                                    PosixError.CONNABORTED => AcceptError.ConnectionAborted,
-                                    PosixError.FAULT => AcceptError.InvalidAddress,
-                                    PosixError.INTR => AcceptError.Interrupted,
-                                    PosixError.INVAL => AcceptError.NotListening,
-                                    PosixError.MFILE => AcceptError.ProcessFdQuotaExceeded,
-                                    PosixError.NFILE => AcceptError.SystemFdQuotaExceeded,
-                                    PosixError.NOBUFS, PosixError.NOMEM => AcceptError.OutOfMemory,
-                                    PosixError.NOTSOCK => AcceptError.NotASocket,
-                                    PosixError.OPNOTSUPP => AcceptError.OperationNotSupported,
+                                    .AGAIN => AcceptError.WouldBlock,
+                                    .BADF => AcceptError.InvalidFd,
+                                    .CONNABORTED => AcceptError.ConnectionAborted,
+                                    .FAULT => AcceptError.InvalidAddress,
+                                    .INTR => AcceptError.Interrupted,
+                                    .INVAL => AcceptError.NotListening,
+                                    .MFILE => AcceptError.ProcessFdQuotaExceeded,
+                                    .NFILE => AcceptError.SystemFdQuotaExceeded,
+                                    .NOBUFS, .NOMEM => AcceptError.OutOfMemory,
+                                    .NOTSOCK => AcceptError.NotASocket,
+                                    .OPNOTSUPP => AcceptError.OperationNotSupported,
                                     else => AcceptError.Unexpected,
                                 };
 
@@ -382,29 +382,29 @@ pub const AsyncKqueue = struct {
                             break :blk .{ .accept = result };
                         },
                         .connect => {
-                            assert(event.filter == std.posix.system.EVFILT.WRITE);
+                            assert(event.filter == posix.system.EVFILT.WRITE);
 
                             const result: ConnectResult = result: {
-                                if (event.flags & std.posix.system.EV.ERROR != 0) {
+                                if (event.flags & posix.system.EV.ERROR != 0) {
                                     const rc = event.data;
-                                    const err = switch (std.posix.errno(rc)) {
-                                        PosixError.AGAIN,
-                                        PosixError.ALREADY,
-                                        PosixError.INPROGRESS,
+                                    const err = switch (posix.errno(rc)) {
+                                        .AGAIN,
+                                        .ALREADY,
+                                        .INPROGRESS,
                                         => unreachable,
-                                        PosixError.ACCES, PosixError.PERM => ConnectError.AccessDenied,
-                                        PosixError.ADDRINUSE => ConnectError.AddressInUse,
-                                        PosixError.ADDRNOTAVAIL => ConnectError.AddressNotAvailable,
-                                        PosixError.AFNOSUPPORT => ConnectError.AddressFamilyNotSupported,
-                                        PosixError.BADF => ConnectError.InvalidFd,
-                                        PosixError.CONNREFUSED => ConnectError.ConnectionRefused,
-                                        PosixError.FAULT => ConnectError.InvalidAddress,
-                                        PosixError.INTR => ConnectError.Interrupted,
-                                        PosixError.ISCONN => ConnectError.AlreadyConnected,
-                                        PosixError.NETUNREACH => ConnectError.NetworkUnreachable,
-                                        PosixError.NOTSOCK => ConnectError.NotASocket,
-                                        PosixError.PROTOTYPE => ConnectError.ProtocolFamilyNotSupported,
-                                        PosixError.TIMEDOUT => ConnectError.TimedOut,
+                                        .ACCES, .PERM => ConnectError.AccessDenied,
+                                        .ADDRINUSE => ConnectError.AddressInUse,
+                                        .ADDRNOTAVAIL => ConnectError.AddressNotAvailable,
+                                        .AFNOSUPPORT => ConnectError.AddressFamilyNotSupported,
+                                        .BADF => ConnectError.InvalidFd,
+                                        .CONNREFUSED => ConnectError.ConnectionRefused,
+                                        .FAULT => ConnectError.InvalidAddress,
+                                        .INTR => ConnectError.Interrupted,
+                                        .ISCONN => ConnectError.AlreadyConnected,
+                                        .NETUNREACH => ConnectError.NetworkUnreachable,
+                                        .NOTSOCK => ConnectError.NotASocket,
+                                        .PROTOTYPE => ConnectError.ProtocolFamilyNotSupported,
+                                        .TIMEDOUT => ConnectError.TimedOut,
                                         else => ConnectError.Unexpected,
                                     };
                                     break :result .{ .err = err };
@@ -414,8 +414,8 @@ pub const AsyncKqueue = struct {
                             break :blk .{ .connect = result };
                         },
                         .recv => |inner| {
-                            assert(event.filter == std.posix.system.EVFILT.READ);
-                            const rc = std.posix.system.recvfrom(
+                            assert(event.filter == posix.system.EVFILT.READ);
+                            const rc = posix.system.recvfrom(
                                 inner.socket,
                                 inner.buffer.ptr,
                                 inner.buffer.len,
@@ -428,17 +428,17 @@ pub const AsyncKqueue = struct {
                             if (rc == 0) break :blk .{ .recv = .{ .err = RecvError.Closed } };
 
                             const result: RecvResult = result: {
-                                const e: PosixError = std.posix.errno(rc);
+                                const e: posix.E = posix.errno(rc);
                                 const err = switch (e) {
-                                    PosixError.AGAIN => RecvError.WouldBlock,
-                                    PosixError.BADF => RecvError.InvalidFd,
-                                    PosixError.CONNREFUSED => RecvError.ConnectionRefused,
-                                    PosixError.FAULT => RecvError.InvalidAddress,
-                                    PosixError.INTR => RecvError.Interrupted,
-                                    PosixError.INVAL => RecvError.InvalidArguments,
-                                    PosixError.NOMEM => RecvError.OutOfMemory,
-                                    PosixError.NOTCONN => RecvError.NotConnected,
-                                    PosixError.NOTSOCK => RecvError.NotASocket,
+                                    .AGAIN => RecvError.WouldBlock,
+                                    .BADF => RecvError.InvalidFd,
+                                    .CONNREFUSED => RecvError.ConnectionRefused,
+                                    .FAULT => RecvError.InvalidAddress,
+                                    .INTR => RecvError.Interrupted,
+                                    .INVAL => RecvError.InvalidArguments,
+                                    .NOMEM => RecvError.OutOfMemory,
+                                    .NOTCONN => RecvError.NotConnected,
+                                    .NOTSOCK => RecvError.NotASocket,
                                     else => RecvError.Unexpected,
                                 };
 
@@ -448,27 +448,27 @@ pub const AsyncKqueue = struct {
                             break :blk .{ .recv = result };
                         },
                         .send => |inner| {
-                            assert(event.filter == std.posix.system.EVFILT.WRITE);
-                            const rc = std.posix.system.send(inner.socket, inner.buffer.ptr, inner.buffer.len, 0);
+                            assert(event.filter == posix.system.EVFILT.WRITE);
+                            const rc = posix.system.send(inner.socket, inner.buffer.ptr, inner.buffer.len, 0);
                             if (rc >= 0) break :blk .{ .send = .{ .actual = @intCast(rc) } };
 
                             const result: SendResult = result: {
-                                const e: PosixError = std.posix.errno(rc);
+                                const e: posix.E = posix.errno(rc);
                                 const err = switch (e) {
-                                    PosixError.AGAIN => SendError.WouldBlock,
-                                    PosixError.ACCES => SendError.AccessDenied,
-                                    PosixError.ALREADY => SendError.OpenInProgress,
-                                    PosixError.BADF => SendError.InvalidFd,
-                                    PosixError.CONNRESET, PosixError.PIPE => SendError.Closed,
-                                    PosixError.DESTADDRREQ => SendError.NoDestinationAddress,
-                                    PosixError.FAULT => SendError.InvalidAddress,
-                                    PosixError.INTR => SendError.Interrupted,
-                                    PosixError.INVAL => SendError.InvalidArguments,
-                                    PosixError.ISCONN => SendError.AlreadyConnected,
-                                    PosixError.MSGSIZE => SendError.InvalidSize,
-                                    PosixError.NOBUFS, PosixError.NOMEM => SendError.OutOfMemory,
-                                    PosixError.NOTCONN => SendError.NotConnected,
-                                    PosixError.OPNOTSUPP => SendError.OperationNotSupported,
+                                    .AGAIN => SendError.WouldBlock,
+                                    .ACCES => SendError.AccessDenied,
+                                    .ALREADY => SendError.OpenInProgress,
+                                    .BADF => SendError.InvalidFd,
+                                    .CONNRESET, .PIPE => SendError.Closed,
+                                    .DESTADDRREQ => SendError.NoDestinationAddress,
+                                    .FAULT => SendError.InvalidAddress,
+                                    .INTR => SendError.Interrupted,
+                                    .INVAL => SendError.InvalidArguments,
+                                    .ISCONN => SendError.AlreadyConnected,
+                                    .MSGSIZE => SendError.InvalidSize,
+                                    .NOBUFS, .NOMEM => SendError.OutOfMemory,
+                                    .NOTCONN => SendError.NotConnected,
+                                    .OPNOTSUPP => SendError.OperationNotSupported,
                                     else => SendError.Unexpected,
                                 };
 

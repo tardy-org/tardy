@@ -1,4 +1,4 @@
-// vendored from https://codeberg.com/ziglang/zig/blob/ee574f665c4e3d1be4950b307ce3ff8324f13f46/lib/std/posix.zig
+// vendored from https://codeberg.org/ziglang/zig/blob/ee574f665c4e3d1be4950b307ce3ff8324f13f46/lib/std/posix.zig
 
 pub fn close(handle: posix.fd_t) void {
     switch (posix.errno(system.close(handle))) {
@@ -444,6 +444,189 @@ pub fn setsockopt(fd: socket_t, level: i32, optname: u32, opt: []const u8) SetSo
     }
 }
 
+/// Transmit a message to another socket.
+///
+/// The `send` call may be used only when the socket is in a connected state (so that the intended
+/// recipient  is  known).   The  only  difference  between `send` and `write` is the presence of
+/// flags.  With a zero flags argument, `send` is equivalent to  `write`.   Also,  the  following
+/// call
+///
+///     send(sockfd, buf, len, flags);
+///
+/// is equivalent to
+///
+///     sendto(sockfd, buf, len, flags, NULL, 0);
+///
+/// There is no  indication  of  failure  to  deliver.
+///
+/// When the message does not fit into the send buffer of  the  socket,  `send`  normally  blocks,
+/// unless  the socket has been placed in nonblocking I/O mode.  In nonblocking mode it would fail
+/// with `SendError.WouldBlock`.  The `select` call may be used  to  determine when it is
+/// possible to send more data.
+pub fn send(
+    /// The file descriptor of the sending socket.
+    sockfd: socket_t,
+    buf: []const u8,
+    flags: u32,
+) SendError!usize {
+    return sendto(sockfd, buf, flags, null, 0) catch |err| switch (err) {
+        error.AddressFamilyUnsupported => unreachable,
+        error.SymLinkLoop => unreachable,
+        error.NameTooLong => unreachable,
+        error.FileNotFound => unreachable,
+        error.NotDir => unreachable,
+        error.NetworkUnreachable => unreachable,
+        error.AddressUnavailable => unreachable,
+        error.SocketUnconnected => unreachable,
+        error.UnreachableAddress => unreachable,
+        else => |e| return e,
+    };
+}
+
+pub const SendToError = SendMsgError || error{
+    /// The destination address is not reachable by the bound address.
+    UnreachableAddress,
+    /// The destination address is not listening.
+    ConnectionRefused,
+};
+
+/// Transmit a message to another socket.
+///
+/// The `sendto` call may be used only when the socket is in a connected state (so that the intended
+/// recipient  is  known). The  following call
+///
+///     send(sockfd, buf, len, flags);
+///
+/// is equivalent to
+///
+///     sendto(sockfd, buf, len, flags, NULL, 0);
+///
+/// If  sendto()  is used on a connection-mode (`SOCK.STREAM`, `SOCK.SEQPACKET`) socket, the arguments
+/// `dest_addr` and `addrlen` are asserted to be `null` and `0` respectively, and asserted
+/// that the socket was actually connected.
+/// Otherwise, the address of the target is given by `dest_addr` with `addrlen` specifying  its  size.
+///
+/// If the message is too long to pass atomically through the underlying protocol,
+/// `SendError.MessageOversize` is returned, and the message is not transmitted.
+///
+/// There is no  indication  of  failure  to  deliver.
+///
+/// When the message does not fit into the send buffer of  the  socket,  `sendto`  normally  blocks,
+/// unless  the socket has been placed in nonblocking I/O mode.  In nonblocking mode it would fail
+/// with `SendError.WouldBlock`.  The `select` call may be used  to  determine when it is
+/// possible to send more data.
+pub fn sendto(
+    /// The file descriptor of the sending socket.
+    sockfd: socket_t,
+    /// Message to send.
+    buf: []const u8,
+    flags: u32,
+    dest_addr: ?*const posix.sockaddr,
+    addrlen: posix.socklen_t,
+) SendToError!usize {
+    if (native_os == .windows) @compileError("Unsupported OS");
+    while (true) {
+        const rc = system.sendto(sockfd, buf.ptr, buf.len, flags, dest_addr, addrlen);
+        switch (posix.errno(rc)) {
+            .SUCCESS => return @intCast(rc),
+
+            .ACCES => return error.AccessDenied,
+            .AGAIN => return error.WouldBlock,
+            .ALREADY => return error.FastOpenAlreadyInProgress,
+            .BADF => unreachable, // always a race condition
+            .CONNREFUSED => return error.ConnectionRefused,
+            .CONNRESET => return error.ConnectionResetByPeer,
+            .DESTADDRREQ => unreachable, // The socket is not connection-mode, and no peer address is set.
+            .FAULT => unreachable, // An invalid user space address was specified for an argument.
+            .INTR => continue,
+            .INVAL => return error.UnreachableAddress,
+            .ISCONN => unreachable, // connection-mode socket was connected already but a recipient was specified
+            .MSGSIZE => return error.MessageOversize,
+            .NOBUFS => return error.SystemResources,
+            .NOMEM => return error.SystemResources,
+            .NOTSOCK => unreachable, // The file descriptor sockfd does not refer to a socket.
+            .OPNOTSUPP => unreachable, // Some bit in the flags argument is inappropriate for the socket type.
+            .PIPE => return error.BrokenPipe,
+            .AFNOSUPPORT => return error.AddressFamilyUnsupported,
+            .LOOP => return error.SymLinkLoop,
+            .NAMETOOLONG => return error.NameTooLong,
+            .NOENT => return error.FileNotFound,
+            .NOTDIR => return error.NotDir,
+            .HOSTUNREACH => return error.NetworkUnreachable,
+            .NETUNREACH => return error.NetworkUnreachable,
+            .NOTCONN => return error.SocketUnconnected,
+            .NETDOWN => return error.NetworkDown,
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    }
+}
+
+pub const SendMsgError = SendError || error{
+    /// The passed address didn't have the correct address family in its sa_family field.
+    AddressFamilyUnsupported,
+
+    /// Returned when socket is AF.UNIX and the given path has a symlink loop.
+    SymLinkLoop,
+
+    /// Returned when socket is AF.UNIX and the given path length exceeds `max_path_bytes` bytes.
+    NameTooLong,
+
+    /// Returned when socket is AF.UNIX and the given path does not point to an existing file.
+    FileNotFound,
+    NotDir,
+
+    /// The socket is not connected (connection-oriented sockets only).
+    SocketUnconnected,
+    AddressUnavailable,
+};
+
+pub fn sendmsg(
+    /// The file descriptor of the sending socket.
+    sockfd: socket_t,
+    /// Message header and iovecs
+    msg: *const posix.msghdr_const,
+    flags: u32,
+) SendMsgError!usize {
+    while (true) {
+        const rc = system.sendmsg(sockfd, msg, flags);
+        // TODO: make windows.ws2_32 easily usable like the previous api
+        if (native_os == .windows)
+            @compileError("Unimplemented")
+        else {
+            switch (posix.errno(rc)) {
+                .SUCCESS => return @intCast(rc),
+
+                .ACCES => return error.AccessDenied,
+                .AGAIN => return error.WouldBlock,
+                .ALREADY => return error.FastOpenAlreadyInProgress,
+                .BADF => unreachable, // always a race condition
+                .CONNRESET => return error.ConnectionResetByPeer,
+                .DESTADDRREQ => unreachable, // The socket is not connection-mode, and no peer address is set.
+                .FAULT => unreachable, // An invalid user space address was specified for an argument.
+                .INTR => continue,
+                .INVAL => unreachable, // Invalid argument passed.
+                .ISCONN => unreachable, // connection-mode socket was connected already but a recipient was specified
+                .MSGSIZE => return error.MessageOversize,
+                .NOBUFS => return error.SystemResources,
+                .NOMEM => return error.SystemResources,
+                .NOTSOCK => unreachable, // The file descriptor sockfd does not refer to a socket.
+                .OPNOTSUPP => unreachable, // Some bit in the flags argument is inappropriate for the socket type.
+                .PIPE => return error.BrokenPipe,
+                .AFNOSUPPORT => return error.AddressFamilyUnsupported,
+                .LOOP => return error.SymLinkLoop,
+                .NAMETOOLONG => return error.NameTooLong,
+                .NOENT => return error.FileNotFound,
+                .NOTDIR => return error.NotDir,
+                .HOSTUNREACH => return error.NetworkUnreachable,
+                .NETUNREACH => return error.NetworkUnreachable,
+                .NOTCONN => return error.SocketUnconnected,
+                .NETDOWN => return error.NetworkDown,
+                else => |err| return posix.unexpectedErrno(err),
+            }
+        }
+    }
+}
+
 fn setSockFlags(sock: socket_t, flags: u32) !void {
     if ((flags & SOCK.CLOEXEC) != 0) {
         if (native_os == .windows) {
@@ -659,6 +842,56 @@ const default_fn_align = switch (builtin.mode) {
     },
     .ReleaseSmall => 1,
 };
+
+pub const SendError = error{
+    /// (For UNIX domain sockets, which are identified by pathname) Write permission is  denied
+    /// on  the destination socket file, or search permission is denied for one of the
+    /// directories the path prefix.  (See path_resolution(7).)
+    /// (For UDP sockets) An attempt was made to send to a network/broadcast address as  though
+    /// it was a unicast address.
+    AccessDenied,
+
+    /// The socket is marked nonblocking and the requested operation would block, and
+    /// there is no global event loop configured.
+    /// It's also possible to get this error under the following condition:
+    /// (Internet  domain datagram sockets) The socket referred to by sockfd had not previously
+    /// been bound to an address and, upon attempting to bind it to an ephemeral port,  it  was
+    /// determined that all port numbers in the ephemeral port range are currently in use.  See
+    /// the discussion of /proc/sys/net/ipv4/ip_local_port_range in ip(7).
+    WouldBlock,
+
+    /// Another Fast Open is already in progress.
+    FastOpenAlreadyInProgress,
+
+    /// Connection reset by peer.
+    ConnectionResetByPeer,
+
+    /// The  socket  type requires that message be sent atomically, and the size of the message
+    /// to be sent made this impossible. The message is not transmitted.
+    MessageOversize,
+
+    /// The output queue for a network interface was full.  This generally indicates  that  the
+    /// interface  has  stopped sending, but may be caused by transient congestion.  (Normally,
+    /// this does not occur in Linux.  Packets are just silently dropped when  a  device  queue
+    /// overflows.)
+    /// This is also caused when there is not enough kernel memory available.
+    SystemResources,
+
+    /// The  local  end  has been shut down on a connection oriented socket.  In this case, the
+    /// process will also receive a SIGPIPE unless MSG.NOSIGNAL is set.
+    BrokenPipe,
+
+    FileDescriptorNotASocket,
+
+    /// Network is unreachable.
+    NetworkUnreachable,
+
+    /// The local network interface used to reach the destination is down.
+    NetworkDown,
+
+    /// The destination address is not listening.
+    ConnectionRefused,
+} || UnexpectedError;
 
 pub const apc_align = @max(default_fn_align, 2);
 

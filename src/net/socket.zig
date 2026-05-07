@@ -210,7 +210,6 @@ pub const Socket = struct {
                         continue;
                     },
                     error.ConnectionAborted,
-                    error.ConnectionResetByPeer,
                     => AcceptError.ConnectionAborted,
                     error.SocketNotListening => AcceptError.NotListening,
                     error.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
@@ -273,7 +272,7 @@ pub const Socket = struct {
         } else {
             const count: usize = blk: while (true) {
                 break :blk tposix.recv(self.handle, buffer, 0) catch |e| return switch (e) {
-                    posix.RecvFromError.WouldBlock => {
+                    error.WouldBlock => {
                         Frame.yield();
                         continue;
                     },
@@ -291,7 +290,7 @@ pub const Socket = struct {
 
         while (length < buffer.len) {
             const result = self.recv(rt, buffer[length..]) catch |e| switch (e) {
-                RecvError.Closed => return length,
+                error.Closed => return length,
                 else => return e,
             };
 
@@ -315,13 +314,13 @@ pub const Socket = struct {
             return try task.result.send.unwrap();
         } else {
             const count: usize = blk: while (true) {
-                break :blk posix.send(self.handle, buffer, 0) catch |e| return switch (e) {
-                    posix.SendError.WouldBlock => {
+                break :blk tposix.send(self.handle, buffer, 0) catch |e| return switch (e) {
+                    error.WouldBlock => {
                         Frame.yield();
                         continue;
                     },
-                    posix.SendError.ConnectionResetByPeer,
-                    posix.SendError.BrokenPipe,
+                    error.ConnectionResetByPeer,
+                    error.BrokenPipe,
                     => SendError.Closed,
                     else => SendError.Unexpected,
                 };
@@ -336,7 +335,7 @@ pub const Socket = struct {
 
         while (length < buffer.len) {
             const result = self.send(rt, buffer[length..]) catch |e| switch (e) {
-                SendError.Closed => return length,
+                error.Closed => return length,
                 else => return e,
             };
             length += result;

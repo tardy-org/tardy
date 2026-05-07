@@ -232,26 +232,26 @@ pub const File = packed struct {
                     const dir: StdDir = .{ .handle = inner.dir };
                     const opened: StdFile = blk: while (true) {
                         break :blk dir.createFile(rt.io, inner.path, std_flags) catch |e| return switch (e) {
-                            StdFile.OpenError.WouldBlock => {
+                            error.WouldBlock => {
                                 Frame.yield();
                                 continue;
                             },
-                            StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
-                            StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
-                            StdFile.OpenError.DeviceBusy => OpenError.Busy,
-                            StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
-                            StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
-                            StdFile.OpenError.FileNotFound => OpenError.NotFound,
-                            StdFile.OpenError.PipeBusy => OpenError.Busy,
-                            StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
-                            StdFile.OpenError.IsDir => OpenError.IsDirectory,
-                            StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
-                            StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
-                            StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
-                            StdFile.OpenError.NotDir => OpenError.NotADirectory,
-                            StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
-                            StdFile.OpenError.SymLinkLoop => OpenError.Loop,
-                            StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                            error.AccessDenied => OpenError.AccessDenied,
+                            error.BadPathName => OpenError.InvalidArguments,
+                            error.DeviceBusy => OpenError.Busy,
+                            error.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                            error.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                            error.FileNotFound => OpenError.NotFound,
+                            error.PipeBusy => OpenError.Busy,
+                            error.FileTooBig => OpenError.FileTooBig,
+                            error.IsDir => OpenError.IsDirectory,
+                            error.NameTooLong => OpenError.NameTooLong,
+                            error.NoDevice => OpenError.DeviceNotFound,
+                            error.NoSpaceLeft => OpenError.NoSpace,
+                            error.NotDir => OpenError.NotADirectory,
+                            error.PathAlreadyExists => OpenError.AlreadyExists,
+                            error.SymLinkLoop => OpenError.Loop,
+                            error.SystemResources => OpenError.OutOfMemory,
                             else => OpenError.Unexpected,
                         };
                     };
@@ -262,25 +262,25 @@ pub const File = packed struct {
                 .abs => |inner| {
                     const opened: StdFile = blk: while (true) {
                         break :blk Io.Dir.createFileAbsolute(rt.io, inner, std_flags) catch |e| return switch (e) {
-                            StdFile.OpenError.WouldBlock => {
+                            error.WouldBlock => {
                                 Frame.yield();
                                 continue;
                             },
-                            StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
-                            StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
-                            StdFile.OpenError.DeviceBusy, StdFile.OpenError.PipeBusy => OpenError.Busy,
-                            StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
-                            StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
-                            StdFile.OpenError.FileNotFound => OpenError.NotFound,
-                            StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
-                            StdFile.OpenError.IsDir => OpenError.IsDirectory,
-                            StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
-                            StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
-                            StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
-                            StdFile.OpenError.NotDir => OpenError.NotADirectory,
-                            StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
-                            StdFile.OpenError.SymLinkLoop => OpenError.Loop,
-                            StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                            error.AccessDenied => OpenError.AccessDenied,
+                            error.BadPathName => OpenError.InvalidArguments,
+                            error.DeviceBusy, error.PipeBusy => OpenError.Busy,
+                            error.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                            error.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                            error.FileNotFound => OpenError.NotFound,
+                            error.FileTooBig => OpenError.FileTooBig,
+                            error.IsDir => OpenError.IsDirectory,
+                            error.NameTooLong => OpenError.NameTooLong,
+                            error.NoDevice => OpenError.DeviceNotFound,
+                            error.NoSpaceLeft => OpenError.NoSpace,
+                            error.NotDir => OpenError.NotADirectory,
+                            error.PathAlreadyExists => OpenError.AlreadyExists,
+                            error.SymLinkLoop => OpenError.Loop,
+                            error.SystemResources => OpenError.OutOfMemory,
                             else => OpenError.Unexpected,
                         };
                     };
@@ -324,26 +324,26 @@ pub const File = packed struct {
                     const dir: StdDir = .{ .handle = inner.dir };
                     const opened: StdFile = blk: while (true) {
                         break :blk dir.openFile(rt.io, inner.path, std_flags) catch |e| return switch (e) {
-                            StdFile.OpenError.WouldBlock => {
+                            error.WouldBlock => {
                                 Frame.yield();
                                 continue;
                             },
-                            StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
-                            StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
-                            StdFile.OpenError.DeviceBusy => OpenError.Busy,
-                            StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
-                            StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
-                            StdFile.OpenError.FileNotFound => OpenError.NotFound,
-                            StdFile.OpenError.PipeBusy => OpenError.Busy,
-                            StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
-                            StdFile.OpenError.IsDir => OpenError.IsDirectory,
-                            StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
-                            StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
-                            StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
-                            StdFile.OpenError.NotDir => OpenError.NotADirectory,
-                            StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
-                            StdFile.OpenError.SymLinkLoop => OpenError.Loop,
-                            StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                            error.AccessDenied => OpenError.AccessDenied,
+                            error.BadPathName => OpenError.InvalidArguments,
+                            error.DeviceBusy => OpenError.Busy,
+                            error.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                            error.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                            error.FileNotFound => OpenError.NotFound,
+                            error.PipeBusy => OpenError.Busy,
+                            error.FileTooBig => OpenError.FileTooBig,
+                            error.IsDir => OpenError.IsDirectory,
+                            error.NameTooLong => OpenError.NameTooLong,
+                            error.NoDevice => OpenError.DeviceNotFound,
+                            error.NoSpaceLeft => OpenError.NoSpace,
+                            error.NotDir => OpenError.NotADirectory,
+                            error.PathAlreadyExists => OpenError.AlreadyExists,
+                            error.SymLinkLoop => OpenError.Loop,
+                            error.SystemResources => OpenError.OutOfMemory,
                             else => OpenError.Unexpected,
                         };
                     };
@@ -354,25 +354,25 @@ pub const File = packed struct {
                 .abs => |inner| {
                     const opened: StdFile = blk: while (true) {
                         break :blk Io.Dir.openFileAbsolute(rt.io, inner, std_flags) catch |e| return switch (e) {
-                            StdFile.OpenError.WouldBlock => {
+                            error.WouldBlock => {
                                 Frame.yield();
                                 continue;
                             },
-                            StdFile.OpenError.AccessDenied => OpenError.AccessDenied,
-                            StdFile.OpenError.BadPathName => OpenError.InvalidArguments,
-                            StdFile.OpenError.DeviceBusy, StdFile.OpenError.PipeBusy => OpenError.Busy,
-                            StdFile.OpenError.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
-                            StdFile.OpenError.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
-                            StdFile.OpenError.FileNotFound => OpenError.NotFound,
-                            StdFile.OpenError.FileTooBig => OpenError.FileTooBig,
-                            StdFile.OpenError.IsDir => OpenError.IsDirectory,
-                            StdFile.OpenError.NameTooLong => OpenError.NameTooLong,
-                            StdFile.OpenError.NoDevice => OpenError.DeviceNotFound,
-                            StdFile.OpenError.NoSpaceLeft => OpenError.NoSpace,
-                            StdFile.OpenError.NotDir => OpenError.NotADirectory,
-                            StdFile.OpenError.PathAlreadyExists => OpenError.AlreadyExists,
-                            StdFile.OpenError.SymLinkLoop => OpenError.Loop,
-                            StdFile.OpenError.SystemResources => OpenError.OutOfMemory,
+                            error.AccessDenied => OpenError.AccessDenied,
+                            error.BadPathName => OpenError.InvalidArguments,
+                            error.DeviceBusy, error.PipeBusy => OpenError.Busy,
+                            error.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
+                            error.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
+                            error.FileNotFound => OpenError.NotFound,
+                            error.FileTooBig => OpenError.FileTooBig,
+                            error.IsDir => OpenError.IsDirectory,
+                            error.NameTooLong => OpenError.NameTooLong,
+                            error.NoDevice => OpenError.DeviceNotFound,
+                            error.NoSpaceLeft => OpenError.NoSpace,
+                            error.NotDir => OpenError.NotADirectory,
+                            error.PathAlreadyExists => OpenError.AlreadyExists,
+                            error.SymLinkLoop => OpenError.Loop,
+                            error.SystemResources => OpenError.OutOfMemory,
                             else => OpenError.Unexpected,
                         };
                     };
@@ -404,29 +404,29 @@ pub const File = packed struct {
                 if (offset) |o| {
                     while (true) {
                         break :blk std_file.readPositionalAll(rt.io, buffer, o) catch |e| return switch (e) {
-                            StdFile.ReadPositionalError.WouldBlock => {
+                            error.WouldBlock => {
                                 Frame.yield();
                                 continue;
                             },
-                            StdFile.ReadPositionalError.Unseekable => unreachable,
-                            StdFile.ReadPositionalError.AccessDenied => ReadError.AccessDenied,
-                            StdFile.ReadPositionalError.NotOpenForReading => ReadError.InvalidFd,
-                            StdFile.ReadPositionalError.InputOutput => ReadError.IoError,
-                            StdFile.ReadPositionalError.IsDir => ReadError.IsDirectory,
+                            error.Unseekable => unreachable,
+                            error.AccessDenied => ReadError.AccessDenied,
+                            error.NotOpenForReading => ReadError.InvalidFd,
+                            error.InputOutput => ReadError.IoError,
+                            error.IsDir => ReadError.IsDirectory,
                             else => ReadError.Unexpected,
                         };
                     }
                 } else {
                     while (true) {
                         break :blk std_file.readStreaming(rt.io, &.{buffer}) catch |e| return switch (e) {
-                            StdFile.ReadStreamingError.WouldBlock => {
+                            error.WouldBlock => {
                                 Frame.yield();
                                 continue;
                             },
-                            StdFile.ReadStreamingError.AccessDenied => ReadError.AccessDenied,
-                            StdFile.ReadStreamingError.NotOpenForReading => ReadError.InvalidFd,
-                            StdFile.ReadStreamingError.InputOutput => ReadError.IoError,
-                            StdFile.ReadStreamingError.IsDir => ReadError.IsDirectory,
+                            error.AccessDenied => ReadError.AccessDenied,
+                            error.NotOpenForReading => ReadError.InvalidFd,
+                            error.InputOutput => ReadError.IoError,
+                            error.IsDir => ReadError.IsDirectory,
                             else => ReadError.Unexpected,
                         };
                     }
@@ -476,33 +476,33 @@ pub const File = packed struct {
                             Frame.yield();
                             continue;
                         },
-                        StdFile.WritePositionalError.Unseekable => unreachable,
-                        StdFile.WritePositionalError.DiskQuota => WriteError.DiskQuotaExceeded,
-                        StdFile.WritePositionalError.FileTooBig => WriteError.FileTooBig,
-                        StdFile.WritePositionalError.InvalidArgument => WriteError.InvalidArguments,
-                        StdFile.WritePositionalError.InputOutput => WriteError.IoError,
-                        StdFile.WritePositionalError.NoSpaceLeft => WriteError.NoSpace,
-                        StdFile.WritePositionalError.AccessDenied => WriteError.AccessDenied,
-                        StdFile.WritePositionalError.NotOpenForWriting => WriteError.InvalidFd,
-                        StdFile.WritePositionalError.BrokenPipe => WriteError.BrokenPipe,
+                        error.Unseekable => unreachable,
+                        error.DiskQuota => WriteError.DiskQuotaExceeded,
+                        error.FileTooBig => WriteError.FileTooBig,
+                        error.InvalidArgument => WriteError.InvalidArguments,
+                        error.InputOutput => WriteError.IoError,
+                        error.NoSpaceLeft => WriteError.NoSpace,
+                        error.AccessDenied => WriteError.AccessDenied,
+                        error.NotOpenForWriting => WriteError.InvalidFd,
+                        error.BrokenPipe => WriteError.BrokenPipe,
                         else => WriteError.Unexpected,
                     };
                 };
             } else {
                 return blk: while (true) {
                     break :blk std_file.writeStreamingAll(rt.io, buffer) catch |e| switch (e) {
-                        StdFile.Writer.Error.WouldBlock => {
+                        error.WouldBlock => {
                             Frame.yield();
                             continue;
                         },
-                        StdFile.Writer.Error.DiskQuota => WriteError.DiskQuotaExceeded,
-                        StdFile.Writer.Error.FileTooBig => WriteError.FileTooBig,
-                        StdFile.Writer.Error.InvalidArgument => WriteError.InvalidArguments,
-                        StdFile.Writer.Error.InputOutput => WriteError.IoError,
-                        StdFile.Writer.Error.NoSpaceLeft => WriteError.NoSpace,
-                        StdFile.Writer.Error.AccessDenied => WriteError.AccessDenied,
-                        StdFile.Writer.Error.NotOpenForWriting => WriteError.InvalidFd,
-                        StdFile.Writer.Error.BrokenPipe => WriteError.BrokenPipe,
+                        error.DiskQuota => WriteError.DiskQuotaExceeded,
+                        error.FileTooBig => WriteError.FileTooBig,
+                        error.InvalidArgument => WriteError.InvalidArguments,
+                        error.InputOutput => WriteError.IoError,
+                        error.NoSpaceLeft => WriteError.NoSpace,
+                        error.AccessDenied => WriteError.AccessDenied,
+                        error.NotOpenForWriting => WriteError.InvalidFd,
+                        error.BrokenPipe => WriteError.BrokenPipe,
                         else => WriteError.Unexpected,
                     };
                 };
@@ -539,10 +539,10 @@ pub const File = packed struct {
 
             const file_stat = std_file.stat(rt.io) catch |e| {
                 return switch (e) {
-                    StdFile.StatError.AccessDenied => StatError.AccessDenied,
-                    StdFile.StatError.SystemResources => StatError.OutOfMemory,
-                    StdFile.StatError.Unexpected => StatError.Unexpected,
-                    StdFile.StatError.PermissionDenied => StatError.PermissionDenied,
+                    error.AccessDenied => StatError.AccessDenied,
+                    error.SystemResources => StatError.OutOfMemory,
+                    error.Unexpected => StatError.Unexpected,
+                    error.PermissionDenied => StatError.PermissionDenied,
                     error.Streaming, error.Canceled => unreachable,
                 };
             };

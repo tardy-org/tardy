@@ -2,7 +2,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const linux = std.os.linux;
-const LinuxError = linux.E;
 const Io = std.Io;
 const builtin = @import("builtin");
 
@@ -394,7 +393,6 @@ pub const AsyncIoUring = struct {
                     .socket = socket,
                     .kind = kind,
                     .addr = undefined,
-                    .addr_len = socklen,
                 },
             },
             .task = task,
@@ -544,7 +542,7 @@ pub const AsyncIoUring = struct {
                 if (cqe.res < 0) {
                     log.debug("{d} - other status on SQE: {t}", .{
                         job.index,
-                        @as(LinuxError, @enumFromInt(-cqe.res)),
+                        @as(linux.E, @enumFromInt(-cqe.res)),
                     });
                 }
                 switch (job.type) {
@@ -572,18 +570,16 @@ pub const AsyncIoUring = struct {
                         };
 
                         const result: AcceptResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.AGAIN => .{ .err = AcceptError.WouldBlock },
-                                LinuxError.BADF => .{ .err = AcceptError.InvalidFd },
-                                LinuxError.CONNABORTED => .{ .err = AcceptError.ConnectionAborted },
-                                LinuxError.FAULT => .{ .err = AcceptError.InvalidAddress },
-                                LinuxError.INVAL => .{ .err = AcceptError.NotListening },
-                                LinuxError.MFILE => .{ .err = AcceptError.ProcessFdQuotaExceeded },
-                                LinuxError.NFILE => .{ .err = AcceptError.SystemFdQuotaExceeded },
-                                LinuxError.NOBUFS, LinuxError.NOMEM => .{ .err = AcceptError.OutOfMemory },
-                                LinuxError.NOTSOCK => .{ .err = AcceptError.NotASocket },
-                                LinuxError.OPNOTSUPP => .{ .err = AcceptError.OperationNotSupported },
+                                .AGAIN => .{ .err = AcceptError.WouldBlock },
+                                .BADF => .{ .err = AcceptError.InvalidFd },
+                                .CONNABORTED => .{ .err = AcceptError.ConnectionAborted },
+                                .FAULT => .{ .err = AcceptError.InvalidAddress },
+                                .INVAL => .{ .err = AcceptError.NotListening },
+                                .MFILE => .{ .err = AcceptError.ProcessFdQuotaExceeded },
+                                .NFILE => .{ .err = AcceptError.SystemFdQuotaExceeded },
+                                .NOBUFS, .NOMEM => .{ .err = AcceptError.OutOfMemory },
                                 else => .{ .err = AcceptError.Unexpected },
                             };
                         };
@@ -594,23 +590,23 @@ pub const AsyncIoUring = struct {
                         if (cqe.res >= 0) break :blk .{ .connect = .actual };
 
                         const result: ConnectResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.ACCES, LinuxError.PERM => .{ .err = ConnectError.AccessDenied },
-                                LinuxError.ADDRINUSE => .{ .err = ConnectError.AddressInUse },
-                                LinuxError.ADDRNOTAVAIL => .{ .err = ConnectError.AddressNotAvailable },
-                                LinuxError.AFNOSUPPORT => .{ .err = ConnectError.AddressFamilyNotSupported },
-                                LinuxError.AGAIN, LinuxError.ALREADY, LinuxError.INPROGRESS => .{
+                                .ACCES, .PERM => .{ .err = ConnectError.AccessDenied },
+                                .ADDRINUSE => .{ .err = ConnectError.AddressInUse },
+                                .ADDRNOTAVAIL => .{ .err = ConnectError.AddressNotAvailable },
+                                .AFNOSUPPORT => .{ .err = ConnectError.AddressFamilyNotSupported },
+                                .AGAIN, .ALREADY, .INPROGRESS => .{
                                     .err = ConnectError.WouldBlock,
                                 },
-                                LinuxError.BADF => .{ .err = ConnectError.InvalidFd },
-                                LinuxError.CONNREFUSED => .{ .err = ConnectError.ConnectionRefused },
-                                LinuxError.FAULT => .{ .err = ConnectError.InvalidAddress },
-                                LinuxError.ISCONN => .{ .err = ConnectError.AlreadyConnected },
-                                LinuxError.NETUNREACH => .{ .err = ConnectError.NetworkUnreachable },
-                                LinuxError.NOTSOCK => .{ .err = ConnectError.NotASocket },
-                                LinuxError.PROTOTYPE => .{ .err = ConnectError.ProtocolFamilyNotSupported },
-                                LinuxError.TIMEDOUT => .{ .err = ConnectError.TimedOut },
+                                .BADF => .{ .err = ConnectError.InvalidFd },
+                                .CONNREFUSED => .{ .err = ConnectError.ConnectionRefused },
+                                .FAULT => .{ .err = ConnectError.InvalidAddress },
+                                .ISCONN => .{ .err = ConnectError.AlreadyConnected },
+                                .NETUNREACH => .{ .err = ConnectError.NetworkUnreachable },
+                                .NOTSOCK => .{ .err = ConnectError.NotASocket },
+                                .PROTOTYPE => .{ .err = ConnectError.ProtocolFamilyNotSupported },
+                                .TIMEDOUT => .{ .err = ConnectError.TimedOut },
                                 else => .{ .err = ConnectError.Unexpected },
                             };
                         };
@@ -622,17 +618,17 @@ pub const AsyncIoUring = struct {
                         if (cqe.res == 0) break :blk .{ .recv = .{ .err = RecvError.Closed } };
 
                         const result: RecvResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.AGAIN => .{ .err = RecvError.WouldBlock },
-                                LinuxError.BADF => .{ .err = RecvError.InvalidFd },
-                                LinuxError.CONNRESET => .{ .err = RecvError.Closed },
-                                LinuxError.CONNREFUSED => .{ .err = RecvError.ConnectionRefused },
-                                LinuxError.FAULT => .{ .err = RecvError.InvalidAddress },
-                                LinuxError.INVAL => .{ .err = RecvError.InvalidArguments },
-                                LinuxError.NOMEM => .{ .err = RecvError.OutOfMemory },
-                                LinuxError.NOTCONN => .{ .err = RecvError.NotConnected },
-                                LinuxError.NOTSOCK => .{ .err = RecvError.NotASocket },
+                                .AGAIN => .{ .err = RecvError.WouldBlock },
+                                .BADF => .{ .err = RecvError.InvalidFd },
+                                .CONNRESET => .{ .err = RecvError.Closed },
+                                .CONNREFUSED => .{ .err = RecvError.ConnectionRefused },
+                                .FAULT => .{ .err = RecvError.InvalidAddress },
+                                .INVAL => .{ .err = RecvError.InvalidArguments },
+                                .NOMEM => .{ .err = RecvError.OutOfMemory },
+                                .NOTCONN => .{ .err = RecvError.NotConnected },
+                                .NOTSOCK => .{ .err = RecvError.NotASocket },
                                 else => .{ .err = RecvError.Unexpected },
                             };
                         };
@@ -643,21 +639,21 @@ pub const AsyncIoUring = struct {
                         if (cqe.res >= 0) break :blk .{ .send = .{ .actual = @intCast(cqe.res) } };
 
                         const result: SendResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.ACCES => .{ .err = SendError.AccessDenied },
-                                LinuxError.AGAIN => .{ .err = SendError.WouldBlock },
-                                LinuxError.ALREADY => .{ .err = SendError.OpenInProgress },
-                                LinuxError.BADF => .{ .err = SendError.InvalidFd },
-                                LinuxError.CONNRESET, LinuxError.PIPE => .{ .err = SendError.Closed },
-                                LinuxError.DESTADDRREQ => .{ .err = SendError.NoDestinationAddress },
-                                LinuxError.FAULT => .{ .err = SendError.InvalidAddress },
-                                LinuxError.INVAL => .{ .err = SendError.InvalidArguments },
-                                LinuxError.ISCONN => .{ .err = SendError.AlreadyConnected },
-                                LinuxError.MSGSIZE => .{ .err = SendError.InvalidSize },
-                                LinuxError.NOBUFS, LinuxError.NOMEM => .{ .err = SendError.OutOfMemory },
-                                LinuxError.NOTCONN => .{ .err = SendError.NotConnected },
-                                LinuxError.OPNOTSUPP => .{ .err = SendError.OperationNotSupported },
+                                .ACCES => .{ .err = SendError.AccessDenied },
+                                .AGAIN => .{ .err = SendError.WouldBlock },
+                                .ALREADY => .{ .err = SendError.OpenInProgress },
+                                .BADF => .{ .err = SendError.InvalidFd },
+                                .CONNRESET, .PIPE => .{ .err = SendError.Closed },
+                                .DESTADDRREQ => .{ .err = SendError.NoDestinationAddress },
+                                .FAULT => .{ .err = SendError.InvalidAddress },
+                                .INVAL => .{ .err = SendError.InvalidArguments },
+                                .ISCONN => .{ .err = SendError.AlreadyConnected },
+                                .MSGSIZE => .{ .err = SendError.InvalidSize },
+                                .NOBUFS, .NOMEM => .{ .err = SendError.OutOfMemory },
+                                .NOTCONN => .{ .err = SendError.NotConnected },
+                                .OPNOTSUPP => .{ .err = SendError.OperationNotSupported },
                                 else => .{ .err = SendError.Unexpected },
                             };
                         };
@@ -668,16 +664,16 @@ pub const AsyncIoUring = struct {
                         if (cqe.res == 0) break :blk .{ .mkdir = .{ .actual = {} } };
 
                         const result: MkdirResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.ACCES => .{ .err = MkdirError.AccessDenied },
-                                LinuxError.EXIST => .{ .err = MkdirError.AlreadyExists },
-                                LinuxError.LOOP, LinuxError.MLINK => .{ .err = MkdirError.Loop },
-                                LinuxError.NAMETOOLONG => .{ .err = MkdirError.NameTooLong },
-                                LinuxError.NOENT => .{ .err = MkdirError.NotFound },
-                                LinuxError.NOSPC => .{ .err = MkdirError.NoSpace },
-                                LinuxError.NOTDIR => .{ .err = MkdirError.NotADirectory },
-                                LinuxError.ROFS => .{ .err = MkdirError.ReadOnlyFileSystem },
+                                .ACCES => .{ .err = MkdirError.AccessDenied },
+                                .EXIST => .{ .err = MkdirError.AlreadyExists },
+                                .LOOP, .MLINK => .{ .err = MkdirError.Loop },
+                                .NAMETOOLONG => .{ .err = MkdirError.NameTooLong },
+                                .NOENT => .{ .err = MkdirError.NotFound },
+                                .NOSPC => .{ .err = MkdirError.NoSpace },
+                                .NOTDIR => .{ .err = MkdirError.NotADirectory },
+                                .ROFS => .{ .err = MkdirError.ReadOnlyFileSystem },
                                 else => .{ .err = MkdirError.Unexpected },
                             };
                         };
@@ -695,30 +691,30 @@ pub const AsyncIoUring = struct {
                         };
 
                         const result: InnerOpenResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.ACCES, LinuxError.PERM => .{ .err = OpenError.AccessDenied },
-                                LinuxError.BADF => .{ .err = OpenError.InvalidFd },
-                                LinuxError.BUSY => .{ .err = OpenError.Busy },
-                                LinuxError.DQUOT => .{ .err = OpenError.DiskQuotaExceeded },
-                                LinuxError.EXIST => .{ .err = OpenError.AlreadyExists },
-                                LinuxError.FAULT => .{ .err = OpenError.InvalidAddress },
-                                LinuxError.FBIG, LinuxError.OVERFLOW => .{ .err = OpenError.FileTooBig },
-                                LinuxError.INVAL => .{ .err = OpenError.InvalidArguments },
-                                LinuxError.ISDIR => .{ .err = OpenError.IsDirectory },
-                                LinuxError.LOOP => .{ .err = OpenError.Loop },
-                                LinuxError.MFILE => .{ .err = OpenError.ProcessFdQuotaExceeded },
-                                LinuxError.NAMETOOLONG => .{ .err = OpenError.NameTooLong },
-                                LinuxError.NFILE => .{ .err = OpenError.SystemFdQuotaExceeded },
-                                LinuxError.NODEV, LinuxError.NXIO => .{ .err = OpenError.DeviceNotFound },
-                                LinuxError.NOENT => .{ .err = OpenError.NotFound },
-                                LinuxError.NOMEM => .{ .err = OpenError.OutOfMemory },
-                                LinuxError.NOSPC => .{ .err = OpenError.NoSpace },
-                                LinuxError.NOTDIR => .{ .err = OpenError.NotADirectory },
-                                LinuxError.OPNOTSUPP => .{ .err = OpenError.OperationNotSupported },
-                                LinuxError.ROFS => .{ .err = OpenError.ReadOnlyFileSystem },
-                                LinuxError.TXTBSY => .{ .err = OpenError.FileLocked },
-                                LinuxError.AGAIN => .{ .err = OpenError.WouldBlock },
+                                .ACCES, .PERM => .{ .err = OpenError.AccessDenied },
+                                .BADF => .{ .err = OpenError.InvalidFd },
+                                .BUSY => .{ .err = OpenError.Busy },
+                                .DQUOT => .{ .err = OpenError.DiskQuotaExceeded },
+                                .EXIST => .{ .err = OpenError.AlreadyExists },
+                                .FAULT => .{ .err = OpenError.InvalidAddress },
+                                .FBIG, .OVERFLOW => .{ .err = OpenError.FileTooBig },
+                                .INVAL => .{ .err = OpenError.InvalidArguments },
+                                .ISDIR => .{ .err = OpenError.IsDirectory },
+                                .LOOP => .{ .err = OpenError.Loop },
+                                .MFILE => .{ .err = OpenError.ProcessFdQuotaExceeded },
+                                .NAMETOOLONG => .{ .err = OpenError.NameTooLong },
+                                .NFILE => .{ .err = OpenError.SystemFdQuotaExceeded },
+                                .NODEV, .NXIO => .{ .err = OpenError.DeviceNotFound },
+                                .NOENT => .{ .err = OpenError.NotFound },
+                                .NOMEM => .{ .err = OpenError.OutOfMemory },
+                                .NOSPC => .{ .err = OpenError.NoSpace },
+                                .NOTDIR => .{ .err = OpenError.NotADirectory },
+                                .OPNOTSUPP => .{ .err = OpenError.OperationNotSupported },
+                                .ROFS => .{ .err = OpenError.ReadOnlyFileSystem },
+                                .TXTBSY => .{ .err = OpenError.FileLocked },
+                                .AGAIN => .{ .err = OpenError.WouldBlock },
                                 else => .{ .err = OpenError.Unexpected },
                             };
                         };
@@ -729,24 +725,24 @@ pub const AsyncIoUring = struct {
                         if (cqe.res == 0) break :blk .{ .delete = .{ .actual = {} } };
 
                         const result: DeleteResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
                                 // unlink
-                                LinuxError.ACCES => .{ .err = DeleteError.AccessDenied },
-                                LinuxError.BUSY => .{ .err = DeleteError.Busy },
-                                LinuxError.FAULT => .{ .err = DeleteError.InvalidAddress },
-                                LinuxError.IO => .{ .err = DeleteError.IoError },
-                                LinuxError.ISDIR, LinuxError.PERM => .{ .err = DeleteError.IsDirectory },
-                                LinuxError.LOOP => .{ .err = DeleteError.Loop },
-                                LinuxError.NAMETOOLONG => .{ .err = DeleteError.NameTooLong },
-                                LinuxError.NOENT => .{ .err = DeleteError.NotFound },
-                                LinuxError.NOMEM => .{ .err = DeleteError.OutOfMemory },
-                                LinuxError.NOTDIR => .{ .err = DeleteError.IsNotDirectory },
-                                LinuxError.ROFS => .{ .err = DeleteError.ReadOnlyFileSystem },
-                                LinuxError.BADF => .{ .err = DeleteError.InvalidFd },
+                                .ACCES => .{ .err = DeleteError.AccessDenied },
+                                .BUSY => .{ .err = DeleteError.Busy },
+                                .FAULT => .{ .err = DeleteError.InvalidAddress },
+                                .IO => .{ .err = DeleteError.IoError },
+                                .ISDIR, .PERM => .{ .err = DeleteError.IsDirectory },
+                                .LOOP => .{ .err = DeleteError.Loop },
+                                .NAMETOOLONG => .{ .err = DeleteError.NameTooLong },
+                                .NOENT => .{ .err = DeleteError.NotFound },
+                                .NOMEM => .{ .err = DeleteError.OutOfMemory },
+                                .NOTDIR => .{ .err = DeleteError.IsNotDirectory },
+                                .ROFS => .{ .err = DeleteError.ReadOnlyFileSystem },
+                                .BADF => .{ .err = DeleteError.InvalidFd },
                                 // rmdir
-                                LinuxError.INVAL => .{ .err = DeleteError.InvalidArguments },
-                                LinuxError.NOTEMPTY => .{ .err = DeleteError.NotEmpty },
+                                .INVAL => .{ .err = DeleteError.InvalidArguments },
+                                .NOTEMPTY => .{ .err = DeleteError.NotEmpty },
                                 else => .{ .err = DeleteError.Unexpected },
                             };
                         };
@@ -758,14 +754,14 @@ pub const AsyncIoUring = struct {
                         if (cqe.res == 0) break :blk .{ .read = .{ .err = ReadError.EndOfFile } };
 
                         const result: ReadResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.AGAIN => .{ .err = ReadError.WouldBlock },
-                                LinuxError.BADF => .{ .err = ReadError.InvalidFd },
-                                LinuxError.FAULT => .{ .err = ReadError.InvalidAddress },
-                                LinuxError.INVAL => .{ .err = ReadError.InvalidArguments },
-                                LinuxError.IO => .{ .err = ReadError.IoError },
-                                LinuxError.ISDIR => .{ .err = ReadError.IsDirectory },
+                                .AGAIN => .{ .err = ReadError.WouldBlock },
+                                .BADF => .{ .err = ReadError.InvalidFd },
+                                .FAULT => .{ .err = ReadError.InvalidAddress },
+                                .INVAL => .{ .err = ReadError.InvalidArguments },
+                                .IO => .{ .err = ReadError.IoError },
+                                .ISDIR => .{ .err = ReadError.IsDirectory },
                                 else => .{ .err = ReadError.Unexpected },
                             };
                         };
@@ -776,19 +772,19 @@ pub const AsyncIoUring = struct {
                         if (cqe.res > 0) break :blk .{ .write = .{ .actual = @intCast(cqe.res) } };
 
                         const result: WriteResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.AGAIN => .{ .err = WriteError.WouldBlock },
-                                LinuxError.BADF => .{ .err = WriteError.InvalidFd },
-                                LinuxError.DESTADDRREQ => .{ .err = WriteError.NoDestinationAddress },
-                                LinuxError.DQUOT => .{ .err = WriteError.DiskQuotaExceeded },
-                                LinuxError.FAULT => .{ .err = WriteError.InvalidAddress },
-                                LinuxError.FBIG => .{ .err = WriteError.FileTooBig },
-                                LinuxError.INVAL => .{ .err = WriteError.InvalidArguments },
-                                LinuxError.IO => .{ .err = WriteError.IoError },
-                                LinuxError.NOSPC => .{ .err = WriteError.NoSpace },
-                                LinuxError.PERM => .{ .err = WriteError.AccessDenied },
-                                LinuxError.PIPE => .{ .err = WriteError.BrokenPipe },
+                                .AGAIN => .{ .err = WriteError.WouldBlock },
+                                .BADF => .{ .err = WriteError.InvalidFd },
+                                .DESTADDRREQ => .{ .err = WriteError.NoDestinationAddress },
+                                .DQUOT => .{ .err = WriteError.DiskQuotaExceeded },
+                                .FAULT => .{ .err = WriteError.InvalidAddress },
+                                .FBIG => .{ .err = WriteError.FileTooBig },
+                                .INVAL => .{ .err = WriteError.InvalidArguments },
+                                .IO => .{ .err = WriteError.IoError },
+                                .NOSPC => .{ .err = WriteError.NoSpace },
+                                .PERM => .{ .err = WriteError.AccessDenied },
+                                .PIPE => .{ .err = WriteError.BrokenPipe },
                                 else => .{ .err = WriteError.Unexpected },
                             };
                         };
@@ -817,17 +813,17 @@ pub const AsyncIoUring = struct {
                         }
 
                         const result: StatResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.ACCES => .{ .err = StatError.AccessDenied },
-                                LinuxError.BADF => .{ .err = StatError.InvalidFd },
-                                LinuxError.FAULT => .{ .err = StatError.InvalidAddress },
-                                LinuxError.INVAL => .{ .err = StatError.InvalidArguments },
-                                LinuxError.LOOP => .{ .err = StatError.Loop },
-                                LinuxError.NAMETOOLONG => .{ .err = StatError.NameTooLong },
-                                LinuxError.NOENT => .{ .err = StatError.NotFound },
-                                LinuxError.NOMEM => .{ .err = StatError.OutOfMemory },
-                                LinuxError.NOTDIR => .{ .err = StatError.NotADirectory },
+                                .ACCES => .{ .err = StatError.AccessDenied },
+                                .BADF => .{ .err = StatError.InvalidFd },
+                                .FAULT => .{ .err = StatError.InvalidAddress },
+                                .INVAL => .{ .err = StatError.InvalidArguments },
+                                .LOOP => .{ .err = StatError.Loop },
+                                .NAMETOOLONG => .{ .err = StatError.NameTooLong },
+                                .NOENT => .{ .err = StatError.NotFound },
+                                .NOMEM => .{ .err = StatError.OutOfMemory },
+                                .NOTDIR => .{ .err = StatError.NotADirectory },
                                 else => .{ .err = StatError.Unexpected },
                             };
                         };

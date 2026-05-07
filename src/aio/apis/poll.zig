@@ -168,7 +168,7 @@ pub const AsyncPoll = struct {
             &addr.any,
             addr.getOsSockLen(),
         ) catch |e| switch (e) {
-            std.posix.ConnectError.WouldBlock => {},
+            error.WouldBlock => {},
             else => return e,
         };
 
@@ -296,19 +296,19 @@ pub const AsyncPoll = struct {
                                 std.posix.SOCK.NONBLOCK,
                             ) catch |e| {
                                 const err = switch (e) {
-                                    std.posix.AcceptError.WouldBlock => {
+                                    error.WouldBlock => {
                                         log.debug("accept wouldblock - not removing", .{});
                                         remove = false;
                                         continue;
                                     },
-                                    std.posix.AcceptError.ConnectionAborted,
-                                    std.posix.AcceptError.ConnectionResetByPeer,
+                                    error.ConnectionAborted,
+                                    error.ConnectionResetByPeer,
                                     => AcceptError.ConnectionAborted,
-                                    std.posix.AcceptError.SocketNotListening => AcceptError.NotListening,
-                                    std.posix.AcceptError.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
-                                    std.posix.AcceptError.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
-                                    std.posix.AcceptError.FileDescriptorNotASocket => AcceptError.NotASocket,
-                                    std.posix.AcceptError.OperationNotSupported => AcceptError.OperationNotSupported,
+                                    error.SocketNotListening => AcceptError.NotListening,
+                                    error.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
+                                    error.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
+                                    error.FileDescriptorNotASocket => AcceptError.NotASocket,
+                                    error.OperationNotSupported => AcceptError.OperationNotSupported,
                                     else => AcceptError.Unexpected,
                                 };
 
@@ -342,12 +342,12 @@ pub const AsyncPoll = struct {
                             assert(pfd.revents & std.posix.POLL.IN != 0 or pfd.revents & std.posix.POLL.RDNORM != 0);
                             const count = std.posix.recv(inner.socket, inner.buffer, 0) catch |e| {
                                 const err = switch (e) {
-                                    std.posix.RecvFromError.WouldBlock => {
+                                    error.WouldBlock => {
                                         log.debug("recv wouldblock - not removing", .{});
                                         remove = false;
                                         continue;
                                     },
-                                    std.posix.RecvFromError.ConnectionResetByPeer => RecvError.Closed,
+                                    error.ConnectionResetByPeer => RecvError.Closed,
                                     else => RecvError.Unexpected,
                                 };
 
@@ -366,13 +366,13 @@ pub const AsyncPoll = struct {
                             const count = std.posix.send(inner.socket, inner.buffer, 0) catch |e| {
                                 log.err("send failed with {}", .{e});
                                 const err = switch (e) {
-                                    std.posix.SendError.WouldBlock => {
+                                    error.WouldBlock => {
                                         log.debug("send wouldblock - not removing", .{});
                                         remove = false;
                                         continue;
                                     },
-                                    std.posix.SendError.ConnectionResetByPeer,
-                                    std.posix.SendError.BrokenPipe,
+                                    error.ConnectionResetByPeer,
+                                    error.BrokenPipe,
                                     => SendError.Closed,
                                     else => SendError.Unexpected,
                                 };
