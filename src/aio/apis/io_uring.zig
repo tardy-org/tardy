@@ -4,8 +4,10 @@ const assert = std.debug.assert;
 const linux = std.os.linux;
 const Io = std.Io;
 const builtin = @import("builtin");
+const mem = std.mem;
 
-const Pool = @import("../../core/pool.zig").Pool;
+const pool = @import("../../core/pool.zig");
+const Pool = pool.Pool;
 const Cross = @import("../../cross/lib.zig");
 const Stat = @import("../../fs/lib.zig").Stat;
 const Path = @import("../../fs/lib.zig").Path;
@@ -39,6 +41,64 @@ const AsyncFeatures = @import("../lib.zig").AsyncFeatures;
 const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 const AsyncOpenFlags = @import("../lib.zig").AsyncOpenFlags;
 const tposix = @import("../../tposix.zig");
+const posix = std.posix;
+
+pub const Errors = struct {
+    pub const Reap = Submit || Error;
+    pub const QueueJob = Error || Submit;
+    pub const Wake = tposix.WriteError;
+
+    pub const Init = error{
+        EntriesZero,
+        EntriesNotPowerOfTwo,
+        ParamsOutsideAccessibleAddressSpace,
+        // The resv array contains non-zero data, p.flags contains an unsupported flag,
+        // entries out of bounds, IORING_SETUP_SQ_AFF was specified without IORING_SETUP_SQPOLL,
+        // or IORING_SETUP_CQSIZE was specified but linux.io_uring_params.cq_entries was invalid:
+        ArgumentsInvalid,
+        ProcessFdQuotaExceeded,
+        SystemFdQuotaExceeded,
+        SystemResources,
+        // IORING_SETUP_SQPOLL was specified but effective user ID lacks sufficient privileges,
+        // or a container seccomp policy prohibits io_uring syscalls:
+        PermissionDenied,
+        SystemOutdated,
+    } || posix.MMapError || Error;
+
+    pub const Submit = error{
+        SystemResources,
+        // The SQE `fd` is invalid, or IOSQE_FIXED_FILE was set but no files were registered:
+        FileDescriptorInvalid,
+        // The file descriptor is valid, but the ring is not in the right state.
+        // See io_uring_register(2) for how to enable the ring.
+        FileDescriptorInBadState,
+        // The application attempted to overcommit the number of requests it can have pending.
+        // The application should wait for some completions and try again:
+        CompletionQueueOvercommitted,
+        // The SQE is invalid, or valid but the ring was setup with IORING_SETUP_IOPOLL:
+        SubmissionQueueEntryInvalid,
+        // The buffer is outside the process' accessible address space, or IORING_OP_READ_FIXED
+        // or IORING_OP_WRITE_FIXED was specified but no buffers were registered, or the range
+        // described by `addr` and `len` is not within the buffer registered at `buf_index`:
+        BufferInvalid,
+        RingShuttingDown,
+        // The kernel believes our `self.fd` does not refer to an io_uring instance,
+        // or the opcode is valid but not supported by this kernel (more likely):
+        OpcodeNotSupported,
+        // The thread submitting the work is invalid. This may occur if IORING_ENTER_GETEVENTS
+        // and IORING_SETUP_DEFER_TASKRUN is set, but the submitting thread is not the thread
+        // that initially created or enabled the io_uring associated with fd.
+        InvalidThread,
+        // The operation was interrupted by a delivery of a signal before it could complete.
+        // This can happen while waiting for events with IORING_ENTER_GETEVENTS:
+        SignalInterrupt,
+        Unexpected,
+    };
+};
+
+pub const Error = error{
+    SubmissionQueueFull,
+} || pool.Error;
 
 const log = std.log.scoped(.@"tardy/aio/io_uring");
 
@@ -73,7 +133,7 @@ pub const AsyncIoUring = struct {
         break :blk flags;
     };
 
-    allocator: std.mem.Allocator,
+    allocator: mem.Allocator,
     inner: *linux.IoUring,
     wake_event_fd: std.posix.fd_t,
     wake_event_buffer: []u8,
@@ -83,7 +143,7 @@ pub const AsyncIoUring = struct {
     cqes: []linux.io_uring_cqe,
     jobs: Pool(JobBundle),
 
-    pub fn init(allocator: std.mem.Allocator, io: Io, options: AsyncOptions) !AsyncIoUring {
+    pub fn init(allocator: mem.Allocator, io: Io, options: AsyncOptions) (mem.Allocator.Error || Errors.Init)!AsyncIoUring {
         // Extra job for the wake event_fd.
         const size = options.size_tasks_initial + 1;
 
@@ -110,7 +170,7 @@ pub const AsyncIoUring = struct {
 
                 // Initialize using the WQ from the parent ring.
                 const flags: u32 = base_flags | linux.IORING_SETUP_ATTACH_WQ;
-                var params = std.mem.zeroInit(linux.io_uring_params, .{
+                var params = mem.zeroInit(linux.io_uring_params, .{
                     .flags = flags,
                     .wq_fd = @as(u32, @intCast(parent_uring.inner.fd)),
                 });
@@ -157,7 +217,7 @@ pub const AsyncIoUring = struct {
         };
     }
 
-    pub fn inner_deinit(self: *AsyncIoUring, allocator: std.mem.Allocator) void {
+    pub fn inner_deinit(self: *AsyncIoUring, allocator: mem.Allocator) void {
         tposix.close(self.wake_event_fd);
         self.inner.deinit();
         self.jobs.deinit();
@@ -166,7 +226,7 @@ pub const AsyncIoUring = struct {
         allocator.destroy(self.inner);
     }
 
-    fn deinit(runner: *anyopaque, allocator: std.mem.Allocator) void {
+    fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         uring.inner_deinit(allocator);
     }
@@ -175,7 +235,7 @@ pub const AsyncIoUring = struct {
         runner: *anyopaque,
         task: usize,
         job: AsyncSubmission,
-    ) !void {
+    ) Errors.QueueJob!void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         (switch (job) {
             .timer => |inner| queue_timer(uring, task, inner),
@@ -196,7 +256,7 @@ pub const AsyncIoUring = struct {
         } else return e;
     }
 
-    fn queue_timer(self: *AsyncIoUring, task: usize, timespec: Io.Timestamp) !void {
+    fn queue_timer(self: *AsyncIoUring, task: usize, timespec: Io.Timestamp) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -219,7 +279,7 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.timeout(index, timespec_ptr, 0, 0);
     }
 
-    fn queue_open(self: *AsyncIoUring, task: usize, path: Path, flags: AsyncOpenFlags) !void {
+    fn queue_open(self: *AsyncIoUring, task: usize, path: Path, flags: AsyncOpenFlags) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -277,7 +337,7 @@ pub const AsyncIoUring = struct {
         }
     }
 
-    fn queue_delete(self: *AsyncIoUring, task: usize, path: Path, is_dir: bool) !void {
+    fn queue_delete(self: *AsyncIoUring, task: usize, path: Path, is_dir: bool) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -292,7 +352,7 @@ pub const AsyncIoUring = struct {
         }
     }
 
-    fn queue_mkdir(self: *AsyncIoUring, task: usize, path: Path, mode: isize) !void {
+    fn queue_mkdir(self: *AsyncIoUring, task: usize, path: Path, mode: isize) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -305,7 +365,7 @@ pub const AsyncIoUring = struct {
         }
     }
 
-    fn queue_stat(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t) !void {
+    fn queue_stat(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -326,7 +386,7 @@ pub const AsyncIoUring = struct {
         );
     }
 
-    fn queue_read(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t, buffer: []u8, offset: ?usize) !void {
+    fn queue_read(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t, buffer: []u8, offset: ?usize) Error!void {
         // If we don't have an offset, set it as -1.
         const real_offset: usize = if (offset) |o| o else @bitCast(@as(isize, -1));
 
@@ -348,11 +408,11 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.read(index, fd, .{ .buffer = buffer }, real_offset);
     }
 
-    fn queue_write(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t, buffer: []const u8, offset: ?usize) !void {
+    fn queue_write(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t, buffer: []const u8, offset: ?usize) Error!void {
         // If we don't have an offset, set it as -1.
         const real_offset: usize = if (offset) |o| o else @bitCast(@as(isize, -1));
 
-        const index = try self.jobs.borrow_hint(task);
+        const index = self.jobs.borrow_hint(task) catch @panic("OOM");
         errdefer self.jobs.release(index);
         const item = self.jobs.get_ptr(index);
         item.job = .{
@@ -370,8 +430,8 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.write(index, fd, buffer, real_offset);
     }
 
-    fn queue_close(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t) !void {
-        const index = try self.jobs.borrow_hint(task);
+    fn queue_close(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t) Error!void {
+        const index = self.jobs.borrow_hint(task) catch @panic("OOM");
         errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
@@ -380,8 +440,8 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.close(index, fd);
     }
 
-    fn queue_accept(self: *AsyncIoUring, task: usize, socket: std.posix.socket_t, kind: Socket.Kind) !void {
-        const index = try self.jobs.borrow_hint(task);
+    fn queue_accept(self: *AsyncIoUring, task: usize, socket: std.posix.socket_t, kind: Socket.Kind) Error!void {
+        const index = self.jobs.borrow_hint(task) catch @panic("OOM");
         errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
@@ -413,8 +473,8 @@ pub const AsyncIoUring = struct {
         socket: std.posix.socket_t,
         addr: Socket.Address,
         kind: Socket.Kind,
-    ) !void {
-        const index = try self.jobs.borrow_hint(task);
+    ) Error!void {
+        const index = self.jobs.borrow_hint(task) catch @panic("OOM");
         errdefer self.jobs.release(index);
         const item = self.jobs.get_ptr(index);
         const sockaddr, const socklen = item.job.type.connect.addr.toPosix();
@@ -443,8 +503,8 @@ pub const AsyncIoUring = struct {
         task: usize,
         socket: std.posix.socket_t,
         buffer: []u8,
-    ) !void {
-        const index = try self.jobs.borrow_hint(task);
+    ) Error!void {
+        const index = self.jobs.borrow_hint(task) catch @panic("OOM");
         errdefer self.jobs.release(index);
         const item = self.jobs.get_ptr(index);
         item.job = .{
@@ -461,7 +521,7 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.recv(index, socket, .{ .buffer = buffer }, 0);
     }
 
-    fn queue_send(self: *AsyncIoUring, task: usize, socket: std.posix.socket_t, buffer: []const u8) !void {
+    fn queue_send(self: *AsyncIoUring, task: usize, socket: std.posix.socket_t, buffer: []const u8) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -480,7 +540,7 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.send(index, socket, buffer, 0);
     }
 
-    inline fn queue_wake(self: *AsyncIoUring) !void {
+    inline fn queue_wake(self: *AsyncIoUring) Error!void {
         if (self.wake_event_fd == Cross.fd.INVALID_FD) return;
 
         const index = try self.jobs.borrow();
@@ -501,14 +561,14 @@ pub const AsyncIoUring = struct {
         );
     }
 
-    fn wake(runner: *anyopaque) !void {
+    fn wake(runner: *anyopaque) Errors.Wake!void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         const bytes: []const u8 = "00000000";
         var i: usize = 0;
         while (i < bytes.len) i += try tposix.write(uring.wake_event_fd, bytes);
     }
 
-    fn submit(runner: *anyopaque) !void {
+    fn submit(runner: *anyopaque) Errors.Submit!void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
 
         _ = while (true) {
@@ -519,7 +579,7 @@ pub const AsyncIoUring = struct {
         };
     }
 
-    fn reap(runner: *anyopaque, completions: []Completion, wait: bool) ![]Completion {
+    fn reap(runner: *anyopaque, completions: []Completion, wait: bool) Errors.Reap![]Completion {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         // either wait for atleast 1 or just take whats there.
         const uring_nr: u32 = if (wait) 1 else 0;
@@ -780,7 +840,6 @@ pub const AsyncIoUring = struct {
                                 .DQUOT => .{ .err = WriteError.DiskQuotaExceeded },
                                 .FAULT => .{ .err = WriteError.InvalidAddress },
                                 .FBIG => .{ .err = WriteError.FileTooBig },
-                                .INVAL => .{ .err = WriteError.InvalidArguments },
                                 .IO => .{ .err = WriteError.IoError },
                                 .NOSPC => .{ .err = WriteError.NoSpace },
                                 .PERM => .{ .err = WriteError.AccessDenied },
@@ -833,7 +892,7 @@ pub const AsyncIoUring = struct {
                 }
             };
 
-            completions[i] = Completion{
+            completions[i] = .{
                 .result = result,
                 .task = job.task,
             };
@@ -843,9 +902,9 @@ pub const AsyncIoUring = struct {
     }
 
     pub fn to_async(self: *AsyncIoUring) Async {
-        return Async{
+        return .{
             .runner = self,
-            .features = AsyncFeatures.all(),
+            .features = .all(),
             .vtable = .{
                 .queue_job = queue_job,
                 .deinit = deinit,

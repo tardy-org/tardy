@@ -134,7 +134,6 @@ pub const WriteError = error{
     InvalidAddress,
     FileTooBig,
     Interrupted,
-    InvalidArguments,
     IoError,
     NoSpace,
     AccessDenied,

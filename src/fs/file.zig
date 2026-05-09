@@ -456,11 +456,11 @@ pub const File = packed struct {
         return length;
     }
 
-    pub fn write(self: File, rt: *Runtime, buffer: []const u8, offset: ?usize) !usize {
+    pub fn write(self: File, rt: *Runtime, buffer: []const u8, offset: ?usize) WriteError!usize {
         if (rt.aio.features.has_capability(.write)) {
-            try rt.scheduler.io_await(.{
+            rt.scheduler.io_await(.{
                 .write = .{ .fd = self.handle, .buffer = buffer, .offset = offset },
-            });
+            }) catch unreachable;
 
             const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get(index);
@@ -471,7 +471,7 @@ pub const File = packed struct {
             // TODO: Proper and improved error handling (also why not error.*)
             if (offset) |o| {
                 return blk: while (true) {
-                    break :blk std_file.writePositionalAll(rt.io, buffer, o) catch |e| switch (e) {
+                    break :blk std_file.writePositional(rt.io, &.{buffer}, o) catch |e| switch (e) {
                         error.WouldBlock => {
                             Frame.yield();
                             continue;
@@ -479,7 +479,6 @@ pub const File = packed struct {
                         error.Unseekable => unreachable,
                         error.DiskQuota => WriteError.DiskQuotaExceeded,
                         error.FileTooBig => WriteError.FileTooBig,
-                        error.InvalidArgument => WriteError.InvalidArguments,
                         error.InputOutput => WriteError.IoError,
                         error.NoSpaceLeft => WriteError.NoSpace,
                         error.AccessDenied => WriteError.AccessDenied,
@@ -490,14 +489,13 @@ pub const File = packed struct {
                 };
             } else {
                 return blk: while (true) {
-                    break :blk std_file.writeStreamingAll(rt.io, buffer) catch |e| switch (e) {
+                    break :blk std_file.writeStreaming(rt.io, &.{}, &.{buffer}, 0) catch |e| switch (e) {
                         error.WouldBlock => {
                             Frame.yield();
                             continue;
                         },
                         error.DiskQuota => WriteError.DiskQuotaExceeded,
                         error.FileTooBig => WriteError.FileTooBig,
-                        error.InvalidArgument => WriteError.InvalidArguments,
                         error.InputOutput => WriteError.IoError,
                         error.NoSpaceLeft => WriteError.NoSpace,
                         error.AccessDenied => WriteError.AccessDenied,

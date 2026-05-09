@@ -10,6 +10,8 @@ const Socket = @import("../net/lib.zig").Socket;
 const Completion = @import("completion.zig").Completion;
 const Io = std.Io;
 
+const io_uring = @import("./apis/io_uring.zig");
+
 const log = std.log.scoped(.@"tardy/aio");
 pub const AsyncKind = enum {
     auto,
@@ -181,10 +183,10 @@ pub const AsyncSubmission = union(AsyncOp) {
         buffer: []const u8,
     },
 };
-
+pub const QueueJobError = io_uring.Errors.QueueJob;
 pub const Async = struct {
     const VTable = struct {
-        queue_job: *const fn (*anyopaque, usize, AsyncSubmission) anyerror!void,
+        queue_job: *const fn (*anyopaque, usize, AsyncSubmission) QueueJobError!void,
         deinit: *const fn (*anyopaque, std.mem.Allocator) void,
         wake: *const fn (*anyopaque) anyerror!void,
         reap: *const fn (*anyopaque, []Completion, bool) anyerror![]Completion,
@@ -217,7 +219,7 @@ pub const Async = struct {
         self.vtable.deinit(self.runner, allocator);
     }
 
-    pub fn queue_job(self: *Async, task: usize, job: AsyncSubmission) !void {
+    pub fn queue_job(self: *Async, task: usize, job: AsyncSubmission) QueueJobError!void {
         assert(self.attached);
         log.debug("queuing up job={t} at index={d}", .{ job, task });
         try self.vtable.queue_job(self.runner, task, job);

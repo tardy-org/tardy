@@ -1,6 +1,10 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
+const mem = std.mem;
+const Allocator = mem.Allocator;
+
+pub const Error = error{Full} || Allocator.Error;
 
 pub const PoolKind = enum {
     /// This keeps the Pool at a static size, never growing.
@@ -36,14 +40,14 @@ pub fn Pool(comptime T: type) type {
         };
 
         const Self = @This();
-        allocator: std.mem.Allocator,
+        allocator: mem.Allocator,
         // Buffer for the Pool.
         items: []T,
         dirty: std.DynamicBitSetUnmanaged,
         kind: PoolKind,
 
         /// Initalizes our items buffer as undefined.
-        pub fn init(allocator: std.mem.Allocator, size: usize, kind: PoolKind) !Self {
+        pub fn init(allocator: mem.Allocator, size: usize, kind: PoolKind) !Self {
             return .{
                 .allocator = allocator,
                 .items = try allocator.alloc(T, size),
@@ -96,7 +100,7 @@ pub fn Pool(comptime T: type) type {
             return self.items.len - self.dirty.count();
         }
 
-        fn grow(self: *Self) !void {
+        fn grow(self: *Self) Error!void {
             assert(self.kind == .grow);
 
             const old_slice = self.items;
@@ -123,7 +127,7 @@ pub fn Pool(comptime T: type) type {
         /// If dynamic, this *might* grow the Pool.
         ///
         /// Returns the index into the Pool.
-        pub fn borrow(self: *Self) !usize {
+        pub fn borrow(self: *Self) Error!usize {
             var iter = self.dirty.iterator(.{ .kind = .unset });
             const index = iter.next() orelse switch (self.kind) {
                 .static => return error.Full,
@@ -142,7 +146,7 @@ pub fn Pool(comptime T: type) type {
         /// Uses a provided hint value as the starting index.
         ///
         /// Returns the index into the Pool.
-        pub fn borrow_hint(self: *Self, hint: usize) !usize {
+        pub fn borrow_hint(self: *Self, hint: usize) Error!usize {
             const length = self.items.len;
             for (0..length) |i| {
                 const index = @mod(hint + i, length);
@@ -243,7 +247,7 @@ test "Pool: BufferPool ([][]u8)" {
     defer buffer_pool.deinit();
 
     for (buffer_pool.items) |*item| {
-        std.mem.copyForwards(u8, item, "ABCDEF");
+        mem.copyForwards(u8, item, "ABCDEF");
     }
 
     for (buffer_pool.items) |item| {
