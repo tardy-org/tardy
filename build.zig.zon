@@ -2,7 +2,7 @@
     .name = .tardy,
     .fingerprint = 0x36d7fa71822bdceb,
     .version = "0.3.1",
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{},
     .paths = .{
         "README.md",
