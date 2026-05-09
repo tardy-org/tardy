@@ -2,12 +2,13 @@ const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
 
-const DeleteResult = @import("tardy").DeleteResult;
-const OpenFileResult = @import("tardy").OpenFileResult;
-const ReadResult = @import("tardy").ReadResult;
-const Runtime = @import("tardy").Runtime;
-const Socket = @import("tardy").Socket;
-const WriteResult = @import("tardy").WriteResult;
+const tardy = @import("tardy");
+const DeleteResult = tardy.DeleteResult;
+const OpenFileResult = tardy.OpenFileResult;
+const ReadResult = tardy.ReadResult;
+const Runtime = tardy.Runtime;
+const Socket = tardy.Socket;
+const WriteResult = tardy.WriteResult;
 
 const log = std.log.scoped(.@"tardy/e2e/tcp_chain");
 pub const TcpServerChain = struct {

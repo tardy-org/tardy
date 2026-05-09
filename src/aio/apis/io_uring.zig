@@ -445,18 +445,25 @@ pub const AsyncIoUring = struct {
         errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
-        var sockaddr, var socklen = item.job.type.accept.addr.toPosix();
         item.job = .{
             .index = index,
             .type = .{
                 .accept = .{
                     .socket = socket,
                     .kind = kind,
-                    .addr = undefined,
+                    .addr = .{
+                        .ip = .{
+                            .ip4 = .{
+                                .port = 0,
+                                .bytes = @splat(0x0),
+                            },
+                        },
+                    },
                 },
             },
             .task = task,
         };
+        var sockaddr, var socklen = item.job.type.accept.addr.toPosix();
 
         _ = try self.inner.accept(
             index,
@@ -476,8 +483,8 @@ pub const AsyncIoUring = struct {
     ) Error!void {
         const index = self.jobs.borrow_hint(task) catch @panic("OOM");
         errdefer self.jobs.release(index);
+
         const item = self.jobs.get_ptr(index);
-        const sockaddr, const socklen = item.job.type.connect.addr.toPosix();
         item.job = .{
             .index = index,
             .type = .{
@@ -489,6 +496,7 @@ pub const AsyncIoUring = struct {
             },
             .task = task,
         };
+        const sockaddr, const socklen = item.job.type.connect.addr.toPosix();
 
         _ = try self.inner.connect(
             index,

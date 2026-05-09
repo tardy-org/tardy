@@ -74,7 +74,7 @@ pub const Socket = struct {
                     var saddr: posix.sockaddr.un = .{
                         .path = @splat(0x0),
                     };
-                    @memcpy(saddr.path[0..], unix.path[0..unix.path.len]);
+                    @memcpy(saddr.path[0..unix.path.len], unix.path[0..]);
                     const addr_: posix.sockaddr = @as(*const posix.sockaddr, @ptrCast(&saddr)).*;
                     return .{ addr_, @sizeOf(@TypeOf(saddr)) };
                 },

@@ -108,11 +108,17 @@ pub const Dir = packed struct {
     /// Creates and opens a Directory.
     pub fn create(rt: *Runtime, path: Path) !Dir {
         if (rt.aio.features.has_capability(.mkdir)) {
-            try rt.scheduler.io_await(.{ .mkdir = .{ .path = path, .mode = 0o775 } });
+            try rt.scheduler.io_await(.{ .mkdir = .{
+                .path = path,
+                .mode = 0o775,
+            } });
 
             const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get_ptr(index);
-            try task.result.mkdir.unwrap();
+            task.result.mkdir.unwrap() catch |err| switch (err) {
+                error.AlreadyExists => {},
+                else => return err,
+            };
 
             return try Dir.open(rt, path);
         } else {
@@ -150,7 +156,12 @@ pub const Dir = packed struct {
 
     /// Create a Dir relative to this Dir.
     pub fn create_dir(self: Dir, rt: *Runtime, subpath: [:0]const u8) !Dir {
-        return try Dir.create(rt, .{ .rel = .{ .dir = self.handle, .path = subpath } });
+        return try Dir.create(rt, .{
+            .rel = .{
+                .dir = self.handle,
+                .path = subpath,
+            },
+        });
     }
 
     /// Open a Dir relative to this Dir.

@@ -363,14 +363,15 @@ fn build_test_e2e(
         .target = options.target,
         .optimize = options.optimize,
         .strip = false,
+        .imports = &.{
+            .{
+                .name = "tardy",
+                .module = options.tardy_mod,
+            },
+        },
+        // need libc for windows sockets
+        .link_libc = options.target.result.os.tag == .windows,
     });
-
-    e2e_mod.addImport("tardy", options.tardy_mod);
-
-    // need libc for windows sockets
-    if (options.target.result.os.tag == .windows) {
-        e2e_mod.link_libc = true;
-    }
 
     // add needed options
     const test_options = b.addOptions();

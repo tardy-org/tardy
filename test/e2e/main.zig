@@ -11,9 +11,10 @@ const Task = @import("tardy").Task;
 const Timer = @import("tardy").Timer;
 
 const First = @import("first.zig");
-const log = @import("lib.zig").log;
 const Second = @import("second.zig");
 const SharedParams = @import("lib.zig").SharedParams;
+
+const log = std.log.scoped(.@"tardy/e2e");
 
 const backend: AsyncType = switch (options.async_option) {
     .auto => .auto,
