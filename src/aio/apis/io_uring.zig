@@ -40,13 +40,13 @@ const AsyncOptions = @import("../lib.zig").AsyncOptions;
 const AsyncFeatures = @import("../lib.zig").AsyncFeatures;
 const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 const AsyncOpenFlags = @import("../lib.zig").AsyncOpenFlags;
-const tposix = @import("../../tposix.zig");
+const io = @import("../../io.zig");
 const posix = std.posix;
 
 pub const Errors = struct {
     pub const Reap = Submit || Error;
     pub const QueueJob = Error || Submit;
-    pub const Wake = tposix.WriteError;
+    pub const Wake = io.WriteError;
 
     pub const Init = error{
         EntriesZero,
@@ -109,6 +109,16 @@ const JobBundle = struct {
 };
 
 pub const AsyncIoUring = struct {
+    allocator: mem.Allocator,
+    inner: *linux.IoUring,
+    wake_event_fd: std.posix.fd_t,
+    wake_event_buffer: []u8,
+
+    // Currently, the batch size is predetermined.
+    // You basically define how large you want your batches to be.
+    cqes: []linux.io_uring_cqe,
+    jobs: Pool(JobBundle),
+
     const base_flags = blk: {
         var flags = 0;
         // If you are building for musl, you won't have access to these flags.
@@ -133,24 +143,14 @@ pub const AsyncIoUring = struct {
         break :blk flags;
     };
 
-    allocator: mem.Allocator,
-    inner: *linux.IoUring,
-    wake_event_fd: std.posix.fd_t,
-    wake_event_buffer: []u8,
-
-    // Currently, the batch size is predetermined.
-    // You basically define how large you want your batches to be.
-    cqes: []linux.io_uring_cqe,
-    jobs: Pool(JobBundle),
-
-    pub fn init(allocator: mem.Allocator, io: Io, options: AsyncOptions) (mem.Allocator.Error || Errors.Init)!AsyncIoUring {
+    pub fn init(allocator: mem.Allocator, options: AsyncOptions) (mem.Allocator.Error || Errors.Init)!AsyncIoUring {
         // Extra job for the wake event_fd.
         const size = options.size_tasks_initial + 1;
 
         const wake_event_fd: std.posix.fd_t = @intCast(
             linux.eventfd(0, linux.EFD.CLOEXEC),
         );
-        errdefer Io.File.close(.{ .handle = wake_event_fd, .flags = .{ .nonblocking = false } }, io);
+        errdefer io.close(wake_event_fd);
 
         const wake_event_buffer = try allocator.alloc(u8, 8);
         errdefer allocator.free(wake_event_buffer);
@@ -201,7 +201,11 @@ pub const AsyncIoUring = struct {
 
         const index = jobs.borrow_assume_unset(0);
         const item = jobs.get_ptr(index);
-        item.* = .{ .job = .{ .index = index, .type = .wake, .task = undefined } };
+        item.job = .{
+            .index = index,
+            .type = .wake,
+            .task = undefined,
+        };
         _ = try uring.read(index, wake_event_fd, .{ .buffer = wake_event_buffer }, 0);
 
         const cqes = try allocator.alloc(linux.io_uring_cqe, options.size_aio_reap_max);
@@ -218,7 +222,7 @@ pub const AsyncIoUring = struct {
     }
 
     pub fn inner_deinit(self: *AsyncIoUring, allocator: mem.Allocator) void {
-        tposix.close(self.wake_event_fd);
+        io.close(self.wake_event_fd);
         self.inner.deinit();
         self.jobs.deinit();
         allocator.free(self.wake_event_buffer);
@@ -250,10 +254,13 @@ pub const AsyncIoUring = struct {
             .connect => |inner| queue_connect(uring, task, inner.socket, inner.addr, inner.kind),
             .recv => |inner| queue_recv(uring, task, inner.socket, inner.buffer),
             .send => |inner| queue_send(uring, task, inner.socket, inner.buffer),
-        }) catch |e| if (e == error.SubmissionQueueFull) {
-            try submit(runner);
-            try queue_job(runner, task, job);
-        } else return e;
+        }) catch |e| switch (e) {
+            error.SubmissionQueueFull => {
+                try submit(runner);
+                try queue_job(runner, task, job);
+            },
+            else => |err| return err,
+        };
     }
 
     fn queue_timer(self: *AsyncIoUring, task: usize, timespec: Io.Timestamp) Error!void {
@@ -342,7 +349,16 @@ pub const AsyncIoUring = struct {
         errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
-        item.job = .{ .index = index, .type = .{ .delete = .{ .path = path, .is_dir = is_dir } }, .task = task };
+        item.job = .{
+            .index = index,
+            .type = .{
+                .delete = .{
+                    .path = path,
+                    .is_dir = is_dir,
+                },
+            },
+            .task = task,
+        };
 
         const mode: u32 = if (is_dir) std.posix.AT.REMOVEDIR else 0;
 
@@ -357,7 +373,16 @@ pub const AsyncIoUring = struct {
         errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
-        item.job = .{ .index = index, .type = .{ .mkdir = .{ .path = path, .mode = mode } }, .task = task };
+        item.job = .{
+            .index = index,
+            .type = .{
+                .mkdir = .{
+                    .path = path,
+                    .mode = mode,
+                },
+            },
+            .task = task,
+        };
 
         switch (path) {
             .rel => |inner| _ = try self.inner.mkdirat(index, inner.dir, inner.path.ptr, @intCast(mode)),
@@ -370,7 +395,11 @@ pub const AsyncIoUring = struct {
         errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
-        item.job = .{ .index = index, .type = .{ .stat = fd }, .task = task };
+        item.job = .{
+            .index = index,
+            .type = .{ .stat = fd },
+            .task = task,
+        };
 
         const statx_ptr = try self.allocator.create(linux.Statx);
         errdefer self.allocator.destroy(statx_ptr);
@@ -435,7 +464,11 @@ pub const AsyncIoUring = struct {
         errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
-        item.job = .{ .index = index, .type = .{ .close = fd }, .task = task };
+        item.job = .{
+            .index = index,
+            .type = .{ .close = fd },
+            .task = task,
+        };
 
         _ = try self.inner.close(index, fd);
     }
@@ -573,7 +606,7 @@ pub const AsyncIoUring = struct {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         const bytes: []const u8 = "00000000";
         var i: usize = 0;
-        while (i < bytes.len) i += try tposix.write(uring.wake_event_fd, bytes);
+        while (i < bytes.len) i += try io.write(uring.wake_event_fd, bytes);
     }
 
     fn submit(runner: *anyopaque) Errors.Submit!void {
@@ -582,7 +615,7 @@ pub const AsyncIoUring = struct {
         _ = while (true) {
             break uring.inner.submit() catch |e| switch (e) {
                 error.SignalInterrupt => continue,
-                else => return e,
+                else => |err| return err,
             };
         };
     }
@@ -596,7 +629,7 @@ pub const AsyncIoUring = struct {
             break uring.inner.copy_cqes(uring.cqes[0..], uring_nr) catch |e| {
                 switch (e) {
                     error.SignalInterrupt => continue,
-                    else => return e,
+                    else => |err| return err,
                 }
             };
         };

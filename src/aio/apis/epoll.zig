@@ -195,7 +195,7 @@ pub const AsyncEpoll = struct {
             addr.getOsSockLen(),
         ) catch |e| switch (e) {
             std.posix.ConnectError.WouldBlock => {},
-            else => return e,
+            else => |err| return err,
         };
 
         var event: linux.epoll_event = .{

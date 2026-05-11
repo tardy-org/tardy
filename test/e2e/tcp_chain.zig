@@ -128,7 +128,7 @@ pub const TcpServerChain = struct {
                 .recv => {
                     const length = chain.socket.?.recv(rt, chain.buffer) catch |e| switch (e) {
                         error.Closed => break :chain,
-                        else => return e,
+                        else => |err| return err,
                     };
 
                     for (chain.buffer[0..length]) |item| assert(item == 123);
@@ -182,7 +182,7 @@ pub const TcpClientChain = struct {
                 .recv => {
                     const length = socket.recv(rt, chain.buffer) catch |e| switch (e) {
                         error.Closed => break :chain,
-                        else => return e,
+                        else => |err| return err,
                     };
 
                     for (chain.buffer[0..length]) |item| assert(item == 123);

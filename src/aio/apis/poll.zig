@@ -169,7 +169,7 @@ pub const AsyncPoll = struct {
             addr.getOsSockLen(),
         ) catch |e| switch (e) {
             error.WouldBlock => {},
-            else => return e,
+            else => |err| return err,
         };
 
         try self.fd_list.append(self.allocator, .{ .fd = socket, .events = std.posix.POLL.OUT, .revents = 0 });

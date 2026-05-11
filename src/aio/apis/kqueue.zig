@@ -192,7 +192,7 @@ pub const AsyncKqueue = struct {
                 addr.getOsSockLen(),
             ) catch |e| switch (e) {
                 posix.ConnectError.WouldBlock => {},
-                else => return e,
+                else => |err| return err,
             };
 
             const event = &self.changes[self.change_count];

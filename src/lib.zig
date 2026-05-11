@@ -92,10 +92,11 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
     return struct {
         const Self = @This();
         aios: std.ArrayList(*AioInnerType),
+        // TODO: maybe make this an arena
         allocator: std.mem.Allocator,
         io: std.Io,
-        options: TardyOptions,
         mutex: std.Io.Mutex = .init,
+        options: TardyOptions,
 
         pub fn init(allocator: std.mem.Allocator, io: std.Io, options: TardyOptions) !Self {
             log.debug("aio backend: {t}", .{aio_type});
@@ -122,7 +123,7 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
                 var io_inner = try self.allocator.create(AioInnerType);
                 errdefer self.allocator.destroy(io_inner);
 
-                io_inner.* = try .init(self.allocator, self.io, options);
+                io_inner.* = try .init(self.allocator, options);
                 errdefer io_inner.inner_deinit(self.allocator);
 
                 try self.aios.append(self.allocator, io_inner);

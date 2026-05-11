@@ -4,7 +4,7 @@ const Io = std.Io;
 const StdFile = Io.File;
 const StdDir = Io.Dir;
 const builtin = @import("builtin");
-const tposix = @import("../tposix.zig");
+const io = @import("../io.zig");
 
 const Resulted = @import("../aio/completion.zig").Resulted;
 const OpenFileResult = @import("../aio/completion.zig").OpenFileResult;
@@ -191,11 +191,11 @@ pub const File = packed struct {
         if (rt.aio.features.has_capability(.close))
             try rt.scheduler.io_await(.{ .close = self.handle })
         else
-            tposix.close(self.handle);
+            io.close(self.handle);
     }
 
     pub fn close_blocking(self: File) void {
-        tposix.close(self.handle);
+        io.close(self.handle);
     }
 
     pub fn create(rt: *Runtime, path: Path, flags: CreateFlags) !File {
@@ -447,7 +447,7 @@ pub const File = packed struct {
 
             const result = self.read(rt, buffer[length..], real_offset) catch |e| switch (e) {
                 error.EndOfFile => return length,
-                else => return e,
+                else => |err| return err,
             };
 
             length += result;
@@ -516,7 +516,7 @@ pub const File = packed struct {
 
             const result = self.write(rt, buffer[length..], real_offset) catch |e| switch (e) {
                 error.NoSpace => return length,
-                else => return e,
+                else => |err| return err,
             };
 
             length += result;
@@ -563,9 +563,7 @@ pub const File = packed struct {
         while (true) {
             _ = Reader.stream(file_r, to_w, .limited(to_w.buffer.len)) catch |e| switch (e) {
                 error.EndOfStream => break,
-                else => {
-                    return e;
-                },
+                else => |err| return err,
             };
             _ = to_w.vtable.drain(to_w, &.{}, 0) catch break;
         }

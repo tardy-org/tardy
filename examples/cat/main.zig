@@ -19,7 +19,7 @@ fn main_frame(rt: *Runtime, p: *EntryParams) !void {
             std.debug.print("{s}: No such file!", .{p.file_name});
             return;
         },
-        else => return e,
+        else => |err| return err,
     };
 
     var file_reader = file.reader(rt, &.{});

@@ -24,7 +24,7 @@ const Runtime = @import("../runtime/lib.zig").Runtime;
 const File = @import("lib.zig").File;
 const Path = @import("lib.zig").Path;
 const Stat = @import("lib.zig").Stat;
-const tposix = @import("../tposix.zig");
+const io = @import("../io.zig");
 
 const log = std.log.scoped(.@"tardy/fs/dir");
 
@@ -55,7 +55,7 @@ pub const Dir = packed struct {
     }
 
     pub fn close_blocking(self: Dir) void {
-        tposix.close(self.handle);
+        io.close(self.handle);
     }
 
     /// Open a Directory.
@@ -117,7 +117,7 @@ pub const Dir = packed struct {
             const task = rt.scheduler.tasks.get_ptr(index);
             task.result.mkdir.unwrap() catch |err| switch (err) {
                 error.AlreadyExists => {},
-                else => return err,
+                else => |e| return e,
             };
 
             return try Dir.open(rt, path);
