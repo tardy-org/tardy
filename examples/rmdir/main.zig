@@ -1,33 +1,37 @@
 const std = @import("std");
+const Io = std.Io;
 
-const Cross = @import("tardy").Cross;
-const Dir = @import("tardy").Dir;
-const Runtime = @import("tardy").Runtime;
-const Task = @import("tardy").Task;
+const tardy = @import("tardy");
+const Cross = tardy.Cross;
+const Dir = tardy.Dir;
+const Runtime = tardy.Runtime;
+const Task = tardy.Task;
 
-const Tardy = @import("tardy").Tardy(.auto);
+const Tardy = tardy.Tardy(.auto);
 const log = std.log.scoped(.@"tardy/example/rmdir");
 
 fn main_frame(rt: *Runtime, name: [:0]const u8) !void {
     try Dir.cwd().delete_tree(rt, name);
-    log.debug("deleted tree :)", .{});
+    log.info("deleted tree '{s}/' :)", .{name});
 }
 
-pub fn main() !void {
-    var gpa: std.heap.DebugAllocator(.{ .thread_safe = true }) = .init;
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+pub fn main(init: std.process.Init) !void {
+    var stdout = Io.File.stdout().writer(init.io, &.{});
+    defer stdout.flush() catch unreachable;
+    const stdout_w = &stdout.interface;
 
-    var tardy: Tardy = try .init(allocator, .{
+    const arena = init.arena.allocator();
+
+    var td: Tardy = try .init(arena, init.io, .{
         .threading = .single,
         .pooling = .static,
         .size_tasks_initial = 1,
         .size_aio_reap_max = 1,
     });
-    defer tardy.deinit();
+    defer td.deinit();
 
     var i: usize = 0;
-    var args = try std.process.argsWithAllocator(allocator);
+    var args = try init.minimal.args.iterateAllocator(init.gpa);
     defer args.deinit();
 
     const tree_name: [:0]const u8 = blk: {
@@ -35,11 +39,11 @@ pub fn main() !void {
             if (i == 1) break :blk arg;
         }
 
-        try std.fs.File.stdout().writeAll("tree name not passed in: ./rmdir [tree name]");
+        try stdout_w.writeAll("tree name not passed in: ./rmdir [tree name]");
         return;
     };
 
-    try tardy.entry(
+    try td.entry(
         tree_name,
         struct {
             fn start(rt: *Runtime, name: [:0]const u8) !void {

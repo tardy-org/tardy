@@ -1,23 +1,25 @@
 const std = @import("std");
+const Io = std.Io;
 
-const AcceptResult = @import("tardy").AcceptResult;
-const Cross = @import("tardy").Cross;
-const Dir = @import("tardy").Dir;
-const File = @import("tardy").File;
-const Pool = @import("tardy").Pool;
-const RecvResult = @import("tardy").RecvResult;
-const Runtime = @import("tardy").Runtime;
-const SendResult = @import("tardy").SendResult;
-const Socket = @import("tardy").Socket;
-const Task = @import("tardy").Task;
-const Timer = @import("tardy").Timer;
+const tardy = @import("tardy");
+const AcceptResult = tardy.AcceptResult;
+const Cross = tardy.Cross;
+const Dir = tardy.Dir;
+const File = tardy.File;
+const Pool = tardy.Pool;
+const RecvResult = tardy.RecvResult;
+const Runtime = tardy.Runtime;
+const SendResult = tardy.SendResult;
+const Socket = tardy.Socket;
+const Task = tardy.Task;
+const Timer = tardy.Timer;
 
-const Tardy = @import("tardy").Tardy(.auto);
+const Tardy = tardy.Tardy(.auto);
 const EntryParams = struct {
     file_name: [:0]const u8,
     server_socket: *const Socket,
 };
-const log = std.log.scoped(.@"tardy/example/echo");
+const log = std.log.scoped(.@"tardy/example/stream");
 
 fn stream_frame(rt: *Runtime, server: *const Socket, file_name: [:0]const u8) !void {
     defer rt.spawn(.{ rt, server, file_name }, stream_frame, 1024 * 1024 * 4) catch unreachable;
@@ -28,9 +30,10 @@ fn stream_frame(rt: *Runtime, server: *const Socket, file_name: [:0]const u8) !v
     const file = try Dir.cwd().open_file(rt, file_name, .{});
     defer file.close_blocking();
 
-    log.debug(
-        "{d} - accepted socket [{f}]",
-        .{ std.time.milliTimestamp(), socket.addr },
+    const time: std.Io.Timestamp = .now(rt.io, .awake);
+    log.info(
+        "{f} - accepted socket [{f}]",
+        .{ time.untilNow(rt.io, .awake), socket.addr },
     );
 
     var buffer: [1024]u8 = undefined;
@@ -44,28 +47,30 @@ fn stream_frame(rt: *Runtime, server: *const Socket, file_name: [:0]const u8) !v
     ) catch unreachable;
 }
 
-pub fn main() !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
 
-    var tardy: Tardy = try .init(allocator, .{
+    var stdout = Io.File.stdout().writer(init.io, &.{});
+    defer stdout.flush() catch unreachable;
+    const stdout_w = &stdout.interface;
+
+    var td: Tardy = try .init(arena, init.io, .{
         .threading = .single,
         .pooling = .static,
         .size_tasks_initial = 2,
         .size_aio_reap_max = 1,
     });
-    defer tardy.deinit();
+    defer td.deinit();
 
     const host = "0.0.0.0";
     const port = 9862;
 
-    const server: Socket = try .init(.{ .tcp = .{ .host = host, .port = port } });
+    const server: Socket = try .init(init.io, .{ .tcp = .{ .host = host, .port = port } });
     try server.bind();
     try server.listen(1024);
 
     var i: usize = 0;
-    var args = try std.process.argsWithAllocator(allocator);
+    var args = try init.minimal.args.iterateAllocator(init.gpa);
     defer args.deinit();
 
     const file_name: [:0]const u8 = blk: {
@@ -73,7 +78,7 @@ pub fn main() !void {
             if (i == 1) break :blk arg;
         }
 
-        try std.fs.File.stdout().writeAll("file name not passed in: ./stream [file name]");
+        try stdout_w.writeAll("file name not passed in: ./stream [file name]");
         return;
     };
 
@@ -82,7 +87,7 @@ pub fn main() !void {
         .server_socket = &server,
     };
 
-    try tardy.entry(
+    try td.entry(
         &params,
         struct {
             fn start(rt: *Runtime, p: *EntryParams) !void {

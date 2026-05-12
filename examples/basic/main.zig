@@ -1,40 +1,40 @@
 const std = @import("std");
 
-const Runtime = @import("tardy").Runtime;
-const Task = @import("tardy").Task;
-const Timer = @import("tardy").Timer;
+const tardy = @import("tardy");
+const Runtime = tardy.Runtime;
+const Task = tardy.Task;
+const Timer = tardy.Timer;
 
-const Tardy = @import("tardy").Tardy(.auto);
+const Tardy = tardy.Tardy(.auto);
 const log = std.log.scoped(.@"tardy/example/basic");
 
 fn log_frame(rt: *Runtime) !void {
     var count: usize = 0;
 
+    const time: std.Io.Timestamp = .now(rt.io, .awake);
     while (count < 10) : (count += 1) {
-        log.debug("{d} - tardy example | {d}", .{ std.time.milliTimestamp(), count });
-        try Timer.delay(rt, .{ .seconds = 1 });
+        log.info("{f} - tardy example | {d}", .{ time.untilNow(rt.io, .awake), count });
+        try Timer.delay(rt, .{ .nanoseconds = 1 * std.time.ns_per_ms });
     }
 }
 
-pub fn main() !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
 
-    var tardy: Tardy = try .init(allocator, .{
+    var td: Tardy = try .init(arena, init.io, .{
         .threading = .single,
         .pooling = .static,
         .size_tasks_initial = 2,
         .size_aio_reap_max = 2,
     });
-    defer tardy.deinit();
+    defer td.deinit();
 
-    try tardy.entry(
+    try td.entry(
         {},
         struct {
-            fn init(rt: *Runtime, _: void) !void {
+            fn init_fn(rt: *Runtime, _: void) !void {
                 try rt.spawn(.{rt}, log_frame, 1024 * 16);
             }
-        }.init,
+        }.init_fn,
     );
 }

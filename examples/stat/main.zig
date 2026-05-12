@@ -1,13 +1,15 @@
 const std = @import("std");
+const Io = std.Io;
 
-const Dir = @import("tardy").Dir;
-const File = @import("tardy").File;
-const Runtime = @import("tardy").Runtime;
-const Stat = @import("tardy").Stat;
-const StatResult = @import("tardy").StatResult;
-const Task = @import("tardy").Task;
+const tardy = @import("tardy");
+const Dir = tardy.Dir;
+const File = tardy.File;
+const Runtime = tardy.Runtime;
+const Stat = tardy.Stat;
+const StatResult = tardy.StatResult;
+const Task = tardy.Task;
 
-const Tardy = @import("tardy").Tardy(.auto);
+const Tardy = tardy.Tardy(.auto);
 const log = std.log.scoped(.@"tardy/example/stat");
 
 fn main_frame(rt: *Runtime, name: [:0]const u8) !void {
@@ -15,21 +17,23 @@ fn main_frame(rt: *Runtime, name: [:0]const u8) !void {
     defer file.close_blocking();
 
     const stat = try file.stat(rt);
-    std.debug.print("stat: {any}\n", .{stat});
+    log.info("stat: {any}", .{stat});
 }
 
-pub fn main() !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
 
-    var tardy: Tardy = try .init(allocator, .{
+    var td: Tardy = try .init(arena, init.io, .{
         .threading = .single,
     });
-    defer tardy.deinit();
+    defer td.deinit();
+
+    var stdout = Io.File.stdout().writer(init.io, &.{});
+    defer stdout.flush() catch unreachable;
+    const stdout_w = &stdout.interface;
 
     var i: usize = 0;
-    var args = try std.process.argsWithAllocator(allocator);
+    var args = try init.minimal.args.iterateAllocator(init.gpa);
     defer args.deinit();
 
     const file_name: [:0]const u8 = blk: {
@@ -37,16 +41,16 @@ pub fn main() !void {
             if (i == 1) break :blk arg;
         }
 
-        try std.fs.File.stdout().writeAll("file name not passed in: ./stat [file name]");
+        try stdout_w.writeAll("file name not passed in: ./stat [file name]");
         return;
     };
 
-    try tardy.entry(
+    try td.entry(
         file_name,
         struct {
-            fn init(rt: *Runtime, path: [:0]const u8) !void {
+            fn init_fn(rt: *Runtime, path: [:0]const u8) !void {
                 try rt.spawn(.{ rt, path }, main_frame, 1024 * 1024 * 2);
             }
-        }.init,
+        }.init_fn,
     );
 }

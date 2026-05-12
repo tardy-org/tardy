@@ -1,22 +1,24 @@
 const std = @import("std");
+const Io = std.Io;
 
-const Cross = @import("tardy").Cross;
-const Dir = @import("tardy").Dir;
-const File = @import("tardy").File;
-const Frame = @import("tardy").Frame;
-const Runtime = @import("tardy").Runtime;
-const Task = @import("tardy").Task;
+const tardy = @import("tardy");
+const Cross = tardy.Cross;
+const Dir = tardy.Dir;
+const File = tardy.File;
+const Frame = tardy.Frame;
+const Runtime = tardy.Runtime;
+const Task = tardy.Task;
 
 const log = std.log.scoped(.@"tardy/example/cat");
 pub const std_options: std.Options = .{ .log_level = .err };
 
-const Tardy = @import("tardy").Tardy(.auto);
+const Tardy = tardy.Tardy(.auto);
 const EntryParams = struct { file_name: [:0]const u8 };
 
 fn main_frame(rt: *Runtime, p: *EntryParams) !void {
     const file = Dir.cwd().open_file(rt, p.file_name, .{}) catch |e| switch (e) {
         error.NotFound => {
-            std.debug.print("{s}: No such file!", .{p.file_name});
+            log.err("{s}: No such file!", .{p.file_name});
             return;
         },
         else => |err| return err,
@@ -38,21 +40,23 @@ fn main_frame(rt: *Runtime, p: *EntryParams) !void {
     }
 }
 
-pub fn main() !void {
-    var gpa: std.heap.DebugAllocator(.{ .thread_safe = true }) = .init;
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
 
-    var tardy: Tardy = try .init(allocator, .{
+    var td: Tardy = try .init(arena, init.io, .{
         .threading = .single,
         .pooling = .static,
         .size_tasks_initial = 1,
         .size_aio_reap_max = 1,
     });
-    defer tardy.deinit();
+    defer td.deinit();
+
+    var stdout = Io.File.stdout().writer(init.io, &.{});
+    defer stdout.flush() catch unreachable;
+    const stdout_w = &stdout.interface;
 
     var i: usize = 0;
-    var args = try std.process.argsWithAllocator(allocator);
+    var args = try init.minimal.args.iterateAllocator(init.gpa);
     defer args.deinit();
 
     const file_name: [:0]const u8 = blk: {
@@ -60,7 +64,7 @@ pub fn main() !void {
             if (i == 1) break :blk arg;
         }
 
-        try std.fs.File.stdout().writeAll("file name not passed in: ./cat [file name]");
+        try stdout_w.writeAll("file name not passed in: ./cat [file name]");
         return;
     };
 
@@ -68,7 +72,7 @@ pub fn main() !void {
         .file_name = file_name,
     };
 
-    try tardy.entry(
+    try td.entry(
         &params,
         struct {
             fn start(rt: *Runtime, p: *EntryParams) !void {

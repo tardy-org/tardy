@@ -99,7 +99,7 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
         options: TardyOptions,
 
         pub fn init(allocator: std.mem.Allocator, io: std.Io, options: TardyOptions) !Self {
-            log.debug("aio backend: {t}", .{aio_type});
+            log.info("aio backend: {t}", .{aio_type});
 
             return .{
                 .io = io,

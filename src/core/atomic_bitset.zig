@@ -30,9 +30,9 @@ pub const AtomicDynamicBitSet = struct {
         allocator.free(self.words);
     }
 
-    fn resize(self: *AtomicDynamicBitSet, allocator: std.mem.Allocator, new_size: usize, default: bool) !void {
-        self.lock.lock();
-        defer self.lock.unlock();
+    fn resize(self: *AtomicDynamicBitSet, allocator: std.mem.Allocator, io: std.Io, new_size: usize, default: bool) !void {
+        self.lock.lockUncancelable(io);
+        defer self.lock.unlock(io);
 
         const new_word_count = try std.math.divCeil(usize, new_size, @bitSizeOf(usize));
         assert(new_word_count > self.words.len);
@@ -74,7 +74,7 @@ pub const AtomicDynamicBitSet = struct {
             self.lock.unlockShared(io);
             defer self.lock.lockSharedUncancelable(io);
 
-            try self.resize(self.allocator, try std.math.ceilPowerOfTwo(usize, index), false);
+            try self.resize(self.allocator, io, try std.math.ceilPowerOfTwo(usize, index), false);
         }
         assert(self.bit_length >= index);
 

@@ -46,6 +46,15 @@ pub const Socket = struct {
         ip: Io.net.IpAddress,
         unix: Io.net.UnixAddress,
 
+        pub fn format(a: Address, w: *Io.Writer) Io.Writer.Error!void {
+            switch (a) {
+                .ip => |ip| try ip.format(w),
+                .unix => |unix| {
+                    try w.print("{s}", .{unix.path});
+                },
+            }
+        }
+
         pub fn toPosix(addr: Address) struct { posix.sockaddr, posix.socklen_t } {
             switch (addr) {
                 .ip => |ip| {
@@ -87,7 +96,7 @@ pub const Socket = struct {
     kind: Kind,
 
     // TODO: we shouldn't need Io here
-    pub fn init(io_: std.Io, kind: InitKind) !Socket {
+    pub fn init(io_: Io, kind: InitKind) !Socket {
         const addr: Address = switch (kind) {
             .tcp, .udp => |inner| blk: {
                 break :blk if (comptime builtin.os.tag == .linux)
@@ -349,7 +358,7 @@ pub const Socket = struct {
         err: ?anyerror = null,
         pos: u64 = 0,
         rt: *Runtime,
-        interface: std.Io.Writer,
+        interface: Io.Writer,
 
         pub fn init(socket: Socket, rt: *Runtime, buffer: []u8) Writer {
             return .{
@@ -359,7 +368,7 @@ pub const Socket = struct {
             };
         }
 
-        pub fn initInterface(buffer: []u8) std.Io.Writer {
+        pub fn initInterface(buffer: []u8) Io.Writer {
             return .{
                 .vtable = &.{
                     .drain = drain,
@@ -369,7 +378,7 @@ pub const Socket = struct {
             };
         }
 
-        pub fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+        pub fn drain(io_w: *Io.Writer, data: []const []const u8, splat: usize) Io.Writer.Error!usize {
             const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
             const buffered = io_w.buffered();
 
@@ -401,10 +410,10 @@ pub const Socket = struct {
         }
 
         pub fn sendFile(
-            io_w: *std.Io.Writer,
-            file_reader: *std.fs.File.Reader,
-            limit: std.Io.Limit,
-        ) std.Io.Writer.FileError!usize {
+            io_w: *Io.Writer,
+            file_reader: *Io.File.Reader,
+            limit: Io.Limit,
+        ) Io.Writer.FileError!usize {
             _ = io_w; // autofix
             _ = file_reader; // autofix
             _ = limit; // autofix
@@ -417,7 +426,7 @@ pub const Socket = struct {
         err: ?anyerror = null,
         pos: u64 = 0,
         rt: *Runtime,
-        interface: std.Io.Reader,
+        interface: Io.Reader,
 
         pub fn init(socket: Socket, rt: *Runtime, buffer: []u8) Reader {
             return .{
@@ -427,7 +436,7 @@ pub const Socket = struct {
             };
         }
 
-        pub fn initInterface(buffer: []u8) std.Io.Reader {
+        pub fn initInterface(buffer: []u8) Io.Reader {
             return .{
                 .vtable = &.{
                     .stream = Reader.stream,
@@ -438,7 +447,7 @@ pub const Socket = struct {
             };
         }
 
-        fn stream(io_reader: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        fn stream(io_reader: *Io.Reader, w: *Io.Writer, limit: Io.Limit) Io.Reader.StreamError!usize {
             const r: *Reader = @alignCast(@fieldParentPtr("interface", io_reader));
             const w_dest = limit.slice(try w.writableSliceGreedy(1));
 
@@ -466,7 +475,7 @@ pub const Socket = struct {
     }
 
     // TODO: sendFile like api is a more appropriate for this
-    pub fn stream_to(from: Socket, to_w: *std.Io.Writer, rt: *Runtime) !void {
+    pub fn stream_to(from: Socket, to_w: *Io.Writer, rt: *Runtime) !void {
         debug.assert(to_w.buffer.len > 0);
 
         var file = from.reader(rt, &.{});
