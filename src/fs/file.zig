@@ -4,7 +4,7 @@ const Io = std.Io;
 const StdFile = Io.File;
 const StdDir = Io.Dir;
 const builtin = @import("builtin");
-const io = @import("../io.zig");
+const syscall = @import("../syscall.zig");
 
 const Resulted = @import("../aio/completion.zig").Resulted;
 const OpenFileResult = @import("../aio/completion.zig").OpenFileResult;
@@ -140,7 +140,9 @@ pub const Reader = struct {
 };
 
 pub const File = packed struct {
-    handle: std.posix.fd_t,
+    handle: Handle,
+
+    pub const Handle = Io.File.Handle;
 
     pub fn reader(file: File, rt: *Runtime, buffer: []u8) Reader {
         return .init(file, rt, buffer);
@@ -191,11 +193,11 @@ pub const File = packed struct {
         if (rt.aio.features.has_capability(.close))
             try rt.scheduler.io_await(.{ .close = self.handle })
         else
-            io.close(self.handle);
+            syscall.close(self.handle);
     }
 
     pub fn close_blocking(self: File) void {
-        io.close(self.handle);
+        syscall.close(self.handle);
     }
 
     pub fn create(rt: *Runtime, path: Path, flags: CreateFlags) !File {

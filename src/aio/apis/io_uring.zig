@@ -40,13 +40,13 @@ const AsyncOptions = @import("../lib.zig").AsyncOptions;
 const AsyncFeatures = @import("../lib.zig").AsyncFeatures;
 const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 const AsyncOpenFlags = @import("../lib.zig").AsyncOpenFlags;
-const io = @import("../../io.zig");
+const syscall = @import("../../syscall.zig");
 const posix = std.posix;
 
 pub const Errors = struct {
     pub const Reap = Submit || Error;
     pub const QueueJob = Error || Submit;
-    pub const Wake = io.WriteError;
+    pub const Wake = syscall.WriteError;
 
     pub const Init = error{
         EntriesZero,
@@ -150,7 +150,7 @@ pub const AsyncIoUring = struct {
         const wake_event_fd: std.posix.fd_t = @intCast(
             linux.eventfd(0, linux.EFD.CLOEXEC),
         );
-        errdefer io.close(wake_event_fd);
+        errdefer syscall.close(wake_event_fd);
 
         const wake_event_buffer = try allocator.alloc(u8, 8);
         errdefer allocator.free(wake_event_buffer);
@@ -222,7 +222,7 @@ pub const AsyncIoUring = struct {
     }
 
     pub fn inner_deinit(self: *AsyncIoUring, allocator: mem.Allocator) void {
-        io.close(self.wake_event_fd);
+        syscall.close(self.wake_event_fd);
         self.inner.deinit();
         self.jobs.deinit();
         allocator.free(self.wake_event_buffer);
@@ -263,7 +263,7 @@ pub const AsyncIoUring = struct {
         };
     }
 
-    fn queue_timer(self: *AsyncIoUring, task: usize, timespec: Io.Timestamp) Error!void {
+    fn queue_timer(self: *AsyncIoUring, task: usize, duration: Io.Duration) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -277,9 +277,10 @@ pub const AsyncIoUring = struct {
         // TODO: make copierble types none pointers
         const timespec_ptr = try self.allocator.create(linux.kernel_timespec);
         errdefer self.allocator.destroy(timespec_ptr);
+
         timespec_ptr.* = .{
-            .sec = @intCast(@divTrunc(timespec.nanoseconds, std.time.ns_per_s)),
-            .nsec = @intCast(@mod(timespec.nanoseconds, std.time.ns_per_s)),
+            .sec = @intCast(@divFloor(duration.nanoseconds, std.time.ns_per_s)),
+            .nsec = @intCast(@mod(duration.nanoseconds, std.time.ns_per_s)),
         };
         item.timespec = timespec_ptr;
 
@@ -484,14 +485,7 @@ pub const AsyncIoUring = struct {
                 .accept = .{
                     .socket = socket,
                     .kind = kind,
-                    .addr = .{
-                        .ip = .{
-                            .ip4 = .{
-                                .port = 0,
-                                .bytes = @splat(0x0),
-                            },
-                        },
-                    },
+                    .addr = .empty,
                 },
             },
             .task = task,
@@ -606,7 +600,7 @@ pub const AsyncIoUring = struct {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         const bytes: []const u8 = "00000000";
         var i: usize = 0;
-        while (i < bytes.len) i += try io.write(uring.wake_event_fd, bytes);
+        while (i < bytes.len) i += try syscall.write(uring.wake_event_fd, bytes);
     }
 
     fn submit(runner: *anyopaque) Errors.Submit!void {

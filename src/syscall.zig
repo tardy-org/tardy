@@ -627,6 +627,79 @@ pub fn sendmsg(
     }
 }
 
+pub const PipeError = error{
+    SystemFdQuotaExceeded,
+    ProcessFdQuotaExceeded,
+} || UnexpectedError;
+
+/// Creates a unidirectional data channel that can be used for interprocess communication.
+pub fn pipe() PipeError![2]posix.fd_t {
+    var fds: [2]posix.fd_t = undefined;
+    switch (posix.errno(system.pipe(&fds))) {
+        .SUCCESS => return fds,
+        .INVAL => unreachable, // Invalid parameters to pipe()
+        .FAULT => unreachable, // Invalid fds pointer
+        .NFILE => return error.SystemFdQuotaExceeded,
+        .MFILE => return error.ProcessFdQuotaExceeded,
+        else => |err| return posix.unexpectedErrno(err),
+    }
+}
+
+pub fn pipe2(flags: O) PipeError![2]posix.fd_t {
+    if (@TypeOf(system.pipe2) != void) {
+        var fds: [2]posix.fd_t = undefined;
+        switch (posix.errno(system.pipe2(&fds, flags))) {
+            .SUCCESS => return fds,
+            .INVAL => unreachable, // Invalid flags
+            .FAULT => unreachable, // Invalid fds pointer
+            .NFILE => return error.SystemFdQuotaExceeded,
+            .MFILE => return error.ProcessFdQuotaExceeded,
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    }
+
+    const fds: [2]posix.fd_t = try pipe();
+    errdefer {
+        close(fds[0]);
+        close(fds[1]);
+    }
+
+    // https://github.com/ziglang/zig/issues/18882
+    if (@as(u32, @bitCast(flags)) == 0)
+        return fds;
+
+    // CLOEXEC is special, it's a file descriptor flag and must be set using
+    // F.SETFD.
+    if (flags.CLOEXEC) {
+        for (fds) |fd| {
+            switch (posix.errno(system.fcntl(fd, F.SETFD, @as(u32, posix.FD_CLOEXEC)))) {
+                .SUCCESS => {},
+                .INVAL => unreachable, // Invalid flags
+                .BADF => unreachable, // Always a race condition
+                else => |err| return posix.unexpectedErrno(err),
+            }
+        }
+    }
+
+    const new_flags: u32 = f: {
+        var new_flags = flags;
+        new_flags.CLOEXEC = false;
+        break :f @bitCast(new_flags);
+    };
+    // Set every other flag affecting the file status using F.SETFL.
+    if (new_flags != 0) {
+        for (fds) |fd| {
+            switch (posix.errno(system.fcntl(fd, F.SETFL, new_flags))) {
+                .SUCCESS => {},
+                .INVAL => unreachable, // Invalid flags
+                .BADF => unreachable, // Always a race condition
+                else => |err| return posix.unexpectedErrno(err),
+            }
+        }
+    }
+    return fds;
+}
+
 fn setSockFlags(sock: socket_t, flags: u32) !void {
     if ((flags & SOCK.CLOEXEC) != 0) {
         if (native_os == .windows) {
@@ -790,7 +863,10 @@ fn openSocketAfd(family: ws2_32.ADDRESS_FAMILY, options: IpAddress.BindOptions) 
     while (true) switch (windows.ntdll.NtCreateFile(
         &handle,
         .{
-            .STANDARD = .{ .RIGHTS = .{ .WRITE_DAC = true }, .SYNCHRONIZE = true },
+            .STANDARD = .{
+                .RIGHTS = .{ .WRITE_DAC = true },
+                .SYNCHRONIZE = true,
+            },
             .GENERIC = .{ .WRITE = true, .READ = true },
         },
         &.{
@@ -834,11 +910,38 @@ fn openSocketAfd(family: ws2_32.ADDRESS_FAMILY, options: IpAddress.BindOptions) 
     };
 }
 
+pub const PollError = error{
+    /// The network subsystem has failed.
+    NetworkDown,
+
+    /// The kernel had no space to allocate file descriptor tables.
+    SystemResources,
+} || UnexpectedError;
+
+pub fn poll(fds: []posix.pollfd, timeout: i32) PollError!usize {
+    if (native_os == .windows) {
+        @compileError("use std.Io instead");
+    }
+    while (true) {
+        const fds_count = std.math.cast(posix.nfds_t, fds.len) orelse return error.SystemResources;
+        const rc = system.poll(fds.ptr, fds_count, timeout);
+        switch (posix.errno(rc)) {
+            .SUCCESS => return @intCast(rc),
+            .FAULT => unreachable,
+            .INTR => continue,
+            .INVAL => unreachable,
+            .NOMEM => return error.SystemResources,
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    }
+    unreachable;
+}
+
 const default_fn_align = switch (builtin.mode) {
     .Debug, .ReleaseSafe, .ReleaseFast => switch (builtin.cpu.arch) {
-        else => |arch| @compileError("Unsupported architecture: " ++ @tagName(arch)),
         .arm, .thumb => 4,
         .aarch64, .x86, .x86_64 => 16,
+        else => |arch| @compileError("Unsupported architecture: " ++ @tagName(arch)),
     },
     .ReleaseSmall => 1,
 };
@@ -915,3 +1018,180 @@ const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 const math = std.math;
 const debug = std.debug;
+
+pub const ReadError = std.Io.File.Reader.Error;
+
+/// Returns the number of bytes that were read, which can be less than
+/// buf.len. If 0 bytes were read, that means EOF.
+/// If `fd` is opened in non blocking mode, the function will return error.WouldBlock
+/// when EAGAIN is received.
+///
+/// Linux has a limit on how many bytes may be transferred in one `read` call, which is `0x7ffff000`
+/// on both 64-bit and 32-bit systems. This is due to using a signed C int as the return value, as
+/// well as stuffing the errno codes into the last `4096` values. This is noted on the `read` man page.
+/// The limit on Darwin is `0x7fffffff`, trying to read more than that returns EINVAL.
+/// The corresponding POSIX limit is `maxInt(isize)`.
+pub fn read(fd: posix.fd_t, buf: []u8) ReadError!usize {
+    if (buf.len == 0) return 0;
+    if (native_os == .windows) @compileError("unsupported OS");
+
+    // Prevents EINVAL.
+    const max_count = switch (native_os) {
+        .linux => 0x7ffff000,
+        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => std.math.maxInt(i32),
+        else => std.math.maxInt(isize),
+    };
+    while (true) {
+        const rc = system.read(fd, buf.ptr, @min(buf.len, max_count));
+        switch (posix.errno(rc)) {
+            .SUCCESS => return @intCast(rc),
+            .INTR => continue,
+            .INVAL => unreachable,
+            .FAULT => unreachable,
+            .AGAIN => return error.WouldBlock,
+            .CANCELED => return error.Canceled,
+            .BADF => return error.Unexpected, // use after free
+            .IO => return error.InputOutput,
+            .ISDIR => return error.IsDir,
+            .NOBUFS => return error.SystemResources,
+            .NOMEM => return error.SystemResources,
+            .NOTCONN => return error.SocketUnconnected,
+            .CONNRESET => return error.ConnectionResetByPeer,
+            .TIMEDOUT => return error.Unexpected,
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    }
+}
+
+pub fn now(clock: Io.Clock) Io.Timestamp {
+    return switch (native_os) {
+        .windows => nowWindows(clock),
+        else => nowPosix(clock),
+    };
+}
+
+fn nowPosix(clock: Io.Clock) Io.Timestamp {
+    const clock_id: posix.clockid_t = clockToPosix(clock);
+    var timespec: posix.timespec = undefined;
+    switch (posix.errno(posix.system.clock_gettime(clock_id, &timespec))) {
+        .SUCCESS => return timestampFromPosix(&timespec),
+        else => return .zero,
+    }
+}
+
+fn nowWindows(clock: Io.Clock) Io.Timestamp {
+    switch (clock) {
+        .real => {
+            // RtlGetSystemTimePrecise() has a granularity of 100 nanoseconds
+            // and uses the NTFS/Windows epoch, which is 1601-01-01.
+            const epoch_ns = std.time.epoch.windows * std.time.ns_per_s;
+            return .{ .nanoseconds = @as(i96, windows.ntdll.RtlGetSystemTimePrecise()) * 100 + epoch_ns };
+        },
+        .awake, .boot => {
+            // We don't need to cache QPF as it's internally just a memory read to KUSER_SHARED_DATA
+            // (a read-only page of info updated and mapped by the kernel to all processes):
+            // https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-kuser_shared_data
+            // https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/api/ntexapi_x/kuser_shared_data/index.htm
+            const qpf: u64 = qpf: {
+                var qpf: windows.LARGE_INTEGER = undefined;
+                debug.assert(windows.ntdll.RtlQueryPerformanceFrequency(&qpf).toBool());
+                break :qpf @bitCast(qpf);
+            };
+
+            // QPC on windows doesn't fail on >= XP/2000 and includes time suspended.
+            const qpc: u64 = qpc: {
+                var qpc: windows.LARGE_INTEGER = undefined;
+                debug.assert(windows.ntdll.RtlQueryPerformanceCounter(&qpc).toBool());
+                break :qpc @bitCast(qpc);
+            };
+
+            // 10Mhz (1 qpc tick every 100ns) is a common enough QPF value that we can optimize on it.
+            // https://github.com/microsoft/STL/blob/785143a0c73f030238ef618890fd4d6ae2b3a3a0/stl/inc/chrono#L694-L701
+            const common_qpf = 10_000_000;
+            if (qpf == common_qpf) return .{ .nanoseconds = qpc * (std.time.ns_per_s / common_qpf) };
+
+            // Convert to ns using fixed point.
+            const scale = @as(u64, std.time.ns_per_s << 32) / @as(u32, @intCast(qpf));
+            const result = (@as(u96, qpc) * scale) >> 32;
+            return .{ .nanoseconds = @intCast(result) };
+        },
+        .cpu_process => {
+            const handle = windows.GetCurrentProcess();
+            var times: windows.KERNEL_USER_TIMES = undefined;
+
+            // https://github.com/reactos/reactos/blob/master/ntoskrnl/ps/query.c#L442-L485
+            if (windows.ntdll.NtQueryInformationProcess(
+                handle,
+                .Times,
+                &times,
+                @sizeOf(windows.KERNEL_USER_TIMES),
+                null,
+            ) != .SUCCESS) return .zero;
+
+            const sum = @as(i96, times.UserTime) + @as(i96, times.KernelTime);
+            return .{ .nanoseconds = sum * 100 };
+        },
+        .cpu_thread => {
+            const handle = windows.GetCurrentThread();
+            var times: windows.KERNEL_USER_TIMES = undefined;
+
+            // https://github.com/reactos/reactos/blob/master/ntoskrnl/ps/query.c#L2971-L3019
+            if (windows.ntdll.NtQueryInformationThread(
+                handle,
+                .Times,
+                &times,
+                @sizeOf(windows.KERNEL_USER_TIMES),
+                null,
+            ) != .SUCCESS) return .zero;
+
+            const sum = @as(i96, times.UserTime) + @as(i96, times.KernelTime);
+            return .{ .nanoseconds = sum * 100 };
+        },
+    }
+}
+
+pub fn clockToPosix(clock: Io.Clock) posix.clockid_t {
+    return switch (clock) {
+        .real => posix.CLOCK.REALTIME,
+        .awake => switch (native_os) {
+            .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => posix.CLOCK.UPTIME_RAW,
+            else => posix.CLOCK.MONOTONIC,
+        },
+        .boot => switch (native_os) {
+            .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => posix.CLOCK.MONOTONIC_RAW,
+            // On freebsd derivatives, use MONOTONIC_FAST as currently there's
+            // no precision tradeoff.
+            .freebsd, .dragonfly => posix.CLOCK.MONOTONIC_FAST,
+            // On linux, use BOOTTIME instead of MONOTONIC as it ticks while
+            // suspended.
+            .linux => posix.CLOCK.BOOTTIME,
+            // On other posix systems, MONOTONIC is generally the fastest and
+            // ticks while suspended.
+            else => posix.CLOCK.MONOTONIC,
+        },
+        .cpu_process => posix.CLOCK.PROCESS_CPUTIME_ID,
+        .cpu_thread => posix.CLOCK.THREAD_CPUTIME_ID,
+    };
+}
+
+pub fn timestampFromPosix(timespec: *const posix.timespec) Io.Timestamp {
+    return .{ .nanoseconds = nanosecondsFromPosix(timespec) };
+}
+
+pub fn nanosecondsFromPosix(timespec: *const posix.timespec) i96 {
+    return @intCast(@as(i128, timespec.sec) * std.time.ns_per_s + timespec.nsec);
+}
+
+fn timestampToPosix(nanoseconds: i96) posix.timespec {
+    if (builtin.zig_backend == .stage2_wasm) {
+        // Workaround for https://codeberg.org/ziglang/zig/issues/30575
+        return .{
+            .sec = @intCast(@divTrunc(nanoseconds, std.time.ns_per_s)),
+            .nsec = @intCast(@rem(nanoseconds, std.time.ns_per_s)),
+        };
+    }
+    return .{
+        .sec = @intCast(@divFloor(nanoseconds, std.time.ns_per_s)),
+        .nsec = @intCast(@mod(nanoseconds, std.time.ns_per_s)),
+    };
+}

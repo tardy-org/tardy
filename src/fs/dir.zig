@@ -24,7 +24,7 @@ const Runtime = @import("../runtime/lib.zig").Runtime;
 const File = @import("lib.zig").File;
 const Path = @import("lib.zig").Path;
 const Stat = @import("lib.zig").Stat;
-const io = @import("../io.zig");
+const syscall = @import("../syscall.zig");
 
 const log = std.log.scoped(.@"tardy/fs/dir");
 
@@ -55,7 +55,7 @@ pub const Dir = packed struct {
     }
 
     pub fn close_blocking(self: Dir) void {
-        io.close(self.handle);
+        syscall.close(self.handle);
     }
 
     /// Open a Directory.

@@ -1,5 +1,7 @@
 const std = @import("std");
+const mem = std.mem;
 const assert = std.debug.assert;
+
 const Atomic = std.atomic.Value;
 const builtin = @import("builtin");
 
@@ -8,9 +10,12 @@ const Path = @import("../fs/lib.zig").Path;
 // TODO: let Socket be a file
 const Socket = @import("../net/lib.zig").Socket;
 const Completion = @import("completion.zig").Completion;
+const File = @import("../fs/file.zig").File;
 const Io = std.Io;
+const net = Io.net;
 
-const io_uring = @import("./apis/io_uring.zig");
+const io_uring = @import("apis/io_uring.zig");
+const poll = @import("apis/poll.zig");
 
 const log = std.log.scoped(.@"tardy/aio");
 pub const AsyncKind = enum {
@@ -140,7 +145,7 @@ pub const AsyncFeatures = struct {
 };
 
 pub const AsyncSubmission = union(AsyncOp) {
-    timer: Io.Timestamp,
+    timer: Io.Duration,
     open: struct {
         path: Path,
         flags: AsyncOpenFlags,
@@ -153,41 +158,43 @@ pub const AsyncSubmission = union(AsyncOp) {
         path: Path,
         mode: isize,
     },
-    stat: std.posix.fd_t,
+    stat: File.Handle,
     read: struct {
-        fd: std.posix.fd_t,
+        fd: File.Handle,
         buffer: []u8,
         offset: ?usize,
     },
     write: struct {
-        fd: std.posix.fd_t,
+        fd: File.Handle,
         buffer: []const u8,
         offset: ?usize,
     },
-    close: std.posix.fd_t,
+    close: Socket.Handle,
     accept: struct {
-        socket: std.posix.socket_t,
+        socket: Socket.Handle,
         kind: Socket.Kind,
     },
     connect: struct {
-        socket: std.posix.socket_t,
+        socket: Socket.Handle,
         addr: Socket.Address,
         kind: Socket.Kind,
     },
     recv: struct {
-        socket: std.posix.socket_t,
+        socket: Socket.Handle,
         buffer: []u8,
     },
     send: struct {
-        socket: std.posix.socket_t,
+        socket: Socket.Handle,
         buffer: []const u8,
     },
 };
-pub const QueueJobError = io_uring.Errors.QueueJob;
+
+pub const QueueJobError = io_uring.Errors.QueueJob || poll.Errors.QueueJob;
+
 pub const Async = struct {
     const VTable = struct {
         queue_job: *const fn (*anyopaque, usize, AsyncSubmission) QueueJobError!void,
-        deinit: *const fn (*anyopaque, std.mem.Allocator) void,
+        deinit: *const fn (*anyopaque, mem.Allocator) void,
         wake: *const fn (*anyopaque) anyerror!void,
         reap: *const fn (*anyopaque, []Completion, bool) anyerror![]Completion,
         submit: *const fn (*anyopaque) anyerror!void,
@@ -199,7 +206,7 @@ pub const Async = struct {
 
     attached: bool = false,
     completions: []Completion = undefined,
-    mutex: std.Io.Mutex = .init,
+    mutex: Io.Mutex = .init,
 
     // List of Async features that this Async I/O backend has.
     // Stored as a bitmask.
@@ -212,7 +219,7 @@ pub const Async = struct {
         self.attached = true;
     }
 
-    pub fn deinit(self: *Async, allocator: std.mem.Allocator, io: std.Io) void {
+    pub fn deinit(self: *Async, allocator: mem.Allocator, io: Io) void {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
 
@@ -225,7 +232,7 @@ pub const Async = struct {
         try self.vtable.queue_job(self.runner, task, job);
     }
 
-    pub fn wake(self: *Async, io: std.Io) !void {
+    pub fn wake(self: *Async, io: Io) !void {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
 

@@ -214,11 +214,11 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
                         while (count.load(.acquire) < total_count) {}
 
                         @call(.auto, entry_func, .{ &thread_rt, entry_parameters }) catch |e| {
-                            log.err("{d} - entry error={}", .{ thread_rt.id, e });
+                            log.err("{d} - entry error={t}", .{ thread_rt.id, e });
                             thread_rt.stop();
                         };
 
-                        thread_rt.run() catch |e| log.err("{d} - runtime error={}", .{ thread_rt.id, e });
+                        thread_rt.run() catch |e| log.err("{d} - runtime error={t}", .{ thread_rt.id, e });
 
                         // wait for the rest to stop before cleaning ourselves up.
                         // this is because the runtime is allocate on our stack and others might be checking
@@ -243,10 +243,10 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
             log.debug("all runtimes spawned, initalizing...", .{});
 
             @call(.auto, entry_func, .{ &runtime, entry_params }) catch |e| {
-                log.err("0 - entry error={}", .{e});
+                log.err("0 - entry error={t}", .{e});
                 runtime.stop();
             };
-            runtime.run() catch |e| log.err("0 - runtime error={}", .{e});
+            runtime.run() catch |e| log.err("0 - runtime error={t}", .{e});
         }
 
         /// This spawns in and enters into the runtime

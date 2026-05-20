@@ -2,6 +2,7 @@ const std = @import("std");
 const debug = std.debug;
 const builtin = @import("builtin");
 const Io = std.Io;
+const net = Io.net;
 
 const AcceptResult = @import("../aio/completion.zig").AcceptResult;
 const AcceptError = @import("../aio/completion.zig").AcceptError;
@@ -14,10 +15,11 @@ const SendError = @import("../aio/completion.zig").SendError;
 const Frame = @import("../frame/lib.zig").Frame;
 const Runtime = @import("../runtime/lib.zig").Runtime;
 const posix = std.posix;
-const io = @import("../io.zig");
+const syscall = @import("../syscall.zig");
 const mem = std.mem;
 
 pub const Socket = struct {
+    // TODO: create a udp/tcp connection without this
     pub const Kind = enum {
         tcp,
         udp,
@@ -42,9 +44,20 @@ pub const Socket = struct {
         unix: []const u8,
     };
 
+    pub const Handle = net.Socket.Handle;
+
     pub const Address = union(enum) {
-        ip: Io.net.IpAddress,
-        unix: Io.net.UnixAddress,
+        ip: net.IpAddress,
+        unix: net.UnixAddress,
+
+        pub const empty: Address = .{
+            .ip = .{
+                .ip4 = .{
+                    .port = 0,
+                    .bytes = @splat(0x0),
+                },
+            },
+        };
 
         pub fn format(a: Address, w: *Io.Writer) Io.Writer.Error!void {
             switch (a) {
@@ -134,25 +147,25 @@ pub const Socket = struct {
         const flags: u32 = sock_type | posix.SOCK.CLOEXEC | posix.SOCK.NONBLOCK;
 
         // TODO: audit these and posix uses across tardy
-        const socket = try io.socket(family, flags, protocol);
+        const socket = try syscall.socket(family, flags, protocol);
 
         if (kind != .unix) {
             if (@hasDecl(posix.SO, "REUSEPORT_LB")) {
-                try io.setsockopt(
+                try syscall.setsockopt(
                     socket,
                     posix.SOL.SOCKET,
                     posix.SO.REUSEPORT_LB,
                     &std.mem.toBytes(@as(u32, 1)),
                 );
             } else if (@hasDecl(posix.SO, "REUSEPORT")) {
-                try io.setsockopt(
+                try syscall.setsockopt(
                     socket,
                     posix.SOL.SOCKET,
                     posix.SO.REUSEPORT,
                     &std.mem.toBytes(@as(u32, 1)),
                 );
             } else {
-                try io.setsockopt(
+                try syscall.setsockopt(
                     socket,
                     posix.SOL.SOCKET,
                     posix.SO.REUSEADDR,
@@ -167,13 +180,13 @@ pub const Socket = struct {
     /// Bind the current Socket
     pub fn bind(sock: Socket) !void {
         const sockaddr, const socklen = sock.addr.toPosix();
-        try io.bind(sock.handle, &sockaddr, socklen);
+        try syscall.bind(sock.handle, &sockaddr, socklen);
     }
 
     /// Listen on the Current Socket.
     pub fn listen(self: Socket, backlog: usize) !void {
         debug.assert(self.kind.listenable());
-        try io.listen(self.handle, @truncate(backlog));
+        try syscall.listen(self.handle, @truncate(backlog));
     }
 
     // TODO: rethink the aio to io approach
@@ -181,13 +194,13 @@ pub const Socket = struct {
         if (rt.aio.features.has_capability(.close))
             try rt.scheduler.io_await(.{ .close = self.handle })
         else
-            io.close(self.handle);
+            syscall.close(self.handle);
     }
 
     pub fn close_blocking(self: Socket) void {
         // todo: delete the unix socket if the
         // server is being closed
-        io.close(self.handle);
+        syscall.close(self.handle);
     }
 
     pub fn accept(self: Socket, rt: *Runtime) !Socket {
@@ -208,7 +221,7 @@ pub const Socket = struct {
             var sockaddr, var socklen = addr.toPosix();
 
             const socket: posix.socket_t = blk: while (true) {
-                break :blk io.accept(
+                break :blk syscall.accept(
                     self.handle,
                     &sockaddr,
                     &socklen,
@@ -251,7 +264,7 @@ pub const Socket = struct {
         } else {
             const sockaddr, const socklen = self.addr.toPosix();
             while (true) {
-                break io.connect(
+                break syscall.connect(
                     self.handle,
                     &sockaddr,
                     socklen,
@@ -280,7 +293,7 @@ pub const Socket = struct {
             return try task.result.recv.unwrap();
         } else {
             const count: usize = blk: while (true) {
-                break :blk io.recv(self.handle, buffer, 0) catch |e| return switch (e) {
+                break :blk syscall.recv(self.handle, buffer, 0) catch |e| return switch (e) {
                     error.WouldBlock => {
                         Frame.yield();
                         continue;
@@ -323,7 +336,7 @@ pub const Socket = struct {
             return try task.result.send.unwrap();
         } else {
             const count: usize = blk: while (true) {
-                break :blk io.send(self.handle, buffer, 0) catch |e| return switch (e) {
+                break :blk syscall.send(self.handle, buffer, 0) catch |e| return switch (e) {
                     error.WouldBlock => {
                         Frame.yield();
                         continue;
