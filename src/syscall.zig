@@ -1150,7 +1150,7 @@ fn nowWindows(clock: Io.Clock) Io.Timestamp {
     }
 }
 
-pub fn clockToPosix(clock: Io.Clock) posix.clockid_t {
+fn clockToPosix(clock: Io.Clock) posix.clockid_t {
     return switch (clock) {
         .real => posix.CLOCK.REALTIME,
         .awake => switch (native_os) {
@@ -1174,24 +1174,10 @@ pub fn clockToPosix(clock: Io.Clock) posix.clockid_t {
     };
 }
 
-pub fn timestampFromPosix(timespec: *const posix.timespec) Io.Timestamp {
-    return .{ .nanoseconds = nanosecondsFromPosix(timespec) };
-}
-
-pub fn nanosecondsFromPosix(timespec: *const posix.timespec) i96 {
-    return @intCast(@as(i128, timespec.sec) * std.time.ns_per_s + timespec.nsec);
-}
-
-fn timestampToPosix(nanoseconds: i96) posix.timespec {
-    if (builtin.zig_backend == .stage2_wasm) {
-        // Workaround for https://codeberg.org/ziglang/zig/issues/30575
-        return .{
-            .sec = @intCast(@divTrunc(nanoseconds, std.time.ns_per_s)),
-            .nsec = @intCast(@rem(nanoseconds, std.time.ns_per_s)),
-        };
-    }
+fn timestampFromPosix(timespec: *const posix.timespec) Io.Timestamp {
     return .{
-        .sec = @intCast(@divFloor(nanoseconds, std.time.ns_per_s)),
-        .nsec = @intCast(@mod(nanoseconds, std.time.ns_per_s)),
+        .nanoseconds = @intCast(
+            @as(i128, timespec.sec) * std.time.ns_per_s + timespec.nsec,
+        ),
     };
 }
