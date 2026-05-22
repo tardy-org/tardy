@@ -31,6 +31,10 @@ pub const AcceptError = error{
     ProcessFdQuotaExceeded,
     SystemFdQuotaExceeded,
     OutOfMemory,
+    SystemResources,
+    SocketNotListening,
+    BlockedByFirewall,
+    ProtocolFailure,
     Unexpected,
 };
 
@@ -55,34 +59,27 @@ pub const ConnectError = error{
 pub const RecvError = error{
     Closed,
     WouldBlock,
-    InvalidFd,
+    SocketNotConnected,
+    SystemResources,
     ConnectionRefused,
-    /// Invalid Receive Buffer Address.
-    InvalidAddress,
-    Interrupted,
-    InvalidArguments,
-    OutOfMemory,
-    NotConnected,
-    NotASocket,
+    ConnectionResetByPeer,
+    BrokenPipe,
+    ConnectionTimedOut,
+    MessageTooBig,
     Unexpected,
 };
 
 pub const SendError = error{
+    Closed,
     AccessDenied,
     WouldBlock,
-    OpenInProgress,
-    InvalidFd,
-    Closed,
-    NoDestinationAddress,
-    InvalidAddress,
-    Interrupted,
-    InvalidArguments,
-    AlreadyConnected,
-    InvalidSize,
-    OutOfMemory,
-    NotConnected,
-    OperationNotSupported,
+    FastOpenAlreadyInProgress,
+    ConnectionRefused,
+    ConnectionResetByPeer,
+    MessageOversize,
+    SystemResources,
     BrokenPipe,
+    NetworkDown,
     Unexpected,
 };
 

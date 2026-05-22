@@ -245,7 +245,28 @@ pub fn listen(sock: socket_t, backlog: u31) ListenError!void {
     }
 }
 
-pub const AcceptError = std.Io.net.Server.AcceptError;
+pub const AcceptError = error{
+    /// The per-process limit on the number of open file descriptors has been reached.
+    ProcessFdQuotaExceeded,
+    /// The system-wide limit on the total number of open files has been reached.
+    SystemFdQuotaExceeded,
+    /// Not enough free memory. This often means that the memory allocation is limited
+    /// by the socket buffer limits, not by the system memory.
+    SystemResources,
+    /// Either `listen` was never called, or `shutdown` was called (possibly while
+    /// this call was blocking). This allows `shutdown` to be used as a concurrent
+    /// cancellation mechanism.
+    SocketNotListening,
+    /// No connection is already queued and ready to be accepted, and
+    /// the socket is configured as non-blocking.
+    WouldBlock,
+    /// An incoming connection was indicated, but was subsequently terminated by the
+    /// remote peer prior to accepting the call.
+    ConnectionAborted,
+    /// Firewall rules forbid connection.
+    BlockedByFirewall,
+    ProtocolFailure,
+} || UnexpectedError;
 
 pub fn accept(
     sock: socket_t,
@@ -311,14 +332,8 @@ pub const RecvFromError = error{
     ConnectionResetByPeer,
     ConnectionTimedOut,
 
-    /// The socket has not been bound.
-    SocketNotBound,
-
     /// The UDP message was too big for the buffer and part of it has been discarded
     MessageTooBig,
-
-    /// The network subsystem has failed.
-    NetworkSubsystemFailed,
 
     /// The socket is not connected (connection-oriented sockets only).
     SocketNotConnected,
@@ -444,6 +459,50 @@ pub fn setsockopt(fd: socket_t, level: i32, optname: u32, opt: []const u8) SetSo
     }
 }
 
+pub const SendError = error{
+    /// (For UNIX domain sockets, which are identified by pathname) Write permission is  denied
+    /// on  the destination socket file, or search permission is denied for one of the
+    /// directories the path prefix.  (See path_resolution(7).)
+    /// (For UDP sockets) An attempt was made to send to a network/broadcast address as  though
+    /// it was a unicast address.
+    AccessDenied,
+    /// The socket is marked nonblocking and the requested operation would block, and
+    /// there is no global event loop configured.
+    /// It's also possible to get this error under the following condition:
+    /// (Internet  domain datagram sockets) The socket referred to by sockfd had not previously
+    /// been bound to an address and, upon attempting to bind it to an ephemeral port,  it  was
+    /// determined that all port numbers in the ephemeral port range are currently in use.  See
+    /// the discussion of /proc/sys/net/ipv4/ip_local_port_range in ip(7).
+    WouldBlock,
+
+    /// Another Fast Open is already in progress.
+    FastOpenAlreadyInProgress,
+
+    /// Connection reset by peer.
+    ConnectionResetByPeer,
+
+    /// The  socket  type requires that message be sent atomically, and the size of the message
+    /// to be sent made this impossible. The message is not transmitted.
+    MessageOversize,
+
+    /// The output queue for a network interface was full.  This generally indicates  that  the
+    /// interface  has  stopped sending, but may be caused by transient congestion.  (Normally,
+    /// this does not occur in Linux.  Packets are just silently dropped when  a  device  queue
+    /// overflows.)
+    /// This is also caused when there is not enough kernel memory available.
+    SystemResources,
+
+    /// The  local  end  has been shut down on a connection oriented socket.  In this case, the
+    /// process will also receive a SIGPIPE unless MSG.NOSIGNAL is set.
+    BrokenPipe,
+
+    /// The local network interface used to reach the destination is down.
+    NetworkDown,
+
+    /// The destination address is not listening.
+    ConnectionRefused,
+} || UnexpectedError;
+
 /// Transmit a message to another socket.
 ///
 /// The `send` call may be used only when the socket is in a connected state (so that the intended
@@ -488,6 +547,8 @@ pub const SendToError = SendMsgError || error{
     UnreachableAddress,
     /// The destination address is not listening.
     ConnectionRefused,
+    /// Network is unreachable.
+    NetworkUnreachable,
 };
 
 /// Transmit a message to another socket.
@@ -529,7 +590,6 @@ pub fn sendto(
         const rc = system.sendto(sockfd, buf.ptr, buf.len, flags, dest_addr, addrlen);
         switch (posix.errno(rc)) {
             .SUCCESS => return @intCast(rc),
-
             .ACCES => return error.AccessDenied,
             .AGAIN => return error.WouldBlock,
             .ALREADY => return error.FastOpenAlreadyInProgress,
@@ -946,56 +1006,6 @@ const default_fn_align = switch (builtin.mode) {
     .ReleaseSmall => 1,
 };
 
-pub const SendError = error{
-    /// (For UNIX domain sockets, which are identified by pathname) Write permission is  denied
-    /// on  the destination socket file, or search permission is denied for one of the
-    /// directories the path prefix.  (See path_resolution(7).)
-    /// (For UDP sockets) An attempt was made to send to a network/broadcast address as  though
-    /// it was a unicast address.
-    AccessDenied,
-
-    /// The socket is marked nonblocking and the requested operation would block, and
-    /// there is no global event loop configured.
-    /// It's also possible to get this error under the following condition:
-    /// (Internet  domain datagram sockets) The socket referred to by sockfd had not previously
-    /// been bound to an address and, upon attempting to bind it to an ephemeral port,  it  was
-    /// determined that all port numbers in the ephemeral port range are currently in use.  See
-    /// the discussion of /proc/sys/net/ipv4/ip_local_port_range in ip(7).
-    WouldBlock,
-
-    /// Another Fast Open is already in progress.
-    FastOpenAlreadyInProgress,
-
-    /// Connection reset by peer.
-    ConnectionResetByPeer,
-
-    /// The  socket  type requires that message be sent atomically, and the size of the message
-    /// to be sent made this impossible. The message is not transmitted.
-    MessageOversize,
-
-    /// The output queue for a network interface was full.  This generally indicates  that  the
-    /// interface  has  stopped sending, but may be caused by transient congestion.  (Normally,
-    /// this does not occur in Linux.  Packets are just silently dropped when  a  device  queue
-    /// overflows.)
-    /// This is also caused when there is not enough kernel memory available.
-    SystemResources,
-
-    /// The  local  end  has been shut down on a connection oriented socket.  In this case, the
-    /// process will also receive a SIGPIPE unless MSG.NOSIGNAL is set.
-    BrokenPipe,
-
-    FileDescriptorNotASocket,
-
-    /// Network is unreachable.
-    NetworkUnreachable,
-
-    /// The local network interface used to reach the destination is down.
-    NetworkDown,
-
-    /// The destination address is not listening.
-    ConnectionRefused,
-} || UnexpectedError;
-
 pub const apc_align = @max(default_fn_align, 2);
 
 const std = @import("std");
@@ -1334,5 +1344,71 @@ pub fn epoll_wait(epfd: i32, events: []system.epoll_event, timeout: i32) usize {
             .INVAL => unreachable,
             else => unreachable,
         }
+    }
+}
+
+pub const KQueueError = error{
+    /// The per-process limit on the number of open file descriptors has been reached.
+    ProcessFdQuotaExceeded,
+
+    /// The system-wide limit on the total number of open files has been reached.
+    SystemFdQuotaExceeded,
+} || UnexpectedError;
+
+pub fn kqueue() KQueueError!i32 {
+    const rc = system.kqueue();
+    return switch (posix.errno(rc)) {
+        .SUCCESS => @intCast(rc),
+        .MFILE => error.ProcessFdQuotaExceeded,
+        .NFILE => error.SystemFdQuotaExceeded,
+        else => |err| posix.unexpectedErrno(err),
+    };
+}
+
+pub const KEventError = error{
+    /// The process does not have permission to register a filter.
+    AccessDenied,
+
+    /// The event could not be found to be modified or deleted.
+    EventNotFound,
+
+    /// No memory was available to register the event.
+    SystemResources,
+
+    /// The specified process to attach to does not exist.
+    ProcessNotFound,
+
+    /// changelist or eventlist had too many items on it.
+    /// TODO remove this possibility
+    Overflow,
+};
+
+pub fn kevent(
+    kq: i32,
+    changelist: []const posix.Kevent,
+    eventlist: []posix.Kevent,
+    timeout: ?*const posix.timespec,
+) KEventError!usize {
+    while (true) {
+        const rc = system.kevent(
+            kq,
+            changelist.ptr,
+            math.cast(c_int, changelist.len) orelse return error.Overflow,
+            eventlist.ptr,
+            math.cast(c_int, eventlist.len) orelse return error.Overflow,
+            timeout,
+        );
+        return switch (posix.errno(rc)) {
+            .SUCCESS => @intCast(rc),
+            .ACCES => error.AccessDenied,
+            .FAULT => unreachable,
+            .BADF => unreachable, // Always a race condition.
+            .INTR => continue,
+            .INVAL => unreachable,
+            .NOENT => error.EventNotFound,
+            .NOMEM => error.SystemResources,
+            .SRCH => error.ProcessNotFound,
+            else => unreachable,
+        };
     }
 }

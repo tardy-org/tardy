@@ -405,10 +405,7 @@ pub const AsyncEpoll = struct {
                                             job_complete = false;
                                             continue;
                                         },
-                                        error.SystemResources => RecvError.OutOfMemory,
-                                        error.SocketNotConnected => RecvError.NotConnected,
-                                        error.ConnectionRefused => RecvError.ConnectionRefused,
-                                        else => RecvError.Unexpected,
+                                        else => |err| err,
                                     };
 
                                     break :result .{ .err = err };
@@ -434,13 +431,7 @@ pub const AsyncEpoll = struct {
                                             job_complete = false;
                                             continue;
                                         },
-                                        error.AccessDenied => SendError.AccessDenied,
-                                        error.SystemResources => SendError.OutOfMemory,
-                                        error.ConnectionResetByPeer,
-                                        error.BrokenPipe,
-                                        => SendError.Closed,
-                                        error.FastOpenAlreadyInProgress => SendError.OpenInProgress,
-                                        else => SendError.Unexpected,
+                                        else => |err| err,
                                     };
 
                                     break :result .{ .err = err };

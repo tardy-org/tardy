@@ -715,15 +715,12 @@ pub const AsyncIoUring = struct {
                         const result: RecvResult = result: {
                             const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
+                                .NOTSOCK, .INVAL, .FAULT, .BADF => unreachable,
                                 .AGAIN => .{ .err = RecvError.WouldBlock },
-                                .BADF => .{ .err = RecvError.InvalidFd },
                                 .CONNRESET => .{ .err = RecvError.Closed },
                                 .CONNREFUSED => .{ .err = RecvError.ConnectionRefused },
-                                .FAULT => .{ .err = RecvError.InvalidAddress },
-                                .INVAL => .{ .err = RecvError.InvalidArguments },
-                                .NOMEM => .{ .err = RecvError.OutOfMemory },
-                                .NOTCONN => .{ .err = RecvError.NotConnected },
-                                .NOTSOCK => .{ .err = RecvError.NotASocket },
+                                .NOMEM => .{ .err = RecvError.SystemResources },
+                                .NOTCONN => .{ .err = RecvError.SocketNotConnected },
                                 else => .{ .err = RecvError.Unexpected },
                             };
                         };
@@ -736,19 +733,24 @@ pub const AsyncIoUring = struct {
                         const result: SendResult = result: {
                             const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
+                                .OPNOTSUPP,
+                                .FAULT,
+                                .NOTCONN,
+                                .ISCONN,
+                                .INVAL,
+                                .DESTADDRREQ,
+                                .BADF,
+                                => unreachable,
                                 .ACCES => .{ .err = SendError.AccessDenied },
                                 .AGAIN => .{ .err = SendError.WouldBlock },
-                                .ALREADY => .{ .err = SendError.OpenInProgress },
-                                .BADF => .{ .err = SendError.InvalidFd },
+                                .ALREADY => .{ .err = SendError.FastOpenAlreadyInProgress },
                                 .CONNRESET, .PIPE => .{ .err = SendError.Closed },
-                                .DESTADDRREQ => .{ .err = SendError.NoDestinationAddress },
-                                .FAULT => .{ .err = SendError.InvalidAddress },
-                                .INVAL => .{ .err = SendError.InvalidArguments },
-                                .ISCONN => .{ .err = SendError.AlreadyConnected },
-                                .MSGSIZE => .{ .err = SendError.InvalidSize },
-                                .NOBUFS, .NOMEM => .{ .err = SendError.OutOfMemory },
-                                .NOTCONN => .{ .err = SendError.NotConnected },
-                                .OPNOTSUPP => .{ .err = SendError.OperationNotSupported },
+                                .MSGSIZE => .{ .err = SendError.MessageOversize },
+                                .NOBUFS,
+                                .NOMEM,
+                                => .{
+                                    .err = SendError.SystemResources,
+                                },
                                 else => .{ .err = SendError.Unexpected },
                             };
                         };

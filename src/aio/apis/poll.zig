@@ -451,7 +451,10 @@ pub const AsyncPoll = struct {
                     }
                 };
 
-                completions[reaped] = .{ .result = result, .task = job.task };
+                completions[reaped] = .{
+                    .result = result,
+                    .task = job.task,
+                };
                 reaped += 1;
             }
         }
