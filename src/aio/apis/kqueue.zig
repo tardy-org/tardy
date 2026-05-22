@@ -501,7 +501,7 @@ pub const AsyncKqueue = struct {
     }
 
     pub fn to_async(self: *AsyncKqueue) Async {
-        return Async{
+        return .{
             .runner = self,
             .features = .init(&.{
                 .timer,

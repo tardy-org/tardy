@@ -111,7 +111,7 @@ const JobBundle = struct {
 pub const AsyncIoUring = struct {
     allocator: mem.Allocator,
     inner: *linux.IoUring,
-    wake_event_fd: std.posix.fd_t,
+    wake_event_fd: posix.fd_t,
     wake_event_buffer: []u8,
 
     // Currently, the batch size is predetermined.
@@ -147,7 +147,7 @@ pub const AsyncIoUring = struct {
         // Extra job for the wake event_fd.
         const size = options.size_tasks_initial + 1;
 
-        const wake_event_fd: std.posix.fd_t = @intCast(
+        const wake_event_fd: posix.fd_t = @intCast(
             linux.eventfd(0, linux.EFD.CLOEXEC),
         );
         errdefer syscall.close(wake_event_fd);
@@ -337,7 +337,7 @@ pub const AsyncIoUring = struct {
             ),
             .abs => |inner| _ = try self.inner.openat(
                 index,
-                std.posix.AT.FDCWD,
+                posix.AT.FDCWD,
                 inner.ptr,
                 o_flags,
                 @intCast(perms),
@@ -361,11 +361,11 @@ pub const AsyncIoUring = struct {
             .task = task,
         };
 
-        const mode: u32 = if (is_dir) std.posix.AT.REMOVEDIR else 0;
+        const mode: u32 = if (is_dir) posix.AT.REMOVEDIR else 0;
 
         switch (path) {
             .rel => |inner| _ = try self.inner.unlinkat(index, inner.dir, inner.path.ptr, mode),
-            .abs => |inner| _ = try self.inner.unlinkat(index, std.posix.AT.FDCWD, inner.ptr, mode),
+            .abs => |inner| _ = try self.inner.unlinkat(index, posix.AT.FDCWD, inner.ptr, mode),
         }
     }
 
@@ -387,11 +387,11 @@ pub const AsyncIoUring = struct {
 
         switch (path) {
             .rel => |inner| _ = try self.inner.mkdirat(index, inner.dir, inner.path.ptr, @intCast(mode)),
-            .abs => |inner| _ = try self.inner.mkdirat(index, std.posix.AT.FDCWD, inner.ptr, @intCast(mode)),
+            .abs => |inner| _ = try self.inner.mkdirat(index, posix.AT.FDCWD, inner.ptr, @intCast(mode)),
         }
     }
 
-    fn queue_stat(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t) Error!void {
+    fn queue_stat(self: *AsyncIoUring, task: usize, fd: posix.fd_t) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -416,7 +416,7 @@ pub const AsyncIoUring = struct {
         );
     }
 
-    fn queue_read(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t, buffer: []u8, offset: ?usize) Error!void {
+    fn queue_read(self: *AsyncIoUring, task: usize, fd: posix.fd_t, buffer: []u8, offset: ?usize) Error!void {
         // If we don't have an offset, set it as -1.
         const real_offset: usize = if (offset) |o| o else @bitCast(@as(isize, -1));
 
@@ -438,7 +438,7 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.read(index, fd, .{ .buffer = buffer }, real_offset);
     }
 
-    fn queue_write(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t, buffer: []const u8, offset: ?usize) Error!void {
+    fn queue_write(self: *AsyncIoUring, task: usize, fd: posix.fd_t, buffer: []const u8, offset: ?usize) Error!void {
         // If we don't have an offset, set it as -1.
         const real_offset: usize = if (offset) |o| o else @bitCast(@as(isize, -1));
 
@@ -460,7 +460,7 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.write(index, fd, buffer, real_offset);
     }
 
-    fn queue_close(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t) Error!void {
+    fn queue_close(self: *AsyncIoUring, task: usize, fd: posix.fd_t) Error!void {
         const index = self.jobs.borrow_hint(task) catch @panic("OOM");
         errdefer self.jobs.release(index);
 
@@ -474,7 +474,7 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.close(index, fd);
     }
 
-    fn queue_accept(self: *AsyncIoUring, task: usize, socket: std.posix.socket_t, kind: Socket.Kind) Error!void {
+    fn queue_accept(self: *AsyncIoUring, task: usize, socket: posix.socket_t, kind: Socket.Kind) Error!void {
         const index = self.jobs.borrow_hint(task) catch @panic("OOM");
         errdefer self.jobs.release(index);
 
@@ -504,7 +504,7 @@ pub const AsyncIoUring = struct {
     fn queue_connect(
         self: *AsyncIoUring,
         task: usize,
-        socket: std.posix.socket_t,
+        socket: posix.socket_t,
         addr: Socket.Address,
         kind: Socket.Kind,
     ) Error!void {
@@ -536,7 +536,7 @@ pub const AsyncIoUring = struct {
     fn queue_recv(
         self: *AsyncIoUring,
         task: usize,
-        socket: std.posix.socket_t,
+        socket: posix.socket_t,
         buffer: []u8,
     ) Error!void {
         const index = self.jobs.borrow_hint(task) catch @panic("OOM");
@@ -556,7 +556,7 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.recv(index, socket, .{ .buffer = buffer }, 0);
     }
 
-    fn queue_send(self: *AsyncIoUring, task: usize, socket: std.posix.socket_t, buffer: []const u8) Error!void {
+    fn queue_send(self: *AsyncIoUring, task: usize, socket: posix.socket_t, buffer: []const u8) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 

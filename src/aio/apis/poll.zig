@@ -32,7 +32,7 @@ const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 const log = std.log.scoped(.@"tardy/aio/poll");
 
 pub const Errors = struct {
-    pub const Connect = (net.IpAddress.ConnectError || net.UnixAddress.ConnectError || Error);
+    pub const Connect = syscall.ConnectError || Error;
     pub const Timer = Error;
     pub const Accept = Error;
     pub const Recv = Error;

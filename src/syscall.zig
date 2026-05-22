@@ -1181,3 +1181,158 @@ fn timestampFromPosix(timespec: *const posix.timespec) Io.Timestamp {
         ),
     };
 }
+
+pub const EpollCreateError = error{
+    /// The  per-user   limit   on   the   number   of   epoll   instances   imposed   by
+    /// /proc/sys/fs/epoll/max_user_instances  was encountered.  See epoll(7) for further
+    /// details.
+    /// Or, The per-process limit on the number of open file descriptors has been reached.
+    ProcessFdQuotaExceeded,
+
+    /// The system-wide limit on the total number of open files has been reached.
+    SystemFdQuotaExceeded,
+
+    /// There was insufficient memory to create the kernel object.
+    SystemResources,
+} || UnexpectedError;
+
+pub fn epoll_create1(flags: u32) EpollCreateError!i32 {
+    const rc = system.epoll_create1(flags);
+    return switch (posix.errno(rc)) {
+        .SUCCESS => @intCast(rc),
+        .INVAL => unreachable,
+        .MFILE => error.ProcessFdQuotaExceeded,
+        .NFILE => error.SystemFdQuotaExceeded,
+        .NOMEM => error.SystemResources,
+        else => |err| posix.unexpectedErrno(err),
+    };
+}
+
+pub const EpollCtlError = error{
+    /// op was EPOLL_CTL_ADD, and the supplied file descriptor fd is  already  registered
+    /// with this epoll instance.
+    FileDescriptorAlreadyPresentInSet,
+    /// fd refers to an epoll instance and this EPOLL_CTL_ADD operation would result in a
+    /// circular loop of epoll instances monitoring one another.
+    OperationCausesCircularLoop,
+    /// op was EPOLL_CTL_MOD or EPOLL_CTL_DEL, and fd is not registered with  this  epoll
+    /// instance.
+    FileDescriptorNotRegistered,
+    /// There was insufficient memory to handle the requested op control operation.
+    SystemResources,
+    /// The  limit  imposed  by /proc/sys/fs/epoll/max_user_watches was encountered while
+    /// trying to register (EPOLL_CTL_ADD) a new file descriptor on  an  epoll  instance.
+    /// See epoll(7) for further details.
+    UserResourceLimitReached,
+    /// The target file fd does not support epoll.  This error can occur if fd refers to,
+    /// for example, a regular file or a directory.
+    FileDescriptorIncompatibleWithEpoll,
+} || UnexpectedError;
+
+pub fn epoll_ctl(epfd: i32, op: u32, fd: i32, event: ?*system.epoll_event) EpollCtlError!void {
+    const rc = system.epoll_ctl(epfd, op, fd, event);
+    return switch (posix.errno(rc)) {
+        .SUCCESS => {},
+        .BADF => unreachable, // always a race condition if this happens
+        .EXIST => error.FileDescriptorAlreadyPresentInSet,
+        .INVAL => unreachable,
+        .LOOP => error.OperationCausesCircularLoop,
+        .NOENT => error.FileDescriptorNotRegistered,
+        .NOMEM => error.SystemResources,
+        .NOSPC => error.UserResourceLimitReached,
+        .PERM => error.FileDescriptorIncompatibleWithEpoll,
+        else => |err| posix.unexpectedErrno(err),
+    };
+}
+
+pub const EventFdError = error{
+    SystemResources,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+} || UnexpectedError;
+
+pub fn eventfd(initval: u32, flags: u32) EventFdError!i32 {
+    const rc = system.eventfd(initval, flags);
+    return switch (posix.errno(rc)) {
+        .SUCCESS => @intCast(rc),
+        .INVAL => unreachable, // invalid parameters
+        .MFILE => error.ProcessFdQuotaExceeded,
+        .NFILE => error.SystemFdQuotaExceeded,
+        .NODEV => error.SystemResources,
+        .NOMEM => error.SystemResources,
+        else => |err| posix.unexpectedErrno(err),
+    };
+}
+
+pub const TimerFdCreateError = error{
+    PermissionDenied,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    NoDevice,
+    SystemResources,
+} || UnexpectedError;
+
+pub fn timerfd_create(clock_id: system.timerfd_clockid_t, flags: system.TFD) TimerFdCreateError!posix.fd_t {
+    const rc = system.timerfd_create(clock_id, @bitCast(flags));
+    return switch (posix.errno(rc)) {
+        .SUCCESS => @intCast(rc),
+        .INVAL => unreachable,
+        .MFILE => error.ProcessFdQuotaExceeded,
+        .NFILE => error.SystemFdQuotaExceeded,
+        .NODEV => error.NoDevice,
+        .NOMEM => error.SystemResources,
+        .PERM => error.PermissionDenied,
+        else => |err| posix.unexpectedErrno(err),
+    };
+}
+
+pub const TimerFdSetError = error{Canceled} || UnexpectedError;
+
+pub fn timerfd_settime(
+    fd: i32,
+    flags: system.TFD.TIMER,
+    new_value: *const system.itimerspec,
+    old_value: ?*system.itimerspec,
+) TimerFdSetError!void {
+    const rc = system.timerfd_settime(fd, @bitCast(flags), new_value, old_value);
+    return switch (posix.errno(rc)) {
+        .SUCCESS => {},
+        .BADF => unreachable,
+        .FAULT => unreachable,
+        .INVAL => unreachable,
+        .CANCELED => error.Canceled,
+        else => |err| posix.unexpectedErrno(err),
+    };
+}
+
+pub const TimerFdGetError = UnexpectedError;
+
+pub fn timerfd_gettime(fd: i32) TimerFdGetError!system.itimerspec {
+    var curr_value: system.itimerspec = undefined;
+    const rc = system.timerfd_gettime(fd, &curr_value);
+    return switch (posix.errno(rc)) {
+        .SUCCESS => return curr_value,
+        .BADF => unreachable,
+        .FAULT => unreachable,
+        .INVAL => unreachable,
+        else => |err| posix.unexpectedErrno(err),
+    };
+}
+
+/// Waits for an I/O event on an epoll file descriptor.
+/// Returns the number of file descriptors ready for the requested I/O,
+/// or zero if no file descriptor became ready during the requested timeout milliseconds.
+pub fn epoll_wait(epfd: i32, events: []system.epoll_event, timeout: i32) usize {
+    while (true) {
+        // TODO get rid of the @intCast
+        const rc = system.epoll_wait(epfd, events.ptr, @intCast(events.len), timeout);
+        switch (posix.errno(rc)) {
+            .SUCCESS => return @intCast(rc),
+            .INTR => continue,
+            .BADF => unreachable,
+            .FAULT => unreachable,
+            .INVAL => unreachable,
+            else => unreachable,
+        }
+    }
+}

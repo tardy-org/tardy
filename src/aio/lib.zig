@@ -16,6 +16,7 @@ const net = Io.net;
 
 const io_uring = @import("apis/io_uring.zig");
 const poll = @import("apis/poll.zig");
+const epoll = @import("apis/epoll.zig");
 
 const log = std.log.scoped(.@"tardy/aio");
 pub const AsyncKind = enum {
@@ -189,7 +190,7 @@ pub const AsyncSubmission = union(AsyncOp) {
     },
 };
 
-pub const QueueJobError = io_uring.Errors.QueueJob || poll.Errors.QueueJob;
+pub const QueueJobError = io_uring.Errors.QueueJob || poll.Errors.QueueJob || epoll.Errors.QueueJob;
 
 pub const Async = struct {
     const VTable = struct {

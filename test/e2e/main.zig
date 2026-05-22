@@ -109,7 +109,7 @@ pub fn main(init: std.process.Init) !void {
         }.start,
     );
 
-    log.info("seed={d} passed\n", .{seed});
+    log.info("seed={d} passed", .{seed});
 }
 
 fn timeout_task(rt: *Runtime, other: *const ?*Runtime) !void {
