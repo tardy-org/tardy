@@ -19,9 +19,7 @@ fn log_frame(rt: *Runtime) !void {
 }
 
 pub fn main(init: std.process.Init) !void {
-    const arena = init.arena.allocator();
-
-    var td: Tardy = try .init(arena, init.io, .{
+    var td: Tardy = try .init(init.gpa, init.io, .{
         .threading = .single,
         .pooling = .static,
         .size_tasks_initial = 2,

@@ -41,18 +41,16 @@ fn consumer_frame(rt: *Runtime, consumer: Spsc(usize).Consumer) !void {
 }
 
 pub fn main(init: std.process.Init) !void {
-    const arena = init.arena.allocator();
+    var channel: Spsc(usize) = try .init(init.gpa, 2);
+    defer channel.deinit();
 
-    var td: Tardy = try .init(arena, init.io, .{
+    var td: Tardy = try .init(init.gpa, init.io, .{
         .threading = .{ .multi = 2 },
         .pooling = .static,
         .size_tasks_initial = 1,
         .size_aio_reap_max = 1,
     });
     defer td.deinit();
-
-    var channel: Spsc(usize) = try .init(init.gpa, 2);
-    defer channel.deinit();
 
     try td.entry(
         &channel,

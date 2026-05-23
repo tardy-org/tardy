@@ -49,22 +49,20 @@ fn main_frame(rt: *Runtime, server: *const Socket) !void {
 }
 
 pub fn main(init: std.process.Init) !void {
-    const arena = init.arena.allocator();
-
-    var td: Tardy = try .init(arena, init.io, .{
-        .threading = .auto,
-        .pooling = .grow,
-        .size_tasks_initial = 256,
-        .size_aio_reap_max = 1024,
-    });
-    defer td.deinit();
-
     const host = "0.0.0.0";
     const port = 9862;
 
     const server: Socket = try .init(init.io, .{ .tcp = .{ .host = host, .port = port } });
     try server.bind();
     try server.listen(1024);
+
+    var td: Tardy = try .init(init.gpa, init.io, .{
+        .threading = .auto,
+        .pooling = .grow,
+        .size_tasks_initial = 256,
+        .size_aio_reap_max = 1024,
+    });
+    defer td.deinit();
 
     try td.entry(
         &server,

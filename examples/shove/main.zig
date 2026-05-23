@@ -27,29 +27,27 @@ fn main_frame(rt: *Runtime, name: [:0]const u8) !void {
 }
 
 pub fn main(init: std.process.Init) !void {
-    const arena = init.arena.allocator();
+    var args = try init.minimal.args.iterateAllocator(init.gpa);
+    defer args.deinit();
 
     var stdout = Io.File.stdout().writer(init.io, &.{});
     defer stdout.flush() catch unreachable;
     const stdout_w = &stdout.interface;
 
-    var td: Tardy = try .init(arena, init.io, .{
+    const file_name: [:0]const u8 = blk: {
+        var i: usize = 0;
+        while (args.next()) |arg| : (i += 1) if (i == 1) break :blk arg;
+        try stdout_w.writeAll("file name not passed in: ./shove [file name]");
+        return;
+    };
+
+    var td: Tardy = try .init(init.gpa, init.io, .{
         .threading = .single,
         .pooling = .grow,
         .size_tasks_initial = 1,
         .size_aio_reap_max = 1,
     });
     defer td.deinit();
-
-    var i: usize = 0;
-    var args = try init.minimal.args.iterateAllocator(init.gpa);
-    defer args.deinit();
-
-    const file_name: [:0]const u8 = blk: {
-        while (args.next()) |arg| : (i += 1) if (i == 1) break :blk arg;
-        try stdout_w.writeAll("file name not passed in: ./shove [file name]");
-        return;
-    };
 
     try td.entry(
         file_name,
