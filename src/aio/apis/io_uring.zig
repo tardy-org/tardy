@@ -871,6 +871,7 @@ pub const AsyncIoUring = struct {
                         const result: WriteResult = result: {
                             const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
+                                .INVAL => unreachable,
                                 .AGAIN => .{ .err = WriteError.WouldBlock },
                                 .BADF => .{ .err = WriteError.InvalidFd },
                                 .DESTADDRREQ => .{ .err = WriteError.NoDestinationAddress },

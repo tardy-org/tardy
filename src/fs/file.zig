@@ -139,7 +139,7 @@ pub const Reader = struct {
     }
 };
 
-pub const File = packed struct {
+pub const File = struct {
     handle: Handle,
 
     pub const Handle = Io.File.Handle;
