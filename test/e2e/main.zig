@@ -35,7 +35,6 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     var arena_alloc = init.arena;
     const arena = arena_alloc.allocator();
-    _ = arena; // autofix
     var args = try init.minimal.args.iterateAllocator(gpa);
     defer args.deinit();
 
@@ -77,7 +76,9 @@ pub fn main(init: std.process.Init) !void {
     };
     log.debug("{f}", .{std.json.fmt(shared, .{ .whitespace = .indent_1 })});
 
-    var tardy: Tardy = try .init(gpa, io, .{
+    // TODO: find out why using gpa here gives
+    // thread panic: incorrect alignment on aarch64-linux/macos
+    var tardy: Tardy = try .init(arena, io, .{
         .threading = .{ .multi = 2 },
         .pooling = .grow,
         .size_tasks_initial = shared.size_tasks_initial,
@@ -90,7 +91,10 @@ pub fn main(init: std.process.Init) !void {
         shared: *const SharedParams,
     };
 
-    var params: EntryParams = .{ .runtime = null, .shared = &shared };
+    var params: EntryParams = .{
+        .runtime = null,
+        .shared = &shared,
+    };
 
     try tardy.entry(
         &params,

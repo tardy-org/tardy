@@ -23,7 +23,6 @@ pub const FileChain = struct {
         delete,
     };
 
-    allocator: std.mem.Allocator,
     file: ?File = null,
     path: Path,
     steps: []Step,
@@ -89,25 +88,24 @@ pub const FileChain = struct {
         errdefer allocator.free(buffer);
 
         return .{
-            .allocator = allocator,
             .steps = chain_dupe,
             .path = path_dupe,
             .buffer = buffer,
         };
     }
 
-    pub fn deinit(self: *const FileChain) void {
-        defer self.allocator.free(self.steps);
-        defer self.allocator.free(self.buffer);
+    pub fn deinit(self: *const FileChain, allocator: std.mem.Allocator) void {
+        defer allocator.free(self.steps);
+        defer allocator.free(self.buffer);
         defer switch (self.path) {
-            .rel => |inner| self.allocator.free(inner.path),
-            .abs => |p| self.allocator.free(p),
+            .rel => |inner| allocator.free(inner.path),
+            .abs => |p| allocator.free(p),
         };
     }
 
     pub fn chain_frame(chain: *FileChain, rt: *Runtime, counter: *usize, seed_string: [:0]const u8) !void {
         defer rt.allocator.destroy(chain);
-        defer chain.deinit();
+        defer chain.deinit(rt.allocator);
 
         var read_head: usize = 0;
         var write_head: usize = 0;

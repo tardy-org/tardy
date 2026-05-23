@@ -48,7 +48,7 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
             .{ .rel = .{ .dir = new_dir.handle, .path = subpath } },
             rand2.intRangeLessThan(usize, 1, 64),
         );
-        errdefer chain_ptr.deinit();
+        errdefer chain_ptr.deinit(rt.allocator);
 
         try rt.spawn(
             .{ chain_ptr, rt, &file_chain_counter, shared_params.seed_string },
