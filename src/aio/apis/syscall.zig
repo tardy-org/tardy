@@ -1,4 +1,30 @@
-// vendored from https://codeberg.org/ziglang/zig/blob/ee574f665c4e3d1be4950b307ce3ff8324f13f46/lib/std/posix.zig
+// vendored from https://github.com/ryuapp/zig-mirror/blob/aa0249d74e573742db3567f589fc6e4a00e1fff8/lib/std/posix.zig
+// https://github.com/ryuapp/zig-mirror/blob/aa0249d74e573742db3567f589fc6e4a00e1fff8/lib/std/os/windows.zig
+const std = @import("std");
+pub const UnexpectedError = std.Io.UnexpectedError;
+const posix = std.posix;
+const system = posix.system;
+const linux = std.os.linux;
+const windows = std.os.windows;
+const wasi = std.os.wasi;
+const Io = std.Io;
+const net = Io.net;
+const socket_t = net.Socket.Handle;
+const ws2_32 = windows.ws2_32;
+const IpAddress = net.IpAddress;
+const SOCK = system.SOCK;
+const F = system.F;
+const O = system.O;
+const math = std.math;
+const debug = std.debug;
+pub const ReadError = std.Io.File.Reader.Error;
+pub const TimerFdGetError = UnexpectedError;
+const builtin = @import("builtin");
+const native_os = builtin.os.tag;
+const tardy = @import("../../lib.zig");
+const Socket = tardy.Socket;
+
+const afd = @import("syscall/afd.zig");
 
 pub fn close(handle: posix.fd_t) void {
     switch (posix.errno(system.close(handle))) {
@@ -71,9 +97,7 @@ pub const WriteError = error{
 /// The corresponding POSIX limit is `maxInt(isize)`.
 pub fn write(fd: posix.fd_t, bytes: []const u8) WriteError!usize {
     if (bytes.len == 0) return 0;
-    if (native_os == .windows) @compileError("unsupported OS");
-    if (native_os == .wasi) @compileError("unsupported OS");
-
+    if (native_os == .windows) return try afd.netWriteWindows(fd, &.{}, &.{bytes}, 0);
     const max_count = switch (native_os) {
         .linux => 0x7ffff000,
         .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => math.maxInt(i32),
@@ -171,7 +195,7 @@ pub fn socket(domain: u32, socket_type: u32, protocol: u32) SocketError!socket_t
     const rc = system.socket(domain, filtered_sock_type, protocol);
     switch (posix.errno(rc)) {
         .SUCCESS => {
-            const fd: posix.fd_t = @intCast(rc);
+            const fd: i32 = @intCast(rc);
             errdefer close(fd);
             if (!have_sock_flags) {
                 try setSockFlags(fd, socket_type);
@@ -198,12 +222,18 @@ pub const BindError = error{
     NotDir,
     ReadOnlyFileSystem,
     AccessDenied,
-} || std.Io.net.IpAddress.BindError;
+} || IpAddress.BindError;
 
-pub fn bind(sock: posix.socket_t, addr: *const posix.sockaddr, len: posix.socklen_t) BindError!void {
-    if (native_os == .windows) @compileError("TODO: Implement bind for windows");
+pub fn bind(sock: posix.socket_t, addr: *const Socket.Address) BindError!void {
+    if (native_os == .windows) {
+        return afd.netBindIpWindows(sock, addr) catch |err| switch (err) {
+            error.Canceled => unreachable,
+            else => |e| e,
+        };
+    }
 
-    const rc = system.bind(sock, addr, len);
+    const sock_any, const sock_len = addr.toPosix();
+    const rc = system.bind(sock, &sock_any, sock_len);
     switch (posix.errno(rc)) {
         .SUCCESS => return,
         .ACCES, .PERM => return error.AccessDenied,
@@ -227,11 +257,14 @@ pub fn bind(sock: posix.socket_t, addr: *const posix.sockaddr, len: posix.sockle
 pub const ListenError = error{
     FileDescriptorNotASocket,
     OperationUnsupported,
-} || std.Io.net.IpAddress.ListenError || std.Io.net.UnixAddress.ListenError;
+} || IpAddress.ListenError || std.Io.net.UnixAddress.ListenError;
 
 pub fn listen(sock: socket_t, backlog: u31) ListenError!void {
     if (native_os == .windows) {
-        @compileError("use std.Io instead");
+        return afd.netListenIpWindows(sock, .{ .kernel_backlog = backlog }) catch |err| switch (err) {
+            error.Canceled => unreachable,
+            else => |e| e,
+        };
     } else {
         const rc = system.listen(sock, backlog);
         switch (posix.errno(rc)) {
@@ -275,7 +308,8 @@ pub fn accept(
     flags: u32,
 ) AcceptError!socket_t {
     const have_accept4 = !(builtin.target.os.tag.isDarwin() or native_os == .windows or native_os == .haiku);
-    debug.assert(0 == (flags & ~@as(u32, SOCK.NONBLOCK | SOCK.CLOEXEC))); // Unsupported flag(s)
+    // Unsupported flag(s)
+    debug.assert(0 == (flags & ~@as(u32, SOCK.NONBLOCK | SOCK.CLOEXEC)));
 
     const accepted_sock: socket_t = while (true) {
         const rc = if (have_accept4)
@@ -284,7 +318,7 @@ pub fn accept(
             system.accept(sock, addr, addr_size);
 
         if (native_os == .windows) {
-            @compileError("use std.Io instead");
+            @compileError("accept currently unsupported on windows");
         } else {
             switch (posix.errno(rc)) {
                 .SUCCESS => break @intCast(rc),
@@ -308,7 +342,7 @@ pub fn accept(
     };
 
     errdefer switch (native_os) {
-        .windows => @compileError("use std.Io instead"),
+        .windows => @compileError("close currently unsupported on windows"),
         else => close(accepted_sock),
     };
     if (!have_accept4) {
@@ -357,7 +391,7 @@ pub fn recvfrom(
 ) RecvFromError!usize {
     while (true) {
         if (native_os == .windows) {
-            @compileError("TODO: implement recvfrom");
+            @compileError("recvfrom currently unsupported on windows");
         } else {
             const rc = system.recvfrom(sockfd, buf.ptr, buf.len, flags, src_addr, addrlen);
             switch (posix.errno(rc)) {
@@ -380,13 +414,21 @@ pub fn recvfrom(
     }
 }
 
-pub const ConnectError = std.Io.net.IpAddress.ConnectError || std.Io.net.UnixAddress.ConnectError;
+pub const ConnectError = IpAddress.ConnectError || net.UnixAddress.ConnectError;
 
-pub fn connect(sock: socket_t, sock_addr: *const posix.sockaddr, len: posix.socklen_t) ConnectError!void {
-    if (native_os == .windows) @compileError("use std.Io instead");
-
+pub fn connect(
+    sock: socket_t,
+    sock_addr: Socket.Address,
+) ConnectError!void {
+    if (native_os == .windows) {
+        return afd.netConnectIpWindows(sock, sock_addr) catch |err| switch (err) {
+            error.Canceled => unreachable,
+            else => |e| e,
+        };
+    }
+    const sock_any, const sock_len = sock_addr.toPosix();
     while (true) {
-        switch (posix.errno(system.connect(sock, sock_addr, len))) {
+        switch (posix.errno(system.connect(sock, &sock_any, sock_len))) {
             .SUCCESS => return,
             .ACCES => return error.AccessDenied,
             .PERM => return error.PermissionDenied,
@@ -438,7 +480,19 @@ pub const SetSockOptError = error{
 /// Set a socket's options.
 pub fn setsockopt(fd: socket_t, level: i32, optname: u32, opt: []const u8) SetSockOptError!void {
     if (native_os == .windows) {
-        try setSocketOptionAfd(fd, level, optname, opt);
+        const rc = afd.setsockopt(fd, level, @intCast(optname), opt.ptr, @intCast(opt.len));
+        if (rc == afd.SOCKET_ERROR) {
+            switch (afd.WSAGetLastError()) {
+                .NOTINITIALISED => unreachable,
+                .ENETDOWN => return error.NetworkDown,
+                .EFAULT => unreachable,
+                .ENOTSOCK => return error.FileDescriptorNotASocket,
+                .EINVAL => return error.SocketNotBound,
+                else => |err| return windows.unexpectedWSAError(err),
+            }
+        }
+        return;
+        // try setSocketOptionAfd(fd, level, optname, opt);
     } else {
         switch (posix.errno(system.setsockopt(fd, level, optname, opt.ptr, @intCast(opt.len)))) {
             .SUCCESS => {},
@@ -585,7 +639,7 @@ pub fn sendto(
     dest_addr: ?*const posix.sockaddr,
     addrlen: posix.socklen_t,
 ) SendToError!usize {
-    if (native_os == .windows) @compileError("Unsupported OS");
+    if (native_os == .windows) @compileError("sendto unsupported on windows");
     while (true) {
         const rc = system.sendto(sockfd, buf.ptr, buf.len, flags, dest_addr, addrlen);
         switch (posix.errno(rc)) {
@@ -651,7 +705,7 @@ pub fn sendmsg(
         const rc = system.sendmsg(sockfd, msg, flags);
         // TODO: make windows.ws2_32 easily usable like the previous api
         if (native_os == .windows)
-            @compileError("Unimplemented")
+            @compileError("sendmsg currently unsupported on windows")
         else {
             switch (posix.errno(rc)) {
                 .SUCCESS => return @intCast(rc),
@@ -763,6 +817,11 @@ pub fn pipe2(flags: O) PipeError![2]posix.fd_t {
 fn setSockFlags(sock: socket_t, flags: u32) !void {
     if ((flags & SOCK.CLOEXEC) != 0) {
         if (native_os == .windows) {
+            // https://marc.info/?l=postgresql-hackers&m=176247669521571
+            // https://github.com/bytecodealliance/rustix/pull/909
+            // https://etherealwake.com/2021/01/portable-sockets-basics/
+            //
+            // CLOEXEC matches WSA_FLAG_NO_HANDLE_INHERIT
             // TODO: Find out if this is supported for sockets
         } else {
             var fd_flags = fcntl(sock, F.GETFD, 0) catch |err| switch (err) {
@@ -788,7 +847,7 @@ fn setSockFlags(sock: socket_t, flags: u32) !void {
         if (native_os == .windows) {
             // AFD-internal option — not the same as the Winsock SO_ values
             const AFD_SO_NONBLOCKING = 0x08; // AFD-level optname
-            try setSocketOptionAfd(sock, windows.ws2_32.SOL.SOCKET, AFD_SO_NONBLOCKING, 1);
+            try afd.setSocketOptionAfd(sock, windows.ws2_32.SOL.SOCKET, AFD_SO_NONBLOCKING, 1);
         } else {
             var fl_flags = fcntl(sock, F.GETFL, 0) catch |err| switch (err) {
                 error.FileBusy => unreachable,
@@ -811,165 +870,6 @@ fn setSockFlags(sock: socket_t, flags: u32) !void {
     }
 }
 
-fn setSocketOptionAfd(wsocket: net.Socket.Handle, level: i32, opt_name: u32, opt_val: anytype) !void {
-    try socketOptionAfd(wsocket, .set, level, opt_name, @ptrCast(@constCast(&opt_val)));
-}
-
-fn socketOptionAfd(wsocket: net.Socket.Handle, mode: windows.AFD.SOCKOPT_INFO.Mode, level: i32, opt_name: u32, opt_val: []u8) !void {
-    switch ((try deviceIoControl(&.{
-        .file = .{ .handle = wsocket, .flags = .{ .nonblocking = true } },
-        .code = windows.IOCTL.AFD.SOCKOPT,
-        .in = @ptrCast(&windows.AFD.SOCKOPT_INFO{
-            .mode = mode,
-            .level = level,
-            .optname = opt_name,
-            .optval = opt_val.ptr,
-            .optlen = opt_val.len,
-        }),
-    })).u.Status) {
-        .SUCCESS => return,
-        .CANCELLED => unreachable,
-        .INSUFFICIENT_RESOURCES => return error.SystemResources,
-        else => |status| return windows.unexpectedStatus(status),
-    }
-}
-
-fn flagApc(userdata: ?*anyopaque, _: *windows.IO_STATUS_BLOCK, _: windows.ULONG) align(apc_align) callconv(.winapi) void {
-    const flag: *bool = @ptrCast(userdata);
-    flag.* = true;
-}
-
-pub fn waitForApcOrAlert() void {
-    const infinite_timeout: windows.LARGE_INTEGER = std.math.minInt(windows.LARGE_INTEGER);
-    _ = windows.ntdll.NtDelayExecution(.TRUE, &infinite_timeout);
-}
-
-fn deviceIoControl(o: *const Io.Operation.DeviceIoControl) Io.Cancelable!Io.Operation.DeviceIoControl.Result {
-    if (native_os == .windows) {
-        const NtControlFile = switch (o.code.DeviceType) {
-            .FILE_SYSTEM, .NAMED_PIPE => &windows.ntdll.NtFsControlFile,
-            else => &windows.ntdll.NtDeviceIoControlFile,
-        };
-        var iosb: windows.IO_STATUS_BLOCK = undefined;
-        if (o.file.flags.nonblocking) {
-            var done: bool = false;
-            switch (NtControlFile(
-                o.file.handle,
-                null, // event
-                flagApc,
-                &done, // APC context
-                &iosb,
-                o.code,
-                if (o.in.len > 0) o.in.ptr else null,
-                @intCast(o.in.len),
-                if (o.out.len > 0) o.out.ptr else null,
-                @intCast(o.out.len),
-            )) {
-                // We must wait for the APC routine.
-                .PENDING, .SUCCESS => while (!done) {
-                    // Once we get here we must not return from the function until the
-                    // operation completes, thereby releasing reference to io_status_block.
-                    waitForApcOrAlert();
-                },
-                else => |status| iosb.u.Status = status,
-            }
-        } else {
-            while (true) switch (NtControlFile(
-                o.file.handle,
-                null, // event
-                null, // APC routine
-                null, // APC context
-                &iosb,
-                o.code,
-                if (o.in.len > 0) o.in.ptr else null,
-                @intCast(o.in.len),
-                if (o.out.len > 0) o.out.ptr else null,
-                @intCast(o.out.len),
-            )) {
-                .PENDING => unreachable, // unrecoverable: wrong asynchronous flag
-                .CANCELLED => {
-                    continue;
-                },
-                else => |status| {
-                    iosb.u.Status = status;
-                    break;
-                },
-            };
-        }
-        return iosb;
-    } else {
-        while (true) {
-            const rc = system.ioctl(o.file.handle, @bitCast(o.code), @intFromPtr(o.arg));
-            switch (posix.errno(rc)) {
-                .SUCCESS => {
-                    if (@TypeOf(rc) == usize) return @bitCast(@as(u32, @truncate(rc)));
-                    return rc;
-                },
-                .INTR => {
-                    continue;
-                },
-                else => |err| {
-                    return -@as(i32, @intFromEnum(err));
-                },
-            }
-        }
-    }
-}
-
-fn openSocketAfd(family: ws2_32.ADDRESS_FAMILY, options: IpAddress.BindOptions) !net.Socket.Handle {
-    const mode, const protocol = try Threaded.posixSocketModeProtocol(family, options.mode, options.protocol);
-    var handle: windows.HANDLE = undefined;
-    var iosb: windows.IO_STATUS_BLOCK = undefined;
-    while (true) switch (windows.ntdll.NtCreateFile(
-        &handle,
-        .{
-            .STANDARD = .{
-                .RIGHTS = .{ .WRITE_DAC = true },
-                .SYNCHRONIZE = true,
-            },
-            .GENERIC = .{ .WRITE = true, .READ = true },
-        },
-        &.{
-            .ObjectName = @constCast(&windows.UNICODE_STRING.init(
-                windows.AFD.DEVICE_NAME ++ .{ '\\', 'E', 'n', 'd', 'p', 'o', 'i', 'n', 't' },
-            )),
-        },
-        &iosb,
-        null,
-        .{},
-        .{ .READ = true, .WRITE = true },
-        .OPEN_IF,
-        .{ .IO = .ASYNCHRONOUS },
-        &windows.AFD.OPEN_PACKET.FULL_EA_INFORMATION{ .Value = .{
-            .EndpointType = .{
-                .CONNECTIONLESS = switch (options.mode) {
-                    .stream, .seqpacket, .rdm => false,
-                    .dgram, .raw => true,
-                },
-                .MESSAGEMODE = options.mode != .stream,
-                .RAW = options.mode == .raw,
-            },
-            .GroupID = 0,
-            .AddressFamily = family,
-            .SocketType = @bitCast(mode),
-            .Protocol = @bitCast(protocol),
-            .TransportDeviceNameLength = 0,
-            .TransportDeviceName = undefined,
-        } },
-        @sizeOf(windows.AFD.OPEN_PACKET.FULL_EA_INFORMATION),
-    )) {
-        .SUCCESS => {
-            return handle;
-        },
-        .CANCELLED => {
-            continue;
-        },
-        .PROTOCOL_NOT_SUPPORTED => return error.AddressFamilyUnsupported,
-        .NO_SUCH_FILE => return error.ProtocolUnsupportedByAddressFamily,
-        else => |status| return windows.statusBug(status),
-    };
-}
-
 pub const PollError = error{
     /// The network subsystem has failed.
     NetworkDown,
@@ -978,9 +878,40 @@ pub const PollError = error{
     SystemResources,
 } || UnexpectedError;
 
-pub fn poll(fds: []posix.pollfd, timeout: i32) PollError!usize {
+pub const pollfd = if (native_os != .windows) posix.pollfd else extern struct {
+    fd: net.Socket.Handle,
+    events: windows.SHORT,
+    revents: windows.SHORT,
+};
+
+pub const POLL = if (native_os != .windows) posix.POLL else struct {
+    // Event flag definitions for WSAPoll().
+    pub const RDNORM = 0x0100;
+    pub const RDBAND = 0x0200;
+    pub const IN = (RDNORM | RDBAND);
+    pub const PRI = 0x0400;
+
+    pub const WRNORM = 0x0010;
+    pub const OUT = (WRNORM);
+    pub const WRBAND = 0x0020;
+
+    pub const ERR = 0x0001;
+    pub const HUP = 0x0002;
+    pub const NVAL = 0x0004;
+};
+
+pub fn poll(fds: []pollfd, timeout: i32) PollError!usize {
     if (native_os == .windows) {
-        @compileError("use std.Io instead");
+        switch (afd.WSAPoll(fds.ptr, @intCast(fds.len), timeout)) {
+            windows.ws2_32.SOCKET_ERROR => switch (afd.WSAGetLastError()) {
+                .NOTINITIALISED => unreachable,
+                .ENETDOWN => return error.NetworkDown,
+                .ENOBUFS => return error.SystemResources,
+                // TODO: handle more errors
+                else => |err| return windows.unexpectedWSAError(err),
+            },
+            else => |rc| return @intCast(rc),
+        }
     }
     while (true) {
         const fds_count = std.math.cast(posix.nfds_t, fds.len) orelse return error.SystemResources;
@@ -997,40 +928,6 @@ pub fn poll(fds: []posix.pollfd, timeout: i32) PollError!usize {
     unreachable;
 }
 
-const default_fn_align = switch (builtin.mode) {
-    .Debug, .ReleaseSafe, .ReleaseFast => switch (builtin.cpu.arch) {
-        .arm, .thumb => 4,
-        .aarch64, .x86, .x86_64 => 16,
-        else => |arch| @compileError("Unsupported architecture: " ++ @tagName(arch)),
-    },
-    .ReleaseSmall => 1,
-};
-
-pub const apc_align = @max(default_fn_align, 2);
-
-const std = @import("std");
-pub const UnexpectedError = std.Io.UnexpectedError;
-const posix = std.posix;
-const system = posix.system;
-const linux = std.os.linux;
-const windows = std.os.windows;
-const wasi = std.os.wasi;
-const Io = std.Io;
-const net = Io.net;
-const socket_t = net.Socket.Handle;
-const ws2_32 = windows.ws2_32;
-const IpAddress = net.IpAddress;
-const Threaded = Io.Threaded;
-const SOCK = system.SOCK;
-const F = system.F;
-const O = system.O;
-const builtin = @import("builtin");
-const native_os = builtin.os.tag;
-const math = std.math;
-const debug = std.debug;
-
-pub const ReadError = std.Io.File.Reader.Error;
-
 /// Returns the number of bytes that were read, which can be less than
 /// buf.len. If 0 bytes were read, that means EOF.
 /// If `fd` is opened in non blocking mode, the function will return error.WouldBlock
@@ -1043,7 +940,10 @@ pub const ReadError = std.Io.File.Reader.Error;
 /// The corresponding POSIX limit is `maxInt(isize)`.
 pub fn read(fd: posix.fd_t, buf: []u8) ReadError!usize {
     if (buf.len == 0) return 0;
-    if (native_os == .windows) @compileError("unsupported OS");
+    if (native_os == .windows) return afd.netReadWindows(fd, &.{buf}) catch |err| switch (err) {
+        error.Canceled => unreachable,
+        else => |s| s,
+    };
 
     // Prevents EINVAL.
     const max_count = switch (native_os) {
@@ -1314,8 +1214,6 @@ pub fn timerfd_settime(
         else => |err| posix.unexpectedErrno(err),
     };
 }
-
-pub const TimerFdGetError = UnexpectedError;
 
 pub fn timerfd_gettime(fd: i32) TimerFdGetError!system.itimerspec {
     var curr_value: system.itimerspec = undefined;
