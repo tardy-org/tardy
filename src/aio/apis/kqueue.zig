@@ -199,11 +199,9 @@ pub const AsyncKqueue = struct {
         };
 
         if (self.change_count < self.changes.len) {
-            const sockaddr, const socklen = addr.toPosix();
             syscall.connect(
                 socket,
-                &sockaddr,
-                socklen,
+                addr,
             ) catch |e| switch (e) {
                 error.WouldBlock => {},
                 else => |err| return err,
