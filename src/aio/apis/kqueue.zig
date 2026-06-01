@@ -23,7 +23,7 @@ const Async = @import("../lib.zig").Async;
 const AsyncOptions = @import("../lib.zig").AsyncOptions;
 const AsyncFeatures = @import("../lib.zig").AsyncFeatures;
 const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
-const syscall = @import("../../syscall.zig");
+const syscall = @import("syscall.zig");
 
 const log = std.log.scoped(.@"tardy/aio/kqueue");
 

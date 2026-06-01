@@ -24,11 +24,11 @@ const Runtime = @import("../runtime/lib.zig").Runtime;
 const File = @import("lib.zig").File;
 const Path = @import("lib.zig").Path;
 const Stat = @import("lib.zig").Stat;
-const syscall = @import("../syscall.zig");
+const syscall = @import("../aio/apis/syscall.zig");
 
 const log = std.log.scoped(.@"tardy/fs/dir");
 
-pub const Dir = packed struct {
+pub const Dir = struct {
     handle: std.posix.fd_t,
 
     /// Create a std.fs.Dir from a Dir.

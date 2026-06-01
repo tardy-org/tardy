@@ -4,7 +4,7 @@ const Io = std.Io;
 const StdFile = Io.File;
 const StdDir = Io.Dir;
 const builtin = @import("builtin");
-const syscall = @import("../syscall.zig");
+const syscall = @import("../aio/apis/syscall.zig");
 
 const Resulted = @import("../aio/completion.zig").Resulted;
 const OpenFileResult = @import("../aio/completion.zig").OpenFileResult;

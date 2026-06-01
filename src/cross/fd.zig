@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const os = builtin.os.tag;
-const syscall = @import("../syscall.zig");
+const syscall = @import("../aio/apis/syscall.zig");
 
 /// Invalid `fd_t`.
 pub const INVALID_FD = if (os == .windows) std.os.windows.INVALID_HANDLE_VALUE else -1;

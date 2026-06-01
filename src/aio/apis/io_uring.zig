@@ -40,7 +40,7 @@ const AsyncOptions = @import("../lib.zig").AsyncOptions;
 const AsyncFeatures = @import("../lib.zig").AsyncFeatures;
 const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 const AsyncOpenFlags = @import("../lib.zig").AsyncOpenFlags;
-const syscall = @import("../../syscall.zig");
+const syscall = @import("syscall.zig");
 const posix = std.posix;
 
 pub const Errors = struct {

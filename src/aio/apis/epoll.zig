@@ -4,7 +4,7 @@ const posix = std.posix;
 const mem = std.mem;
 const Io = std.Io;
 const linux = std.os.linux;
-const syscall = @import("../../syscall.zig");
+const syscall = @import("syscall.zig");
 
 const pool = @import("../../core/pool.zig");
 const Pool = @import("../../core/pool.zig").Pool;
@@ -199,11 +199,9 @@ pub const AsyncEpoll = struct {
             .task = task,
         };
 
-        const sockaddr, const socklen = addr.toPosix();
         syscall.connect(
             socket,
-            &sockaddr,
-            socklen,
+            addr,
         ) catch |e| switch (e) {
             error.WouldBlock => {},
             else => |err| return err,

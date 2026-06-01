@@ -3,8 +3,9 @@ const Io = std.Io;
 const net = Io.net;
 const debug = std.debug;
 const builtin = @import("builtin");
+const native_os = builtin.os.tag;
 const posix = std.posix;
-const syscall = @import("../../syscall.zig");
+const syscall = @import("syscall.zig");
 const math = std.math;
 const mem = std.mem;
 
@@ -58,7 +59,7 @@ pub const AsyncPoll = struct {
     allocator: mem.Allocator,
     wake_pipe: [2]File.Handle,
 
-    fd_list: std.ArrayList(posix.pollfd),
+    fd_list: std.ArrayList(syscall.pollfd),
     fd_job_map: std.AutoHashMap(File.Handle, Job),
     timers: TimerQueue,
 
@@ -67,19 +68,18 @@ pub const AsyncPoll = struct {
 
         // 0 is read, 1 is write.
         const pipe: [2]File.Handle = blk: {
-            if (comptime builtin.os.tag == .windows) {
+            if (comptime native_os == .windows) {
                 const server_socket = try syscall.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
                 defer syscall.close(server_socket);
 
                 const addr: Socket.Address = .{ .ip = .{ .ip4 = .loopback(0) } };
-                const sockaddr, const socklen = addr.toPosix();
-                try syscall.bind(server_socket, &sockaddr, socklen);
+                try syscall.bind(server_socket, &addr);
 
                 try syscall.listen(server_socket, 1);
 
                 const write_end = try syscall.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
                 errdefer syscall.close(write_end);
-                try syscall.connect(write_end, &sockaddr, socklen);
+                try syscall.connect(write_end, addr);
 
                 const read_end = try syscall.accept(server_socket, null, null, 0);
                 errdefer syscall.close(read_end);
@@ -89,17 +89,17 @@ pub const AsyncPoll = struct {
         };
         errdefer for (pipe) |fd| syscall.close(fd);
 
-        var fd_list: std.ArrayList(posix.pollfd) = try .initCapacity(allocator, size);
+        var fd_list: std.ArrayList(syscall.pollfd) = try .initCapacity(allocator, size);
         errdefer fd_list.deinit(allocator);
 
         var fd_job_map: std.AutoHashMap(File.Handle, Job) = .init(allocator);
         errdefer fd_job_map.deinit();
         try fd_job_map.ensureTotalCapacity(@intCast(size));
 
-        if (comptime builtin.os.tag == .windows) {
+        if (comptime native_os == .windows) {
             try fd_list.append(allocator, .{
                 .fd = @ptrCast(pipe[0]),
-                .events = posix.POLL.IN,
+                .events = syscall.POLL.IN,
                 .revents = 0,
             });
             try fd_job_map.put(@ptrCast(pipe[0]), .{
@@ -110,7 +110,7 @@ pub const AsyncPoll = struct {
         } else {
             try fd_list.append(allocator, .{
                 .fd = pipe[0],
-                .events = posix.POLL.IN,
+                .events = syscall.POLL.IN,
                 .revents = 0,
             });
             try fd_job_map.put(pipe[0], .{
@@ -173,7 +173,7 @@ pub const AsyncPoll = struct {
     ) Errors.Accept!void {
         try self.fd_list.append(self.allocator, .{
             .fd = socket,
-            .events = posix.POLL.IN,
+            .events = syscall.POLL.IN,
             .revents = 0,
         });
         try self.fd_job_map.put(socket, .{
@@ -196,11 +196,9 @@ pub const AsyncPoll = struct {
         addr: Socket.Address,
         kind: Socket.Kind,
     ) Errors.Connect!void {
-        const sockaddr, const socklen = addr.toPosix();
         syscall.connect(
             socket,
-            &sockaddr,
-            socklen,
+            addr,
         ) catch |e| switch (e) {
             error.WouldBlock => {},
             else => |err| return err,
@@ -208,7 +206,7 @@ pub const AsyncPoll = struct {
 
         try self.fd_list.append(self.allocator, .{
             .fd = socket,
-            .events = posix.POLL.OUT,
+            .events = syscall.POLL.OUT,
             .revents = 0,
         });
         try self.fd_job_map.put(socket, .{
@@ -232,7 +230,7 @@ pub const AsyncPoll = struct {
     ) Errors.Recv!void {
         try self.fd_list.append(self.allocator, .{
             .fd = socket,
-            .events = posix.POLL.IN,
+            .events = syscall.POLL.IN,
             .revents = 0,
         });
         try self.fd_job_map.put(socket, .{
@@ -255,7 +253,7 @@ pub const AsyncPoll = struct {
     ) Errors.Send!void {
         try self.fd_list.append(self.allocator, .{
             .fd = socket,
-            .events = posix.POLL.OUT,
+            .events = syscall.POLL.OUT,
             .revents = 0,
         });
         try self.fd_job_map.put(socket, .{
@@ -309,10 +307,7 @@ pub const AsyncPoll = struct {
             if (poll.timers.peek()) |peeked| timeout = @intCast(peeked.duration.nanoseconds - current.nanoseconds);
 
             log.debug("timeout = {d}", .{timeout});
-            const poll_result = if (comptime builtin.os.tag == .windows)
-                std.os.windows.poll(poll.fd_list.items.ptr, @intCast(poll.fd_list.items.len), timeout)
-            else
-                try syscall.poll(poll.fd_list.items, @intCast(@divFloor(timeout, std.time.ns_per_ms)));
+            const poll_result = try syscall.poll(poll.fd_list.items, @intCast(@divFloor(timeout, std.time.ns_per_ms)));
 
             if (poll_result == 0 and timeout > 0) continue :poll_loop;
 
@@ -338,7 +333,7 @@ pub const AsyncPoll = struct {
                 const result: Result = result: {
                     switch (job.type) {
                         .wake => {
-                            debug.assert(pfd.revents & posix.POLL.IN != 0 or pfd.revents & posix.POLL.RDNORM != 0);
+                            debug.assert(pfd.revents & syscall.POLL.IN != 0 or pfd.revents & syscall.POLL.RDNORM != 0);
 
                             var buf: [8]u8 = undefined;
                             _ = syscall.read(poll.wake_pipe[0], &buf) catch unreachable;
@@ -346,7 +341,7 @@ pub const AsyncPoll = struct {
                             break :result .wake;
                         },
                         .accept => |*inner| {
-                            debug.assert(pfd.revents & posix.POLL.IN != 0 or pfd.revents & posix.POLL.RDNORM != 0);
+                            debug.assert(pfd.revents & syscall.POLL.IN != 0 or pfd.revents & syscall.POLL.RDNORM != 0);
 
                             var sockaddr, var socklen = inner.addr.toPosix();
                             const socket = syscall.accept(
@@ -383,20 +378,20 @@ pub const AsyncPoll = struct {
                             };
                         },
                         .connect => {
-                            debug.assert(pfd.revents & posix.POLL.OUT != 0);
+                            debug.assert(pfd.revents & syscall.POLL.OUT != 0);
 
-                            if (pfd.revents & posix.POLL.ERR != 0) {
+                            if (pfd.revents & syscall.POLL.ERR != 0) {
                                 break :result .{ .connect = .{ .err = ConnectError.Unexpected } };
                             } else {
                                 break :result .{ .connect = .actual };
                             }
                         },
                         .recv => |inner| {
-                            if (pfd.revents & posix.POLL.HUP != 0) break :result .{
+                            if (pfd.revents & syscall.POLL.HUP != 0) break :result .{
                                 .recv = .{ .err = RecvError.Closed },
                             };
 
-                            debug.assert(pfd.revents & posix.POLL.IN != 0 or pfd.revents & posix.POLL.RDNORM != 0);
+                            debug.assert(pfd.revents & syscall.POLL.IN != 0 or pfd.revents & syscall.POLL.RDNORM != 0);
                             const count = syscall.recv(inner.socket, inner.buffer, 0) catch |e| {
                                 const err = switch (e) {
                                     error.WouldBlock => {
@@ -415,11 +410,11 @@ pub const AsyncPoll = struct {
                             break :result .{ .recv = .{ .actual = count } };
                         },
                         .send => |inner| {
-                            if (pfd.revents & posix.POLL.HUP != 0) break :result .{
+                            if (pfd.revents & syscall.POLL.HUP != 0) break :result .{
                                 .send = .{ .err = SendError.Closed },
                             };
 
-                            debug.assert(pfd.revents & posix.POLL.OUT != 0);
+                            debug.assert(pfd.revents & syscall.POLL.OUT != 0);
                             const count = syscall.send(inner.socket, inner.buffer, 0) catch |e| {
                                 log.err("send failed with {}", .{e});
                                 const err = switch (e) {
