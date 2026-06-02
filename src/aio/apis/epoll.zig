@@ -162,7 +162,7 @@ pub const AsyncEpoll = struct {
                 .accept = .{
                     .socket = socket,
                     .kind = kind,
-                    .addr = .empty,
+                    .addr = .wildcard,
                 },
             },
             .task = task,
@@ -180,6 +180,7 @@ pub const AsyncEpoll = struct {
         self: *AsyncEpoll,
         task: usize,
         socket: Socket.Handle,
+        // TODO: take *const
         addr: Socket.Address,
         kind: Socket.Kind,
     ) Errors.Connect!void {
@@ -201,7 +202,7 @@ pub const AsyncEpoll = struct {
 
         syscall.connect(
             socket,
-            addr,
+            &addr,
         ) catch |e| switch (e) {
             error.WouldBlock => {},
             else => |err| return err,
@@ -349,11 +350,9 @@ pub const AsyncEpoll = struct {
                             assert(event.events & linux.EPOLL.IN != 0);
 
                             const result: AcceptResult = result: {
-                                var sockaddr, var socklen = inner.addr.toPosix();
                                 const handle = syscall.accept(
                                     inner.socket,
-                                    &sockaddr,
-                                    &socklen,
+                                    &inner.addr,
                                     0,
                                 ) catch |e| {
                                     const err = switch (e) {

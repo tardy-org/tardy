@@ -154,7 +154,7 @@ pub const AsyncKqueue = struct {
             .type = .{
                 .accept = .{
                     .socket = socket,
-                    .addr = .empty,
+                    .addr = .wildcard,
                     .kind = kind,
                 },
             },
@@ -180,6 +180,7 @@ pub const AsyncKqueue = struct {
         self: *AsyncKqueue,
         task: usize,
         socket: Socket.Handle,
+        // TODO: take *const
         addr: Socket.Address,
         kind: Socket.Kind,
     ) Errors.Connect!void {
@@ -201,7 +202,7 @@ pub const AsyncKqueue = struct {
         if (self.change_count < self.changes.len) {
             syscall.connect(
                 socket,
-                addr,
+                &addr,
             ) catch |e| switch (e) {
                 error.WouldBlock => {},
                 else => |err| return err,
@@ -367,12 +368,10 @@ pub const AsyncKqueue = struct {
                         },
                         .accept => |*inner| {
                             assert(event.filter == posix.system.EVFILT.READ);
-                            var sockaddr, var socklen = inner.addr.toPosix();
 
                             const socket_fd = syscall.accept(
                                 inner.socket,
-                                &sockaddr,
-                                &socklen,
+                                &inner.addr,
                                 0,
                             ) catch |err| break :result .{
                                 .accept = .{

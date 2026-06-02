@@ -69,19 +69,34 @@ pub const AsyncPoll = struct {
         // 0 is read, 1 is write.
         const pipe: [2]File.Handle = blk: {
             if (comptime native_os == .windows) {
-                const server_socket = try syscall.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
+                const server_socket = try syscall.socket(
+                    posix.AF.INET,
+                    posix.SOCK.STREAM,
+                    0,
+                );
                 defer syscall.close(server_socket);
 
-                const addr: Socket.Address = .{ .ip = .{ .ip4 = .loopback(0) } };
+                const addr: Socket.Address = .{
+                    .ip = .{ .ip4 = .loopback(0) },
+                };
                 try syscall.bind(server_socket, &addr);
 
                 try syscall.listen(server_socket, 1);
 
-                const write_end = try syscall.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
+                const write_end = try syscall.socket(
+                    posix.AF.INET,
+                    posix.SOCK.STREAM,
+                    0,
+                );
                 errdefer syscall.close(write_end);
-                try syscall.connect(write_end, addr);
 
-                const read_end = try syscall.accept(server_socket, null, null, 0);
+                try syscall.connect(write_end, &addr);
+
+                const read_end = try syscall.accept(
+                    server_socket,
+                    null,
+                    0,
+                );
                 errdefer syscall.close(read_end);
 
                 break :blk .{ read_end, write_end };
@@ -89,7 +104,10 @@ pub const AsyncPoll = struct {
         };
         errdefer for (pipe) |fd| syscall.close(fd);
 
-        var fd_list: std.ArrayList(syscall.pollfd) = try .initCapacity(allocator, size);
+        var fd_list: std.ArrayList(syscall.pollfd) = try .initCapacity(
+            allocator,
+            size,
+        );
         errdefer fd_list.deinit(allocator);
 
         var fd_job_map: std.AutoHashMap(File.Handle, Job) = .init(allocator);
@@ -182,7 +200,7 @@ pub const AsyncPoll = struct {
                 .accept = .{
                     .socket = socket,
                     .kind = kind,
-                    .addr = .empty,
+                    .addr = .wildcard,
                 },
             },
             .task = task,
@@ -193,12 +211,13 @@ pub const AsyncPoll = struct {
         self: *AsyncPoll,
         task: usize,
         socket: Socket.Handle,
+        // TODO: take by *const
         addr: Socket.Address,
         kind: Socket.Kind,
     ) Errors.Connect!void {
         syscall.connect(
             socket,
-            addr,
+            &addr,
         ) catch |e| switch (e) {
             error.WouldBlock => {},
             else => |err| return err,
@@ -343,12 +362,10 @@ pub const AsyncPoll = struct {
                         .accept => |*inner| {
                             debug.assert(pfd.revents & syscall.POLL.IN != 0 or pfd.revents & syscall.POLL.RDNORM != 0);
 
-                            var sockaddr, var socklen = inner.addr.toPosix();
                             const socket = syscall.accept(
                                 inner.socket,
-                                &sockaddr,
-                                &socklen,
-                                posix.SOCK.NONBLOCK,
+                                &inner.addr,
+                                if (native_os != .windows) posix.SOCK.NONBLOCK else 0,
                             ) catch |e| {
                                 const err = switch (e) {
                                     error.WouldBlock => {

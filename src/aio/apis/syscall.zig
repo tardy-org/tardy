@@ -1,4 +1,4 @@
-// vendored from https://github.com/ryuapp/zig-mirror/blob/aa0249d74e573742db3567f589fc6e4a00e1fff8/lib/std/posix.zig
+// vendored from https://github.com/ryuapp/zig-mirror/blob/dba1bf935390ddb0184a4dc72245454de6c06fd2/lib/std/posix.zig
 // https://github.com/ryuapp/zig-mirror/blob/aa0249d74e573742db3567f589fc6e4a00e1fff8/lib/std/os/windows.zig
 const std = @import("std");
 pub const UnexpectedError = std.Io.UnexpectedError;
@@ -21,10 +21,11 @@ pub const ReadError = std.Io.File.Reader.Error;
 pub const TimerFdGetError = UnexpectedError;
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
+
 const tardy = @import("../../lib.zig");
 const Socket = tardy.Socket;
-
 const afd = @import("syscall/afd.zig");
+const ws2 = @import("syscall/ws2.zig");
 
 pub fn close(handle: posix.fd_t) void {
     switch (posix.errno(system.close(handle))) {
@@ -71,7 +72,7 @@ pub const WriteError = error{
     /// The socket type requires that message be sent atomically, and the size of the message
     /// to be sent made this impossible. The message is not transmitted.
     MessageOversize,
-} || UnexpectedError;
+} || UnexpectedError || net.Stream.Writer.Error;
 
 /// Write to a file descriptor.
 /// Retries when interrupted by a signal.
@@ -97,7 +98,10 @@ pub const WriteError = error{
 /// The corresponding POSIX limit is `maxInt(isize)`.
 pub fn write(fd: posix.fd_t, bytes: []const u8) WriteError!usize {
     if (bytes.len == 0) return 0;
-    if (native_os == .windows) return try afd.netWriteWindows(fd, &.{}, &.{bytes}, 0);
+    if (native_os == .windows) return afd.netWriteWindows(fd, &.{}, &.{bytes}, 0) catch |err| switch (err) {
+        error.Canceled => unreachable,
+        else => |e| return e,
+    };
     const max_count = switch (native_os) {
         .linux => 0x7ffff000,
         .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => math.maxInt(i32),
@@ -180,13 +184,19 @@ pub const SocketError = error{
     SystemResources,
 
     /// The protocol type or the specified protocol is not supported within this domain.
-    ProtocolNotSupported,
+    ProtocolUnsupportedByAddressFamily,
 
     /// The socket type is not supported by the protocol.
     SocketTypeNotSupported,
 } || UnexpectedError;
 
 pub fn socket(domain: u32, socket_type: u32, protocol: u32) SocketError!socket_t {
+    if (native_os == .windows) {
+        return try afd.openSocketAfd(
+            @intCast(domain),
+            .{ .mode = .stream },
+        );
+    }
     const have_sock_flags = !builtin.target.os.tag.isDarwin() and native_os != .haiku;
     const filtered_sock_type = if (!have_sock_flags)
         socket_type & ~@as(u32, SOCK.NONBLOCK | SOCK.CLOEXEC)
@@ -195,7 +205,7 @@ pub fn socket(domain: u32, socket_type: u32, protocol: u32) SocketError!socket_t
     const rc = system.socket(domain, filtered_sock_type, protocol);
     switch (posix.errno(rc)) {
         .SUCCESS => {
-            const fd: i32 = @intCast(rc);
+            const fd: posix.socket_t = @intCast(rc);
             errdefer close(fd);
             if (!have_sock_flags) {
                 try setSockFlags(fd, socket_type);
@@ -209,7 +219,7 @@ pub fn socket(domain: u32, socket_type: u32, protocol: u32) SocketError!socket_t
         .NFILE => return error.SystemFdQuotaExceeded,
         .NOBUFS => return error.SystemResources,
         .NOMEM => return error.SystemResources,
-        .PROTONOSUPPORT => return error.ProtocolNotSupported,
+        .PROTONOSUPPORT => return error.ProtocolUnsupportedByAddressFamily,
         .PROTOTYPE => return error.SocketTypeNotSupported,
         else => |err| return posix.unexpectedErrno(err),
     }
@@ -224,12 +234,9 @@ pub const BindError = error{
     AccessDenied,
 } || IpAddress.BindError;
 
-pub fn bind(sock: posix.socket_t, addr: *const Socket.Address) BindError!void {
+pub fn bind(sock: posix.socket_t, addr: *const Socket.Address) (BindError || afd.BindError)!void {
     if (native_os == .windows) {
-        return afd.netBindIpWindows(sock, addr) catch |err| switch (err) {
-            error.Canceled => unreachable,
-            else => |e| e,
-        };
+        _ = try afd.netBindIpWindows(sock, addr, .{});
     }
 
     const sock_any, const sock_len = addr.toPosix();
@@ -303,51 +310,67 @@ pub const AcceptError = error{
 
 pub fn accept(
     sock: socket_t,
-    addr: ?*posix.sockaddr,
-    addr_size: ?*posix.socklen_t,
+    addr: ?*Socket.Address,
     flags: u32,
-) AcceptError!socket_t {
+) AcceptError!Socket.Handle {
+    if (native_os == .windows) {
+        return afd.netAcceptWindows(sock, addr, .{
+            .mode = .stream,
+            .protocol = .tcp,
+        }) catch |err| switch (err) {
+            error.Canceled => unreachable,
+            else => |e| e,
+        };
+    }
+
     const have_accept4 = !(builtin.target.os.tag.isDarwin() or native_os == .windows or native_os == .haiku);
     // Unsupported flag(s)
     debug.assert(0 == (flags & ~@as(u32, SOCK.NONBLOCK | SOCK.CLOEXEC)));
 
-    const accepted_sock: socket_t = while (true) {
-        const rc = if (have_accept4)
-            system.accept4(sock, addr, addr_size, flags)
-        else
-            system.accept(sock, addr, addr_size);
-
-        if (native_os == .windows) {
-            @compileError("accept currently unsupported on windows");
-        } else {
-            switch (posix.errno(rc)) {
-                .SUCCESS => break @intCast(rc),
-                .INTR => continue,
-                .AGAIN => return error.WouldBlock,
-                .BADF => unreachable, // always a race condition
-                .CONNABORTED => return error.ConnectionAborted,
-                .FAULT => unreachable,
-                .INVAL => return error.SocketNotListening,
-                .NOTSOCK => unreachable,
-                .MFILE => return error.ProcessFdQuotaExceeded,
-                .NFILE => return error.SystemFdQuotaExceeded,
-                .NOBUFS => return error.SystemResources,
-                .NOMEM => return error.SystemResources,
-                .OPNOTSUPP => unreachable,
-                .PROTO => return error.ProtocolFailure,
-                .PERM => return error.BlockedByFirewall,
-                else => |err| return posix.unexpectedErrno(err),
-            }
+    var sockaddr: posix.sockaddr, var addr_len: u32 = blk: {
+        if (addr) |addr_|
+            break :blk addr_.toPosix()
+        else {
+            const sockaddr: posix.sockaddr = undefined;
+            break :blk .{ sockaddr, 0 };
         }
     };
 
-    errdefer switch (native_os) {
-        .windows => @compileError("close currently unsupported on windows"),
-        else => close(accepted_sock),
+    defer if (addr) |addr_| {
+        addr_.* = Socket.Address.fromAny(&sockaddr);
     };
+
+    const accepted_sock: socket_t = while (true) {
+        const rc = if (have_accept4)
+            system.accept4(sock, &sockaddr, &addr_len, flags)
+        else
+            system.accept(sock, &sockaddr, &addr_len);
+
+        switch (posix.errno(rc)) {
+            .SUCCESS => break @intCast(rc),
+            .INTR => continue,
+            .AGAIN => return error.WouldBlock,
+            .BADF => unreachable, // always a race condition
+            .CONNABORTED => return error.ConnectionAborted,
+            .FAULT => unreachable,
+            .INVAL => return error.SocketNotListening,
+            .NOTSOCK => unreachable,
+            .MFILE => return error.ProcessFdQuotaExceeded,
+            .NFILE => return error.SystemFdQuotaExceeded,
+            .NOBUFS => return error.SystemResources,
+            .NOMEM => return error.SystemResources,
+            .OPNOTSUPP => unreachable,
+            .PROTO => return error.ProtocolFailure,
+            .PERM => return error.BlockedByFirewall,
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    };
+    errdefer close(accepted_sock);
+
     if (!have_accept4) {
         try setSockFlags(accepted_sock, flags);
     }
+
     return accepted_sock;
 }
 
@@ -389,27 +412,28 @@ pub fn recvfrom(
     src_addr: ?*posix.sockaddr,
     addrlen: ?*posix.socklen_t,
 ) RecvFromError!usize {
+    // TODO: explore a windows native approach but we can currently go through C
+    // if (native_os == .windows) {
+    //     @compileError("recvfrom currently unsupported on windows");
+    // }
+
     while (true) {
-        if (native_os == .windows) {
-            @compileError("recvfrom currently unsupported on windows");
-        } else {
-            const rc = system.recvfrom(sockfd, buf.ptr, buf.len, flags, src_addr, addrlen);
-            switch (posix.errno(rc)) {
-                .SUCCESS => return @intCast(rc),
-                .BADF => unreachable, // always a race condition
-                .FAULT => unreachable,
-                .INVAL => unreachable,
-                .NOTCONN => return error.SocketNotConnected,
-                .NOTSOCK => unreachable,
-                .INTR => continue,
-                .AGAIN => return error.WouldBlock,
-                .NOMEM => return error.SystemResources,
-                .CONNREFUSED => return error.ConnectionRefused,
-                .CONNRESET => return error.ConnectionResetByPeer,
-                .TIMEDOUT => return error.ConnectionTimedOut,
-                .PIPE => return error.BrokenPipe,
-                else => |err| return posix.unexpectedErrno(err),
-            }
+        const rc = system.recvfrom(sockfd, buf.ptr, buf.len, flags, src_addr, addrlen);
+        switch (posix.errno(rc)) {
+            .SUCCESS => return @intCast(rc),
+            .BADF => unreachable, // always a race condition
+            .FAULT => unreachable,
+            .INVAL => unreachable,
+            .NOTCONN => return error.SocketNotConnected,
+            .NOTSOCK => unreachable,
+            .INTR => continue,
+            .AGAIN => return error.WouldBlock,
+            .NOMEM => return error.SystemResources,
+            .CONNREFUSED => return error.ConnectionRefused,
+            .CONNRESET => return error.ConnectionResetByPeer,
+            .TIMEDOUT => return error.ConnectionTimedOut,
+            .PIPE => return error.BrokenPipe,
+            else => |err| return posix.unexpectedErrno(err),
         }
     }
 }
@@ -418,12 +442,15 @@ pub const ConnectError = IpAddress.ConnectError || net.UnixAddress.ConnectError;
 
 pub fn connect(
     sock: socket_t,
-    sock_addr: Socket.Address,
+    sock_addr: *const Socket.Address,
 ) ConnectError!void {
     if (native_os == .windows) {
-        return afd.netConnectIpWindows(sock, sock_addr) catch |err| switch (err) {
+        return afd.netConnectIpWindows(
+            sock,
+            sock_addr,
+        ) catch |err| switch (err) {
             error.Canceled => unreachable,
-            else => |e| e,
+            else => |e| return e,
         };
     }
     const sock_any, const sock_len = sock_addr.toPosix();
@@ -478,23 +505,25 @@ pub const SetSockOptError = error{
 } || UnexpectedError;
 
 /// Set a socket's options.
-pub fn setsockopt(fd: socket_t, level: i32, optname: u32, opt: []const u8) SetSockOptError!void {
+pub fn setsockopt(fd: socket_t, level: i32, optname: u32, optval_bytes: []const u8) (SetSockOptError || afd.SetSockError)!void {
     if (native_os == .windows) {
-        const rc = afd.setsockopt(fd, level, @intCast(optname), opt.ptr, @intCast(opt.len));
-        if (rc == afd.SOCKET_ERROR) {
-            switch (afd.WSAGetLastError()) {
-                .NOTINITIALISED => unreachable,
-                .ENETDOWN => return error.NetworkDown,
-                .EFAULT => unreachable,
-                .ENOTSOCK => return error.FileDescriptorNotASocket,
-                .EINVAL => return error.SocketNotBound,
-                else => |err| return windows.unexpectedWSAError(err),
-            }
-        }
-        return;
-        // try setSocketOptionAfd(fd, level, optname, opt);
+        return afd.setSocketOptionAfd(
+            fd,
+            level,
+            optname,
+            optval_bytes,
+        ) catch |err| switch (err) {
+            error.Canceled => unreachable,
+            else => |e| e,
+        };
     } else {
-        switch (posix.errno(system.setsockopt(fd, level, optname, opt.ptr, @intCast(opt.len)))) {
+        switch (posix.errno(system.setsockopt(
+            fd,
+            level,
+            optname,
+            optval_bytes.ptr,
+            @intCast(optval_bytes.len),
+        ))) {
             .SUCCESS => {},
             .BADF => unreachable, // always a race condition
             .NOTSOCK => unreachable, // always a race condition
@@ -639,9 +668,17 @@ pub fn sendto(
     dest_addr: ?*const posix.sockaddr,
     addrlen: posix.socklen_t,
 ) SendToError!usize {
-    if (native_os == .windows) @compileError("sendto unsupported on windows");
+    // TODO: explore a windows native approach
+    // if (native_os == .windows) @compileError("sendto unsupported on windows");
     while (true) {
-        const rc = system.sendto(sockfd, buf.ptr, buf.len, flags, dest_addr, addrlen);
+        const rc = system.sendto(
+            sockfd,
+            buf.ptr,
+            buf.len,
+            flags,
+            dest_addr,
+            addrlen,
+        );
         switch (posix.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .ACCES => return error.AccessDenied,
@@ -844,6 +881,7 @@ fn setSockFlags(sock: socket_t, flags: u32) !void {
         }
     }
     if ((flags & SOCK.NONBLOCK) != 0) {
+        // TODO: currently incorrect
         if (native_os == .windows) {
             // AFD-internal option — not the same as the Winsock SO_ values
             const AFD_SO_NONBLOCKING = 0x08; // AFD-level optname
@@ -878,41 +916,38 @@ pub const PollError = error{
     SystemResources,
 } || UnexpectedError;
 
-pub const pollfd = if (native_os != .windows) posix.pollfd else extern struct {
-    fd: net.Socket.Handle,
-    events: windows.SHORT,
-    revents: windows.SHORT,
-};
+pub const pollfd = if (native_os != .windows) posix.pollfd else ws2.WSAPOLLFD;
 
-pub const POLL = if (native_os != .windows) posix.POLL else struct {
-    // Event flag definitions for WSAPoll().
-    pub const RDNORM = 0x0100;
-    pub const RDBAND = 0x0200;
-    pub const IN = (RDNORM | RDBAND);
-    pub const PRI = 0x0400;
-
-    pub const WRNORM = 0x0010;
-    pub const OUT = (WRNORM);
-    pub const WRBAND = 0x0020;
-
-    pub const ERR = 0x0001;
-    pub const HUP = 0x0002;
-    pub const NVAL = 0x0004;
-};
+pub const POLL = if (native_os != .windows) posix.POLL else ws2.POLL;
 
 pub fn poll(fds: []pollfd, timeout: i32) PollError!usize {
     if (native_os == .windows) {
-        switch (afd.WSAPoll(fds.ptr, @intCast(fds.len), timeout)) {
-            windows.ws2_32.SOCKET_ERROR => switch (afd.WSAGetLastError()) {
-                .NOTINITIALISED => unreachable,
+        while (true) switch (ws2.WSAPoll(
+            fds.ptr,
+            @intCast(fds.len),
+            timeout,
+        )) {
+            ws2.SOCKET_ERROR => switch (ws2.WSAGetLastError()) {
+                .NOTINITIALISED => {
+                    var wsa_data: ws2.WSADATA = undefined;
+                    const minor_version: windows.WORD = 2;
+                    const major_version: windows.WORD = 2;
+                    const status = ws2.WSAStartup(minor_version << 8 | major_version, &wsa_data);
+                    switch (status) {
+                        .SUCCESS => continue,
+                        .SYSNOTREADY => return error.NetworkDown,
+                        else => unreachable,
+                    }
+                },
                 .ENETDOWN => return error.NetworkDown,
                 .ENOBUFS => return error.SystemResources,
                 // TODO: handle more errors
-                else => |err| return windows.unexpectedWSAError(err),
+                else => unreachable,
             },
             else => |rc| return @intCast(rc),
-        }
+        };
     }
+
     while (true) {
         const fds_count = std.math.cast(posix.nfds_t, fds.len) orelse return error.SystemResources;
         const rc = system.poll(fds.ptr, fds_count, timeout);
@@ -938,12 +973,17 @@ pub fn poll(fds: []pollfd, timeout: i32) PollError!usize {
 /// well as stuffing the errno codes into the last `4096` values. This is noted on the `read` man page.
 /// The limit on Darwin is `0x7fffffff`, trying to read more than that returns EINVAL.
 /// The corresponding POSIX limit is `maxInt(isize)`.
-pub fn read(fd: posix.fd_t, buf: []u8) ReadError!usize {
+pub fn read(fd: posix.fd_t, buf: []u8) (ReadError || net.Stream.Reader.Error)!usize {
     if (buf.len == 0) return 0;
-    if (native_os == .windows) return afd.netReadWindows(fd, &.{buf}) catch |err| switch (err) {
-        error.Canceled => unreachable,
-        else => |s| s,
-    };
+    if (native_os == .windows) {
+        var bufs: [][]u8 = undefined;
+        bufs[0] = buf;
+
+        return afd.netReadWindows(fd, bufs) catch |err| switch (err) {
+            error.Canceled => unreachable,
+            else => |s| return s,
+        };
+    }
 
     // Prevents EINVAL.
     const max_count = switch (native_os) {

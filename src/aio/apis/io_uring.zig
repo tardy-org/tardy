@@ -485,7 +485,7 @@ pub const AsyncIoUring = struct {
                 .accept = .{
                     .socket = socket,
                     .kind = kind,
-                    .addr = .empty,
+                    .addr = .wildcard,
                 },
             },
             .task = task,

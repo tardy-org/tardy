@@ -75,7 +75,10 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = target.result.os.tag == .windows,
     });
+    if (target.result.os.tag == .windows)
+        tardy.linkSystemLibrary("ws2_32", .{});
 
     // build and run examples
     // usage: zig [build/build run] -Dexample[example_name]
@@ -211,14 +214,11 @@ fn build_example_module(
         .root_source_file = b.path(b.fmt("examples/{s}/main.zig", .{options.example.toString()})),
         .target = options.target,
         .optimize = options.optimize,
+        // need libc for windows sockets
+        .link_libc = options.target.result.os.tag == .windows,
     });
 
     example_mod.addImport("tardy", options.tardy_mod);
-
-    // need libc for windows sockets
-    if (options.target.result.os.tag == .windows) {
-        example_mod.link_libc = true;
-    }
 
     return example_mod;
 }
@@ -294,11 +294,6 @@ fn build_static_lib(
         .name = "tardy",
         .root_module = options.tardy_mod,
     });
-
-    // need libc for windows sockets
-    if (options.target.result.os.tag == .windows) {
-        options.tardy_mod.link_libc = true;
-    }
 
     // depend on static step
     const install_artifact = b.addInstallArtifact(static_lib, .{});
