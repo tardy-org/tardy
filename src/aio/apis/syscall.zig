@@ -1,4 +1,5 @@
 // vendored from https://github.com/ryuapp/zig-mirror/blob/dba1bf935390ddb0184a4dc72245454de6c06fd2/lib/std/posix.zig
+// https://github.com/ryuapp/zig-mirror/commit/9ac1386c10736bc249f3891f34f23424531917a5#diff-503dcf04ec9ce2a1818ec55644fa34ff5918e86bd38a565c0186b201c06dd540
 // https://github.com/ryuapp/zig-mirror/blob/aa0249d74e573742db3567f589fc6e4a00e1fff8/lib/std/os/windows.zig
 const std = @import("std");
 pub const UnexpectedError = std.Io.UnexpectedError;
@@ -28,6 +29,7 @@ const afd = @import("syscall/afd.zig");
 const ws2 = @import("syscall/ws2.zig");
 
 pub fn close(handle: posix.fd_t) void {
+    if (native_os == .windows) return windows.CloseHandle(handle);
     switch (posix.errno(system.close(handle))) {
         .BADF => unreachable, // Always a race condition.
         .INTR => return, // This is still a success.
@@ -372,6 +374,47 @@ pub fn accept(
     }
 
     return accepted_sock;
+}
+
+pub const GetSockNameError = error{
+    /// Insufficient resources were available in the system to perform the operation.
+    SystemResources,
+
+    /// The network subsystem has failed.
+    NetworkSubsystemFailed,
+
+    /// Socket hasn't been bound yet
+    SocketNotBound,
+
+    FileDescriptorNotASocket,
+} || UnexpectedError;
+
+pub fn getsockname(sock: socket_t, addr: *posix.sockaddr, addrlen: *posix.socklen_t) GetSockNameError!void {
+    // Add a windows native implemenation
+    if (native_os == .windows) {
+        const rc = ws2.getsockname(sock, addr, addrlen);
+        if (rc == ws2.SOCKET_ERROR) {
+            switch (ws2.WSAGetLastError()) {
+                .WSANOTINITIALISED => unreachable,
+                .WSAENETDOWN => return error.NetworkSubsystemFailed,
+                .WSAEFAULT => unreachable, // addr or addrlen have invalid pointers or addrlen points to an incorrect value
+                .WSAENOTSOCK => return error.FileDescriptorNotASocket,
+                .WSAEINVAL => return error.SocketNotBound,
+                else => |err| return windows.unexpectedWSAError(err),
+            }
+        }
+        return;
+    }
+    const rc = system.getsockname(sock, addr, addrlen);
+    switch (posix.errno(rc)) {
+        .SUCCESS => return,
+        .BADF => unreachable, // always a race condition
+        .FAULT => unreachable,
+        .INVAL => unreachable, // invalid parameters
+        .NOTSOCK => return error.FileDescriptorNotASocket,
+        .NOBUFS => return error.SystemResources,
+        else => |err| return posix.unexpectedErrno(err),
+    }
 }
 
 pub const RecvFromError = error{

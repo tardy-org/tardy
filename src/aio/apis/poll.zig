@@ -81,6 +81,10 @@ pub const AsyncPoll = struct {
                 };
                 try syscall.bind(server_socket, &addr);
 
+                var binded_addr = mem.zeroes(std.posix.sockaddr);
+                var binded_size: std.posix.socklen_t = @sizeOf(std.posix.sockaddr);
+                try syscall.getsockname(server_socket, &binded_addr, &binded_size);
+
                 try syscall.listen(server_socket, 1);
 
                 const write_end = try syscall.socket(
