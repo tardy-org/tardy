@@ -50,10 +50,10 @@ pub const Socket = struct {
     pub const Handle = net.Socket.Handle;
 
     pub const Native = extern union {
+        any: posix.sockaddr,
         in: posix.sockaddr.in,
         in6: posix.sockaddr.in6,
         un: posix.sockaddr.un,
-        any: posix.sockaddr,
 
         pub fn toAddress(addr: Native) Address {
             return switch (addr.any.family) {
@@ -118,13 +118,19 @@ pub const Socket = struct {
             }
         }
 
-        pub fn family(addr: Address) posix.sa_family_t {
+        pub const Family = enum {
+            ip4,
+            ip6,
+            unix,
+        };
+
+        pub fn family(addr: Address) Family {
             return switch (addr) {
                 .ip => |ip| switch (ip) {
-                    .ip4 => posix.AF.INET,
-                    .ip6 => posix.AF.INET6,
+                    .ip4 => .ip4,
+                    .ip6 => .ip6,
                 },
-                .unix => posix.AF.UNIX,
+                .unix => .unix,
             };
         }
 

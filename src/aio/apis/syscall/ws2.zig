@@ -1,5 +1,6 @@
 const std = @import("std");
 const windows = std.os.windows;
+const ws2_32 = windows.ws2_32;
 
 pub const WSAPOLLFD = extern struct {
     fd: windows.HANDLE,
@@ -22,6 +23,18 @@ pub const POLL = struct {
     pub const HUP = 0x0002;
     pub const NVAL = 0x0004;
 };
+
+pub extern "ws2_32" fn getsockname(
+    s: windows.SOCKET,
+    name: *ws2_32.sockaddr,
+    namelen: *i32,
+) callconv(.winapi) WinsockError;
+
+pub extern "ws2_32" fn socket(
+    af: i32,
+    @"type": i32,
+    protocol: i32,
+) callconv(.winapi) windows.HANDLE;
 
 pub extern "ws2_32" fn WSAStartup(
     wVersionRequired: windows.WORD,
