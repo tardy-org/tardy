@@ -1,0 +1,16 @@
+allow specifying io backend for examples
+make programmer error errors unreacable in the code base for correctness
+reduce type namespacing
+get zls working accross the codebase
+consider implementing IOCP and IO Ring for windows async IO
+https://tigerbeetle.com/blog/2022-11-23-a-friendly-abstraction-over-iouring-and-kqueue/
+https://veltzer.org/2026/03/29/linux-io_uring-vs-windows-io-a-technical-comparison/
+https://news.ycombinator.com/item?id=25223411
+https://github.com/CarterLi/libwinring
+https://news.ycombinator.com/item?id=41472061
+https://github.com/yardenshafir/IoRing_Demos
+https://www.p99conf.io/session/i-o-rings-and-you-optimizing-i-o-on-windows/
+https://github.com/ziglang/zig/commit/127fa8009011e19d552ffdd834c6a607498f1c1e
+https://github.com/ziglang/zig/commit/f58ee387c7c9a512d802f819f870190c900cb6e2
+
+DeviceIoControl/NtDeviceIoControlFile

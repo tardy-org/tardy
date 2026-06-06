@@ -80,12 +80,14 @@ pub fn build(b: *std.Build) void {
     if (target.result.os.tag == .windows)
         tardy.linkSystemLibrary("ws2_32", .{});
 
+    // TODO: allow specifying io backend with examples
     // build and run examples
     // usage: zig [build/build run] -Dexample[example_name]
     build_examples(b, .{
         .run = build_steps.run,
         .install = b.getInstallStep(),
     }, .{
+        .async_backend = build_options.async_backend,
         .tardy_mod = tardy,
         .example = build_options.example,
         .optimize = optimize,
@@ -134,6 +136,7 @@ fn build_examples(
         install: *std.Build.Step,
     },
     options: struct {
+        async_backend: AsyncKind,
         tardy_mod: *std.Build.Module,
         example: Example,
         target: std.Build.ResolvedTarget,

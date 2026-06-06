@@ -1,0 +1,43 @@
+basically implement winsock for tardy (Can we do without the startup and cleanup code?)
+
+Enable tab sleeping for firefox
+
+Try using Apc completions to see if the results match
+
+verify WSAPoll mappings
+WSAPoll to AFD
+POLLIN AFD_POLL_RECEIVE | AFD_POLL_ACCEPT
+POLLOUT AFD_POLL_SEND
+POLLERR AFD_POLL_ABORT | AFD_POLL_CONNECT_FAIL
+POLLHUP AFD_POLL_DISCONNECT | AFD_POLL_ABORT
+POLLPRI AFD_POLL_RECEIVE_EXPEDITED
+
+https://ntdoc.m417z.com/ gives info on internal windows types
+
+https://codeberg.org/ziglang/zig/issues/31131
+https://leftarcode.com/posts/afd-reverse-engineering-part1/
+
+https://github.com/winsiderss/systeminformer/blob/397dda6135325201f62f2e37a714776ec6158dae/phnt/include/ntafd.h#L189
+https://github.com/reactos/reactos/blob/a90a35b58a8e4b8e547c1acbd48723250994bfd2/dll/win32/msafd/misc/dllmain.c#L1901
+https://github.com/reactos/reactos/tree/master/modules/rostests/apitests/afd
+https://github.com/reactos/reactos/blob/master/sdk/include/reactos/drivers/afd/shared.h#L122
+https://github.com/reactos/reactos/tree/a90a35b58a8e4b8e547c1acbd48723250994bfd2/dll/win32/ws2_32/src
+https://github.com/libuv/libuv/blob/cdc632c68feb3961f84ea109295db38dfa082347/src/win/winsock.c#L313
+https://github.com/libuv/libuv/blob/v1.x/src/win/poll.c#L411
+
+**ReactOS** (more readable than Wine for AFD internals)
+- https://github.com/reactos/reactos/blob/master/drivers/network/afd/include/afd.h — full AFD struct definitions
+- https://github.com/reactos/reactos/blob/master/drivers/network/afd/afd/info.c — handles `IOCTL_AFD_SET_INFO` specifically
+
+
+**libuv**
+- https://github.com/libuv/libuv/blob/v1.x/src/win/winapi.h — AFD struct definitions (`AFD_INFO`, poll structs, IOCTL codes)
+- https://github.com/libuv/libuv/blob/v1.x/src/win/winsock.c — where `NtDeviceIoControlFile` is called into AFD
+- https://github.com/libuv/libuv/blob/v1.x/src/win/poll.c — AFD poll IOCTL usage for event notification
+
+**Wine**
+- https://gitlab.winehq.org/wine/wine/-/blob/master/include/wine/afd.h — Wine's AFD header, has `AFD_INFO` and IOCTL definitions
+- https://gitlab.winehq.org/wine/wine/-/blob/master/dlls/ws2_32/socket.c — Winsock implementation that calls into AFD
+- https://gitlab.winehq.org/wine/wine/-/blob/master/dlls/ntdll/unix/socket.c — lower-level socket/AFD handling in ntdll
+
+Worth noting that libuv's AFD usage was significantly expanded around v1.40 when they moved to using AFD poll directly for better IOCTL performance on Windows — the git blame and changelog around that version is worth reading if you want to understand the motivation.
