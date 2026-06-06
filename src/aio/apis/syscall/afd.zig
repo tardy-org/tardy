@@ -10,6 +10,8 @@ const Socket = tardy.Socket;
 const Io = std.Io;
 const mem = std.mem;
 const Threaded = Io.Threaded;
+const ntdll = windows.ntdll;
+const IOCTL = windows.IOCTL;
 const net = std.Io.net;
 const IpAddress = net.IpAddress;
 const builtin = @import("builtin");
@@ -163,6 +165,11 @@ pub fn netListenIpWindows(
     }
 }
 
+pub const PosixAddress = extern union {
+    any: ws2_32.sockaddr,
+    in: ws2_32.sockaddr.in,
+    in6: ws2_32.sockaddr.in6,
+};
 pub fn netConnectIpWindows(
     socket: windows.HANDLE,
     address: *const Socket.Address,
@@ -174,7 +181,11 @@ pub fn netConnectIpWindows(
         &mem.toBytes(@as(u32, 1)),
     );
 
-    const wildcard_addr: Socket.Address = .wildcard;
+    const wildcard_addr: Socket.Address = switch (address.*.family()) {
+        .ip4 => .wildcard,
+        .ip6 => .wildcard64,
+        .unix => unreachable,
+    };
 
     // TODO: resouldn't need this
     _ = bindSocketIpAfd(
@@ -187,43 +198,143 @@ pub fn netConnectIpWindows(
     };
 
     const Storage = extern struct {
+        // UseSAN: windows.BOOL = .FALSE,
+        // Root: windows.ULONG = 0,
+        // Unknown: windows.ULONG = 0,
+        // RemoteAddress: extern struct {
+        //     TAAddressCount: windows.LONG = 1,
+        //     Address: extern struct {
+        //         AddressLength: windows.USHORT,
+        //         Socket: Socket.Native,
+        //     },
+        // },
         Reserved0: [3]usize = @splat(0),
-        Socket: Socket.Native,
-    };
-    var storage: Storage = .{ .Socket = undefined };
+        Address: PosixAddress,
 
+        // Socket: Socket.Native,
+    };
+    var storage: Storage = .{ .Address = undefined };
     const addr_len: usize = blk: switch (address.*) {
         .ip => |ip| switch (ip) {
             .ip4 => {
                 const sock = address.toNative();
-                storage.Socket.in = sock.in;
-                break :blk @sizeOf(ws2_32.sockaddr.in);
+                std.log.debug("in sock {any}", .{sock.in});
+                const size = @sizeOf(ws2_32.sockaddr.in);
+                storage.Address.in = sock.in;
+                break :blk size;
             },
             .ip6 => {
                 const sock = address.toNative();
-                storage.Socket.in6 = sock.in6;
-                break :blk @sizeOf(ws2_32.sockaddr.in6);
+                std.log.debug("in6 sock {any}", .{sock.in6});
+                const size = @sizeOf(ws2_32.sockaddr.in6);
+                storage.Address.in6 = sock.in6;
+                break :blk size;
             },
         },
         else => unreachable,
     };
 
-    const connect_in_opt = @as([]const u8, @ptrCast(&storage))[0 .. @offsetOf(Storage, "Socket") + addr_len];
+    // var storage: Storage = .{
+    //     .RemoteAddress = .{
+    //         .Address = .{
+    //             .Socket = undefined,
+    //             .AddressLength = 0,
+    //         },
+    //     },
+    // };
 
-    switch ((try deviceIoControl(&.{
-        .file = .{
-            .handle = socket,
-            .flags = .{ .nonblocking = true },
-        },
-        .code = windows.IOCTL.AFD.CONNECT,
-        .in = connect_in_opt,
-    })).u.Status) {
-        .SUCCESS => return,
+    // const addr_len: usize = blk: switch (address.*) {
+    //     .ip => |ip| switch (ip) {
+    //         .ip4 => {
+    //             const sock = address.toNative();
+    //             const size = @sizeOf(ws2_32.sockaddr.in);
+    //             const data_len = size - @offsetOf(ws2_32.sockaddr, "data");
+
+    //             storage.RemoteAddress.Address.AddressLength = data_len;
+    //             storage.RemoteAddress.Address.Socket.in = sock.in;
+    //             break :blk size;
+    //         },
+    //         .ip6 => {
+    //             const sock = address.toNative();
+    //             const size = @sizeOf(ws2_32.sockaddr.in6);
+    //             const data_len = size - @offsetOf(ws2_32.sockaddr, "data");
+
+    //             storage.RemoteAddress.Address.AddressLength = data_len;
+    //             storage.RemoteAddress.Address.Socket.in6 = sock.in6;
+    //             break :blk size;
+    //         },
+    //     },
+    //     else => unreachable,
+    // };
+    // std.log.debug("storage is {any}", .{storage.Socket.in});
+
+    // const connect_in_opt = @as([]const u8, @ptrCast(&storage))[0 .. @offsetOf(@TypeOf(storage.RemoteAddress.Address), "Socket") + addr_len];
+    const connect_in_opt = @as([]const u8, @ptrCast(&storage))[0 .. @offsetOf(Storage, "Address") + addr_len];
+
+    // https://github.com/reactos/reactos/blob/a90a35b58a8e4b8e547c1acbd48723250994bfd2/dll/win32/msafd/misc/dllmain.c#L1958
+    const access: windows.ACCESS_MASK = .{
+        .SPECIFIC = .{ .bits = 3 },
+        .STANDARD = .RIGHTS_ALL,
+    };
+    // create a manual-reset event to wait on
+    var event: windows.HANDLE = undefined;
+    const es = ntdll.NtCreateEvent(
+        &event,
+        access,
+        null,
+        .Synchronization,
+        .FALSE,
+    );
+    if (es != .SUCCESS) unreachable;
+    defer _ = ntdll.NtClose(event);
+
+    var iosb = std.mem.zeroes(windows.IO_STATUS_BLOCK);
+
+    const status = ntdll.NtDeviceIoControlFile(
+        socket,
+        event,
+        null,
+        null,
+        &iosb,
+        IOCTL.AFD.CONNECT,
+        connect_in_opt.ptr,
+        @intCast(connect_in_opt.len),
+        null,
+        0,
+    );
+
+    switch (status) {
+        .SUCCESS => {},
         .CANCELLED => unreachable,
         .INSUFFICIENT_RESOURCES => return error.SystemResources,
         .CONNECTION_REFUSED => return error.ConnectionRefused,
-        else => |status| return windows.unexpectedStatus(status),
+        .PENDING => {
+            unreachable;
+            // waitIosb(event, &iosb, status) catch |err| switch (err) {
+            //     error.OperationFailed => return error.ConnectFailed,
+            //     else => unreachable,
+            // };
+        },
+        else => |s| {
+            std.log.err("IOCTL_AFD_CONNECT failed: {t}", .{s});
+            return windows.unexpectedStatus(status);
+        },
     }
+
+    // switch ((try deviceIoControl(&.{
+    //     .file = .{
+    //         .handle = socket,
+    //         .flags = .{ .nonblocking = false },
+    //     },
+    //     .code = windows.IOCTL.AFD.CONNECT,
+    //     .in = connect_in_opt,
+    // })).u.Status) {
+    //     .SUCCESS => return,
+    //     .CANCELLED => unreachable,
+    //     .INSUFFICIENT_RESOURCES => return error.SystemResources,
+    //     .CONNECTION_REFUSED => return error.ConnectionRefused,
+    //     else => |status| return windows.unexpectedStatus(status),
+    // }
 }
 
 pub const AcceptOptions = struct {
