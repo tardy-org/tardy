@@ -1053,21 +1053,21 @@ pub fn poll(fds: []pollfd, timeout: i32) PollError!usize {
             },
             else => |rc| return @intCast(rc),
         };
-
-        while (true) {
-            const fds_count = std.math.cast(posix.nfds_t, fds.len) orelse return error.SystemResources;
-            const rc = system.poll(fds.ptr, fds_count, timeout);
-            switch (posix.errno(rc)) {
-                .SUCCESS => return @intCast(rc),
-                .FAULT => unreachable,
-                .INTR => continue,
-                .INVAL => unreachable,
-                .NOMEM => return error.SystemResources,
-                else => |err| return posix.unexpectedErrno(err),
-            }
-        }
-        unreachable;
     }
+
+    while (true) {
+        const fds_count = std.math.cast(posix.nfds_t, fds.len) orelse return error.SystemResources;
+        const rc = system.poll(fds.ptr, fds_count, timeout);
+        switch (posix.errno(rc)) {
+            .SUCCESS => return @intCast(rc),
+            .FAULT => unreachable,
+            .INTR => continue,
+            .INVAL => unreachable,
+            .NOMEM => return error.SystemResources,
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    }
+    unreachable;
 }
 
 /// Returns the number of bytes that were read, which can be less than
