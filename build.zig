@@ -77,8 +77,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = target.result.os.tag == .windows,
     });
-    if (target.result.os.tag == .windows)
-        tardy.linkSystemLibrary("ws2_32", .{});
 
     // build and run examples
     // usage: zig [build/build run] -Dexample[example_name]

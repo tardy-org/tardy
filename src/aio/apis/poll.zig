@@ -69,6 +69,8 @@ pub const AsyncPoll = struct {
         // 0 is read, 1 is write.
         const pipe: [2]File.Handle = blk: {
             if (comptime native_os == .windows) {
+                syscall.ws2.wsaStartup(2, 2) catch unreachable;
+
                 const server_socket = try syscall.socket(
                     posix.AF.INET,
                     posix.SOCK.STREAM,
@@ -93,7 +95,7 @@ pub const AsyncPoll = struct {
                 var binded_addr = mem.zeroes(std.posix.sockaddr);
                 var binded_size: std.posix.socklen_t = @sizeOf(std.posix.sockaddr);
                 try syscall.getsockname(server_socket, &binded_addr, &binded_size);
-                const bounded_addr = Socket.Address.fromAny(binded_addr);
+                const bounded_addr = Socket.Address.fromAny(&binded_addr);
 
                 try syscall.connect(write_end, &bounded_addr);
 
@@ -156,10 +158,12 @@ pub const AsyncPoll = struct {
     }
 
     pub fn inner_deinit(self: *AsyncPoll, allocator: mem.Allocator) void {
+        defer if (comptime native_os == .windows) syscall.ws2.wsaCleanup() catch unreachable;
+
         self.fd_list.deinit(allocator);
         self.fd_job_map.deinit();
         self.timers.deinit(allocator);
-        for (self.wake_pipe) |fd| syscall.close(fd);
+        for (self.wake_pipe) |fd| if (comptime native_os == .windows) (syscall.ws2.closesock(fd) catch unreachable) else syscall.close(fd);
     }
 
     fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {

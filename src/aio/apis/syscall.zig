@@ -26,7 +26,7 @@ const native_os = builtin.os.tag;
 const tardy = @import("../../lib.zig");
 const Socket = tardy.Socket;
 const afd = @import("syscall/afd.zig");
-const ws2 = @import("syscall/ws2.zig");
+pub const ws2 = @import("syscall/ws2.zig");
 
 pub fn close(handle: posix.fd_t) void {
     if (native_os == .windows) return windows.CloseHandle(handle);
@@ -100,10 +100,10 @@ pub const WriteError = error{
 /// The corresponding POSIX limit is `maxInt(isize)`.
 pub fn write(fd: posix.fd_t, bytes: []const u8) WriteError!usize {
     if (bytes.len == 0) return 0;
-    if (native_os == .windows) return afd.netWriteWindows(fd, &.{}, &.{bytes}, 0) catch |err| switch (err) {
-        error.Canceled => unreachable,
-        else => |e| return e,
-    };
+    if (native_os == .windows) {
+        return ws2.writeFile(fd, bytes, null);
+    }
+
     const max_count = switch (native_os) {
         .linux => 0x7ffff000,
         .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => math.maxInt(i32),
@@ -194,11 +194,45 @@ pub const SocketError = error{
 
 pub fn socket(domain: u32, socket_type: u32, protocol: u32) SocketError!socket_t {
     if (native_os == .windows) {
-        return try afd.openSocketAfd(
-            @intCast(domain),
-            .{ .mode = .stream },
-        );
+        var flags: u32 = ws2.WSA_FLAG.OVERLAPPED;
+        // set SOCK.CLOEXEC by default
+        flags |= ws2.WSA_FLAG.NO_HANDLE_INHERIT;
+
+        const rc = while (true) {
+            const rc = ws2.WSASocketW(
+                @intCast(domain),
+                @intCast(socket_type),
+                @intCast(protocol),
+                null,
+                0,
+                flags,
+            );
+            if (rc == ws2.INVALID_SOCKET) {
+                switch (ws2.WSAGetLastError()) {
+                    .EAFNOSUPPORT => return error.AddressFamilyUnsupported,
+                    .EMFILE => return error.ProcessFdQuotaExceeded,
+                    .ENOBUFS => return error.SystemResources,
+                    .EPROTONOSUPPORT => return error.ProtocolUnsupportedByAddressFamily,
+                    .NOTINITIALISED => unreachable,
+                    else => |err| return ws2.unexpectedWSAError(err),
+                }
+            }
+            break rc;
+        };
+
+        errdefer ws2.closesock(rc) catch unreachable;
+
+        // set SOCK.NONBLOCK by default
+        var mode: c_ulong = 1; // nonblocking
+        if (ws2.SOCKET_ERROR == ws2.ioctlsocket(rc, ws2.FIONBIO, &mode)) {
+            switch (ws2.WSAGetLastError()) {
+                // have not identified any error codes that should be handled yet
+                else => unreachable,
+            }
+        }
+        return rc;
     }
+
     const have_sock_flags = !builtin.target.os.tag.isDarwin() and native_os != .haiku;
     const filtered_sock_type = if (!have_sock_flags)
         socket_type & ~@as(u32, SOCK.NONBLOCK | SOCK.CLOEXEC)
@@ -237,11 +271,27 @@ pub const BindError = error{
 } || IpAddress.BindError;
 
 pub fn bind(sock: posix.socket_t, addr: *const Socket.Address) (BindError || afd.BindError)!void {
+    const sock_any, const sock_len = addr.toPosix();
     if (native_os == .windows) {
-        _ = try afd.netBindIpWindows(sock, addr, .{});
+        const rc = ws2.bind(sock, &sock_any, @intCast(sock_len));
+        if (rc == ws2.SOCKET_ERROR) {
+            switch (ws2.WSAGetLastError()) {
+                .NOTINITIALISED => unreachable, // not initialized WSA
+                .EADDRNOTAVAIL => unreachable,
+                .ENOTSOCK => unreachable,
+                .EFAULT => unreachable, // invalid pointers
+                .EINVAL => unreachable,
+                .ENETDOWN => unreachable,
+                .EACCES => return error.AccessDenied,
+                .EADDRINUSE => return error.AddressInUse,
+                .ENOBUFS => return error.SystemResources,
+                else => |err| return ws2.unexpectedWSAError(err),
+            }
+            unreachable;
+        }
+        return;
     }
 
-    const sock_any, const sock_len = addr.toPosix();
     const rc = system.bind(sock, &sock_any, sock_len);
     switch (posix.errno(rc)) {
         .SUCCESS => return,
@@ -270,10 +320,22 @@ pub const ListenError = error{
 
 pub fn listen(sock: socket_t, backlog: u31) ListenError!void {
     if (native_os == .windows) {
-        return afd.netListenIpWindows(sock, .{ .kernel_backlog = backlog }) catch |err| switch (err) {
-            error.Canceled => unreachable,
-            else => |e| e,
-        };
+        const rc = ws2.listen(sock, backlog);
+        if (rc == ws2.SOCKET_ERROR) {
+            switch (ws2.WSAGetLastError()) {
+                .NOTINITIALISED => unreachable, // not initialized WSA
+                .ENETDOWN => unreachable,
+                .EISCONN => unreachable,
+                .EINVAL => unreachable,
+                .EOPNOTSUPP => unreachable,
+                .EADDRINUSE => return error.AddressInUse,
+                .EMFILE, .ENOBUFS => return error.SystemResources,
+                .ENOTSOCK => return error.FileDescriptorNotASocket,
+                .EINPROGRESS => unreachable,
+                else => |err| return ws2.unexpectedWSAError(err),
+            }
+        }
+        return;
     } else {
         const rc = system.listen(sock, backlog);
         switch (posix.errno(rc)) {
@@ -315,20 +377,6 @@ pub fn accept(
     addr: ?*Socket.Address,
     flags: u32,
 ) AcceptError!Socket.Handle {
-    if (native_os == .windows) {
-        return afd.netAcceptWindows(sock, addr, .{
-            .mode = .stream,
-            .protocol = .tcp,
-        }) catch |err| switch (err) {
-            error.Canceled => unreachable,
-            else => |e| e,
-        };
-    }
-
-    const have_accept4 = !(builtin.target.os.tag.isDarwin() or native_os == .windows or native_os == .haiku);
-    // Unsupported flag(s)
-    debug.assert(0 == (flags & ~@as(u32, SOCK.NONBLOCK | SOCK.CLOEXEC)));
-
     var sockaddr: posix.sockaddr, var addr_len: u32 = blk: {
         if (addr) |addr_|
             break :blk addr_.toPosix()
@@ -337,6 +385,33 @@ pub fn accept(
             break :blk .{ sockaddr, 0 };
         }
     };
+
+    if (native_os == .windows) while (true) {
+        const rc = ws2.accept(sock, if (addr_len == 0) null else &sockaddr, if (addr_len == 0) null else @ptrCast(&addr_len));
+        errdefer ws2.closesock(rc) catch unreachable;
+
+        if (rc == ws2.INVALID_SOCKET) {
+            switch (ws2.WSAGetLastError()) {
+                .NOTINITIALISED => unreachable, // not initialized WSA
+                .ECONNRESET => unreachable,
+                .EFAULT => unreachable,
+                .ENETDOWN => unreachable,
+                .ENOTSOCK => unreachable,
+                .ENOBUFS => unreachable,
+                .EOPNOTSUPP => unreachable,
+                .EINVAL => return error.SocketNotListening,
+                .EMFILE => return error.ProcessFdQuotaExceeded,
+                .EWOULDBLOCK => return error.WouldBlock,
+                else => |err| return ws2.unexpectedWSAError(err),
+            }
+        } else {
+            return rc;
+        }
+    };
+
+    const have_accept4 = !(builtin.target.os.tag.isDarwin() or native_os == .windows or native_os == .haiku);
+    // Unsupported flag(s)
+    debug.assert(0 == (flags & ~@as(u32, SOCK.NONBLOCK | SOCK.CLOEXEC)));
 
     defer if (addr) |addr_| {
         addr_.* = Socket.Address.fromAny(&sockaddr);
@@ -392,15 +467,15 @@ pub const GetSockNameError = error{
 pub fn getsockname(sock: socket_t, addr: *posix.sockaddr, addrlen: *posix.socklen_t) GetSockNameError!void {
     // Add a windows native implemenation
     if (native_os == .windows) {
-        const rc = ws2.getsockname(sock, addr, addrlen);
+        const rc = ws2.getsockname(sock, addr, @ptrCast(addrlen));
         if (rc == ws2.SOCKET_ERROR) {
             switch (ws2.WSAGetLastError()) {
-                .WSANOTINITIALISED => unreachable,
-                .WSAENETDOWN => return error.NetworkSubsystemFailed,
-                .WSAEFAULT => unreachable, // addr or addrlen have invalid pointers or addrlen points to an incorrect value
-                .WSAENOTSOCK => return error.FileDescriptorNotASocket,
-                .WSAEINVAL => return error.SocketNotBound,
-                else => |err| return windows.unexpectedWSAError(err),
+                .NOTINITIALISED => unreachable,
+                .ENETDOWN => return error.NetworkSubsystemFailed,
+                .EFAULT => unreachable, // addr or addrlen have invalid pointers or addrlen points to an incorrect value
+                .ENOTSOCK => return error.FileDescriptorNotASocket,
+                .EINVAL => return error.SocketNotBound,
+                else => |err| return ws2.unexpectedWSAError(err),
             }
         }
         return;
@@ -971,39 +1046,28 @@ pub fn poll(fds: []pollfd, timeout: i32) PollError!usize {
             timeout,
         )) {
             ws2.SOCKET_ERROR => switch (ws2.WSAGetLastError()) {
-                .NOTINITIALISED => {
-                    var wsa_data: ws2.WSADATA = undefined;
-                    const minor_version: windows.WORD = 2;
-                    const major_version: windows.WORD = 2;
-                    const status = ws2.WSAStartup(minor_version << 8 | major_version, &wsa_data);
-                    switch (status) {
-                        .SUCCESS => continue,
-                        .SYSNOTREADY => return error.NetworkDown,
-                        else => unreachable,
-                    }
-                },
+                .NOTINITIALISED => unreachable,
                 .ENETDOWN => return error.NetworkDown,
                 .ENOBUFS => return error.SystemResources,
-                // TODO: handle more errors
-                else => unreachable,
+                else => |err| return ws2.unexpectedWSAError(err),
             },
             else => |rc| return @intCast(rc),
         };
-    }
 
-    while (true) {
-        const fds_count = std.math.cast(posix.nfds_t, fds.len) orelse return error.SystemResources;
-        const rc = system.poll(fds.ptr, fds_count, timeout);
-        switch (posix.errno(rc)) {
-            .SUCCESS => return @intCast(rc),
-            .FAULT => unreachable,
-            .INTR => continue,
-            .INVAL => unreachable,
-            .NOMEM => return error.SystemResources,
-            else => |err| return posix.unexpectedErrno(err),
+        while (true) {
+            const fds_count = std.math.cast(posix.nfds_t, fds.len) orelse return error.SystemResources;
+            const rc = system.poll(fds.ptr, fds_count, timeout);
+            switch (posix.errno(rc)) {
+                .SUCCESS => return @intCast(rc),
+                .FAULT => unreachable,
+                .INTR => continue,
+                .INVAL => unreachable,
+                .NOMEM => return error.SystemResources,
+                else => |err| return posix.unexpectedErrno(err),
+            }
         }
+        unreachable;
     }
-    unreachable;
 }
 
 /// Returns the number of bytes that were read, which can be less than

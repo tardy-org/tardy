@@ -1,6 +1,17 @@
 const std = @import("std");
 const windows = std.os.windows;
 const ws2_32 = windows.ws2_32;
+const math = std.math;
+const builtin = @import("builtin");
+const native_arch = builtin.cpu.arch;
+
+pub const WSA_FLAG = struct {
+    pub const OVERLAPPED = 1;
+    pub const NO_HANDLE_INHERIT = 128;
+};
+pub const FIONBIO = -2147195266;
+pub const INVALID_SOCKET: windows.HANDLE = @ptrFromInt(~@as(usize, 0));
+pub const SOCKET_ERROR = -1;
 
 pub const WSAPOLLFD = extern struct {
     fd: windows.HANDLE,
@@ -25,10 +36,10 @@ pub const POLL = struct {
 };
 
 pub extern "ws2_32" fn getsockname(
-    s: windows.SOCKET,
+    s: windows.HANDLE,
     name: *ws2_32.sockaddr,
     namelen: *i32,
-) callconv(.winapi) WinsockError;
+) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn socket(
     af: i32,
@@ -36,14 +47,253 @@ pub extern "ws2_32" fn socket(
     protocol: i32,
 ) callconv(.winapi) windows.HANDLE;
 
-pub extern "ws2_32" fn WSAStartup(
+extern "kernel32" fn WriteFile(
+    in_hFile: windows.HANDLE,
+    in_lpBuffer: [*]const u8,
+    in_nNumberOfBytesToWrite: windows.DWORD,
+    out_lpNumberOfBytesWritten: ?*windows.DWORD,
+    in_out_lpOverlapped: ?*OVERLAPPED,
+) callconv(.winapi) windows.BOOL;
+
+const WriteFileError = error{
+    SystemResources,
+    BrokenPipe,
+    NotOpenForWriting,
+    /// The process cannot access the file because another process has locked
+    /// a portion of the file.
+    LockViolation,
+    /// The specified network name is no longer available.
+    ConnectionResetByPeer,
+    /// Known to be possible when:
+    /// - Unable to write to disconnected virtual com port (Windows)
+    AccessDenied,
+    Unexpected,
+};
+
+const MAX_PROTOCOL_CHAIN = 7;
+
+const WSAPROTOCOLCHAIN = extern struct {
+    ChainLen: c_int,
+    ChainEntries: [MAX_PROTOCOL_CHAIN]windows.DWORD,
+};
+const WSAPROTOCOL_LEN = 255;
+
+const WSAPROTOCOL_INFOW = extern struct {
+    dwServiceFlags1: windows.DWORD,
+    dwServiceFlags2: windows.DWORD,
+    dwServiceFlags3: windows.DWORD,
+    dwServiceFlags4: windows.DWORD,
+    dwProviderFlags: windows.DWORD,
+    ProviderId: windows.GUID,
+    dwCatalogEntryId: windows.DWORD,
+    ProtocolChain: WSAPROTOCOLCHAIN,
+    iVersion: c_int,
+    iAddressFamily: c_int,
+    iMaxSockAddr: c_int,
+    iMinSockAddr: c_int,
+    iSocketType: c_int,
+    iProtocol: c_int,
+    iProtocolMaxOffset: c_int,
+    iNetworkByteOrder: c_int,
+    iSecurityScheme: c_int,
+    dwMessageSize: windows.DWORD,
+    dwProviderReserved: windows.DWORD,
+    szProtocol: [WSAPROTOCOL_LEN + 1]windows.WCHAR,
+};
+
+pub extern "ws2_32" fn WSASocketW(
+    af: i32,
+    @"type": i32,
+    protocol: i32,
+    lpProtocolInfo: ?*WSAPROTOCOL_INFOW,
+    g: u32,
+    dwFlags: u32,
+) callconv(.winapi) windows.HANDLE;
+
+pub fn unexpectedWSAError(err: WinsockError) std.posix.UnexpectedError {
+    @branchHint(.cold);
+    if (std.options.unexpected_error_tracing) {
+        std.debug.print("error.Unexpected: GetLastError({d}): {t}\n", .{ err, err });
+        std.debug.dumpCurrentStackTrace(.{ .first_address = @returnAddress() });
+    }
+    return error.Unexpected;
+}
+
+extern "ws2_32" fn closesocket(
+    s: windows.HANDLE,
+) callconv(.winapi) i32;
+
+pub fn closesock(s: windows.HANDLE) !void {
+    switch (closesocket(s)) {
+        0 => {},
+        SOCKET_ERROR => switch (WSAGetLastError()) {
+            else => |err| return unexpectedWSAError(err),
+        },
+        else => unreachable,
+    }
+}
+
+pub extern "ws2_32" fn ioctlsocket(
+    s: windows.HANDLE,
+    cmd: i32,
+    argp: *u32,
+) callconv(.winapi) i32;
+
+pub extern "ws2_32" fn bind(
+    s: windows.HANDLE,
+    name: *const ws2_32.sockaddr,
+    namelen: i32,
+) callconv(.winapi) i32;
+
+pub extern "ws2_32" fn listen(
+    s: windows.HANDLE,
+    backlog: i32,
+) callconv(.winapi) i32;
+
+pub extern "ws2_32" fn accept(
+    s: windows.HANDLE,
+    addr: ?*ws2_32.sockaddr,
+    addrlen: ?*i32,
+) callconv(.winapi) windows.HANDLE;
+
+extern "ws2_32" fn WSAStartup(
     wVersionRequired: windows.WORD,
     lpWSAData: *WSADATA,
 ) callconv(.winapi) WinsockError;
 
-pub extern "ws2_32" fn WSACleanup() callconv(.winapi) WinsockError;
+pub fn wsaStartup(major_version: windows.WORD, minor_version: windows.WORD) !void {
+    var wsa_data: WSADATA = undefined;
+    const version = minor_version << 8 | major_version;
+    const status = WSAStartup(version, &wsa_data);
+    switch (status) {
+        .SUCCESS => return,
+        .SYSNOTREADY => return error.NetworkDown,
+        else => unreachable,
+    }
+}
+
+pub fn wsaCleanup() !void {
+    return switch (WSACleanup()) {
+        0 => {},
+        SOCKET_ERROR => switch (WSAGetLastError()) {
+            .NOTINITIALISED => unreachable,
+            .ENETDOWN => unreachable,
+            .EINPROGRESS => return error.BlockingOperationInProgress,
+            else => |err| return unexpectedWSAError(err),
+        },
+        else => unreachable,
+    };
+}
+
+extern "ws2_32" fn WSACleanup() callconv(.winapi) i32;
 
 pub extern "ws2_32" fn WSAGetLastError() callconv(.winapi) WinsockError;
+
+pub fn writeFile(
+    handle: windows.HANDLE,
+    bytes: []const u8,
+    offset: ?u64,
+) WriteFileError!usize {
+    var bytes_written: windows.DWORD = undefined;
+    var overlapped_data: OVERLAPPED = undefined;
+    const overlapped: ?*OVERLAPPED = if (offset) |off| blk: {
+        overlapped_data = .{
+            .Internal = 0,
+            .InternalHigh = 0,
+            .DUMMYUNIONNAME = .{
+                .DUMMYSTRUCTNAME = .{
+                    .Offset = @truncate(off),
+                    .OffsetHigh = @truncate(off >> 32),
+                },
+            },
+            .hEvent = null,
+        };
+        break :blk &overlapped_data;
+    } else null;
+
+    const adjusted_len = math.cast(u32, bytes.len) orelse math.maxInt(u32);
+
+    if (WriteFile(
+        handle,
+        bytes.ptr,
+        adjusted_len,
+        &bytes_written,
+        overlapped,
+    ) == .FALSE) {
+        switch (GetLastError()) {
+            .INVALID_USER_BUFFER => return error.SystemResources,
+            .NOT_ENOUGH_MEMORY => return error.SystemResources,
+            .OPERATION_ABORTED => unreachable,
+            .NOT_ENOUGH_QUOTA => return error.SystemResources,
+            .IO_PENDING => unreachable,
+            .NO_DATA => return error.BrokenPipe,
+            .INVALID_HANDLE => return error.NotOpenForWriting,
+            .LOCK_VIOLATION => return error.LockViolation,
+            .NETNAME_DELETED => return error.ConnectionResetByPeer,
+            .ACCESS_DENIED => return error.AccessDenied,
+            .WORKING_SET_QUOTA => return error.SystemResources,
+            else => |err| return windows.unexpectedError(err),
+        }
+    }
+    return bytes_written;
+}
+
+const OVERLAPPED = extern struct {
+    Internal: windows.ULONG_PTR,
+    InternalHigh: windows.ULONG_PTR,
+    DUMMYUNIONNAME: extern union {
+        DUMMYSTRUCTNAME: extern struct {
+            Offset: windows.DWORD,
+            OffsetHigh: windows.DWORD,
+        },
+        Pointer: ?windows.PVOID,
+    },
+    hEvent: ?windows.HANDLE,
+};
+
+fn GetLastError() windows.Win32Error {
+    return @enumFromInt(teb().LastErrorValue);
+}
+
+fn teb() *TEB {
+    return switch (native_arch) {
+        .thumb => asm (
+            \\ mrc p15, 0, %[ptr], c13, c0, 2
+            : [ptr] "=r" (-> *TEB),
+        ),
+        .aarch64 => asm (
+            \\ mov %[ptr], x18
+            : [ptr] "=r" (-> *TEB),
+        ),
+        .x86 => asm (
+            \\ movl %%fs:0x18, %[ptr]
+            : [ptr] "=r" (-> *TEB),
+        ),
+        .x86_64 => asm (
+            \\ movq %%gs:0x30, %[ptr]
+            : [ptr] "=r" (-> *TEB),
+        ),
+        else => @compileError("unsupported arch"),
+    };
+}
+
+const TEB = extern struct {
+    NtTib: windows.NT_TIB,
+    EnvironmentPointer: windows.PVOID,
+    ClientId: windows.CLIENT_ID,
+    ActiveRpcHandle: windows.PVOID,
+    ThreadLocalStoragePointer: windows.PVOID,
+    ProcessEnvironmentBlock: *windows.PEB,
+    LastErrorValue: windows.ULONG,
+    Reserved2: [399 * @sizeOf(windows.PVOID) - @sizeOf(windows.ULONG)]u8,
+    Reserved3: [1952]u8,
+    TlsSlots: [64]windows.PVOID,
+    Reserved4: [8]u8,
+    Reserved5: [26]windows.PVOID,
+    ReservedForOle: windows.PVOID,
+    Reserved6: [4]windows.PVOID,
+    TlsExpansionSlots: windows.PVOID,
+};
 
 pub extern "ws2_32" fn WSAPoll(
     fdArray: [*]WSAPOLLFD,
@@ -51,9 +301,8 @@ pub extern "ws2_32" fn WSAPoll(
     timeout: i32,
 ) callconv(.winapi) i32;
 
-pub const WSADESCRIPTION_LEN = 256;
-pub const WSASYS_STATUS_LEN = 128;
-pub const SOCKET_ERROR = -1;
+const WSADESCRIPTION_LEN = 256;
+const WSASYS_STATUS_LEN = 128;
 
 pub const WSADATA = if (@sizeOf(usize) == @sizeOf(u64))
     extern struct {
