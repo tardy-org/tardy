@@ -176,7 +176,7 @@ pub fn netConnectIpWindows(
 
     const wildcard_addr: Socket.Address = .wildcard;
 
-    // TODO: resouldn't need this
+    // TODO: find out why bounded addr doesn't match getsockname
     _ = bindSocketIpAfd(
         socket,
         &wildcard_addr,

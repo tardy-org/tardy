@@ -536,7 +536,14 @@ pub fn recvfrom(
     // }
 
     while (true) {
-        const rc = system.recvfrom(sockfd, buf.ptr, buf.len, flags, src_addr, addrlen);
+        const rc = system.recvfrom(
+            sockfd,
+            buf.ptr,
+            buf.len,
+            flags,
+            src_addr,
+            addrlen,
+        );
         switch (posix.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .BADF => unreachable, // always a race condition

@@ -92,6 +92,7 @@ pub const AsyncPoll = struct {
                 );
                 errdefer syscall.close(write_end);
 
+                // Required to prevent INVALID_ADDRESS_COMPONENT error on AFD
                 var binded_addr = mem.zeroes(std.posix.sockaddr);
                 var binded_size: std.posix.socklen_t = @sizeOf(std.posix.sockaddr);
                 try syscall.getsockname(server_socket, &binded_addr, &binded_size);
