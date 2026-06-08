@@ -1,15 +1,17 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Atomic = std.atomic.Value;
-
-const Dir = @import("tardy").Dir;
-const Runtime = @import("tardy").Runtime;
+const tardy = @import("tardy");
+const Dir = tardy.Dir;
+const Runtime = tardy.Runtime;
 
 const FileChain = @import("file_chain.zig").FileChain;
-const log = @import("lib.zig").log;
 const SharedParams = @import("lib.zig").SharedParams;
 
 pub const STACK_SIZE = 1024 * 1024 * 8;
+
+const log = std.log.scoped(.@"tardy/e2e/first");
+
 threadlocal var file_chain_counter: usize = 0;
 
 pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
@@ -24,7 +26,7 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
     const chain_count = shared_params.size_tasks_initial * rand.intRangeAtMost(usize, 1, 2);
     file_chain_counter = chain_count;
 
-    log.info("creating file chains... ({d})", .{chain_count});
+    log.debug("creating file chains... ({d})", .{chain_count});
     for (0..chain_count) |i| {
         var prng2: std.Random.DefaultPrng = .init(shared_params.seed + i);
         const rand2 = prng2.random();
@@ -46,7 +48,7 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
             .{ .rel = .{ .dir = new_dir.handle, .path = subpath } },
             rand2.intRangeLessThan(usize, 1, 64),
         );
-        errdefer chain_ptr.deinit();
+        errdefer chain_ptr.deinit(rt.allocator);
 
         try rt.spawn(
             .{ chain_ptr, rt, &file_chain_counter, shared_params.seed_string },

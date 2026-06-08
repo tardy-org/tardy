@@ -1,13 +1,16 @@
+// TODO: move imports of all files to the bottom
 const std = @import("std");
 const assert = std.debug.assert;
-const LinuxError = std.os.linux.E;
+const linux = std.os.linux;
+const Io = std.Io;
 const builtin = @import("builtin");
+const mem = std.mem;
 
-const Pool = @import("../../core/pool.zig").Pool;
+const pool = @import("../../core/pool.zig");
+const Pool = pool.Pool;
 const Cross = @import("../../cross/lib.zig");
 const Stat = @import("../../fs/lib.zig").Stat;
 const Path = @import("../../fs/lib.zig").Path;
-const Timespec = @import("../../lib.zig").Timespec;
 const Socket = @import("../../net/lib.zig").Socket;
 const Completion = @import("../completion.zig").Completion;
 const Result = @import("../completion.zig").Result;
@@ -37,16 +40,85 @@ const AsyncOptions = @import("../lib.zig").AsyncOptions;
 const AsyncFeatures = @import("../lib.zig").AsyncFeatures;
 const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 const AsyncOpenFlags = @import("../lib.zig").AsyncOpenFlags;
+const syscall = @import("syscall.zig");
+const posix = std.posix;
+
+pub const Errors = struct {
+    pub const Reap = Submit || Error;
+    pub const QueueJob = Error || Submit;
+    pub const Wake = syscall.WriteError;
+
+    pub const Init = error{
+        EntriesZero,
+        EntriesNotPowerOfTwo,
+        ParamsOutsideAccessibleAddressSpace,
+        // The resv array contains non-zero data, p.flags contains an unsupported flag,
+        // entries out of bounds, IORING_SETUP_SQ_AFF was specified without IORING_SETUP_SQPOLL,
+        // or IORING_SETUP_CQSIZE was specified but linux.io_uring_params.cq_entries was invalid:
+        ArgumentsInvalid,
+        ProcessFdQuotaExceeded,
+        SystemFdQuotaExceeded,
+        SystemResources,
+        // IORING_SETUP_SQPOLL was specified but effective user ID lacks sufficient privileges,
+        // or a container seccomp policy prohibits io_uring syscalls:
+        PermissionDenied,
+        SystemOutdated,
+    } || posix.MMapError || Error;
+
+    pub const Submit = error{
+        SystemResources,
+        // The SQE `fd` is invalid, or IOSQE_FIXED_FILE was set but no files were registered:
+        FileDescriptorInvalid,
+        // The file descriptor is valid, but the ring is not in the right state.
+        // See io_uring_register(2) for how to enable the ring.
+        FileDescriptorInBadState,
+        // The application attempted to overcommit the number of requests it can have pending.
+        // The application should wait for some completions and try again:
+        CompletionQueueOvercommitted,
+        // The SQE is invalid, or valid but the ring was setup with IORING_SETUP_IOPOLL:
+        SubmissionQueueEntryInvalid,
+        // The buffer is outside the process' accessible address space, or IORING_OP_READ_FIXED
+        // or IORING_OP_WRITE_FIXED was specified but no buffers were registered, or the range
+        // described by `addr` and `len` is not within the buffer registered at `buf_index`:
+        BufferInvalid,
+        RingShuttingDown,
+        // The kernel believes our `self.fd` does not refer to an io_uring instance,
+        // or the opcode is valid but not supported by this kernel (more likely):
+        OpcodeNotSupported,
+        // The thread submitting the work is invalid. This may occur if IORING_ENTER_GETEVENTS
+        // and IORING_SETUP_DEFER_TASKRUN is set, but the submitting thread is not the thread
+        // that initially created or enabled the io_uring associated with fd.
+        InvalidThread,
+        // The operation was interrupted by a delivery of a signal before it could complete.
+        // This can happen while waiting for events with IORING_ENTER_GETEVENTS:
+        SignalInterrupt,
+        Unexpected,
+    };
+};
+
+pub const Error = error{
+    SubmissionQueueFull,
+} || pool.Error;
 
 const log = std.log.scoped(.@"tardy/aio/io_uring");
 
 const JobBundle = struct {
     job: Job,
-    statx: *std.os.linux.Statx = undefined,
-    timespec: *std.os.linux.kernel_timespec = undefined,
+    statx: *linux.Statx = undefined,
+    timespec: *linux.kernel_timespec = undefined,
 };
 
 pub const AsyncIoUring = struct {
+    allocator: mem.Allocator,
+    inner: *linux.IoUring,
+    wake_event_fd: posix.fd_t,
+    wake_event_buffer: []u8,
+
+    // Currently, the batch size is predetermined.
+    // You basically define how large you want your batches to be.
+    cqes: []linux.io_uring_cqe,
+    jobs: Pool(JobBundle),
+
     const base_flags = blk: {
         var flags = 0;
         // If you are building for musl, you won't have access to these flags.
@@ -57,7 +129,7 @@ pub const AsyncIoUring = struct {
             .linux,
             .{ .major = 6, .minor = 0, .patch = 0 },
         )) |is_atleast| {
-            if (is_atleast) flags |= std.os.linux.IORING_SETUP_SINGLE_ISSUER;
+            if (is_atleast) flags |= linux.IORING_SETUP_SINGLE_ISSUER;
         }
 
         // COOP_TASKRUN requires 5.19
@@ -65,30 +137,20 @@ pub const AsyncIoUring = struct {
             .linux,
             .{ .major = 5, .minor = 19, .patch = 0 },
         )) |is_atleast| {
-            if (is_atleast) flags |= std.os.linux.IORING_SETUP_COOP_TASKRUN;
+            if (is_atleast) flags |= linux.IORING_SETUP_COOP_TASKRUN;
         }
 
         break :blk flags;
     };
 
-    allocator: std.mem.Allocator,
-    inner: *std.os.linux.IoUring,
-    wake_event_fd: std.posix.fd_t,
-    wake_event_buffer: []u8,
-
-    // Currently, the batch size is predetermined.
-    // You basically define how large you want your batches to be.
-    cqes: []std.os.linux.io_uring_cqe,
-    jobs: Pool(JobBundle),
-
-    pub fn init(allocator: std.mem.Allocator, options: AsyncOptions) !AsyncIoUring {
+    pub fn init(allocator: mem.Allocator, options: AsyncOptions) (mem.Allocator.Error || Errors.Init)!AsyncIoUring {
         // Extra job for the wake event_fd.
         const size = options.size_tasks_initial + 1;
 
-        const wake_event_fd: std.posix.fd_t = @intCast(
-            std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC),
+        const wake_event_fd: posix.fd_t = @intCast(
+            linux.eventfd(0, linux.EFD.CLOEXEC),
         );
-        errdefer std.posix.close(wake_event_fd);
+        errdefer syscall.close(wake_event_fd);
 
         const wake_event_buffer = try allocator.alloc(u8, 8);
         errdefer allocator.free(wake_event_buffer);
@@ -107,13 +169,13 @@ pub const AsyncIoUring = struct {
                 assert(parent_uring.inner.fd >= 0);
 
                 // Initialize using the WQ from the parent ring.
-                const flags: u32 = base_flags | std.os.linux.IORING_SETUP_ATTACH_WQ;
-                var params = std.mem.zeroInit(std.os.linux.io_uring_params, .{
+                const flags: u32 = base_flags | linux.IORING_SETUP_ATTACH_WQ;
+                var params = mem.zeroInit(linux.io_uring_params, .{
                     .flags = flags,
                     .wq_fd = @as(u32, @intCast(parent_uring.inner.fd)),
                 });
 
-                const uring = try allocator.create(std.os.linux.IoUring);
+                const uring = try allocator.create(linux.IoUring);
                 errdefer allocator.destroy(uring);
 
                 uring.* = try .init_params(submit_size, &params);
@@ -122,7 +184,7 @@ pub const AsyncIoUring = struct {
                 break :blk uring;
             } else {
                 // Initalize IO Uring
-                const uring = try allocator.create(std.os.linux.IoUring);
+                const uring = try allocator.create(linux.IoUring);
                 errdefer allocator.destroy(uring);
 
                 uring.* = try .init(submit_size, base_flags);
@@ -139,13 +201,17 @@ pub const AsyncIoUring = struct {
 
         const index = jobs.borrow_assume_unset(0);
         const item = jobs.get_ptr(index);
-        item.* = .{ .job = .{ .index = index, .type = .wake, .task = undefined } };
+        item.job = .{
+            .index = index,
+            .type = .wake,
+            .task = undefined,
+        };
         _ = try uring.read(index, wake_event_fd, .{ .buffer = wake_event_buffer }, 0);
 
-        const cqes = try allocator.alloc(std.os.linux.io_uring_cqe, options.size_aio_reap_max);
+        const cqes = try allocator.alloc(linux.io_uring_cqe, options.size_aio_reap_max);
         errdefer allocator.free(cqes);
 
-        return AsyncIoUring{
+        return .{
             .inner = uring,
             .allocator = allocator,
             .wake_event_fd = wake_event_fd,
@@ -155,8 +221,8 @@ pub const AsyncIoUring = struct {
         };
     }
 
-    pub fn inner_deinit(self: *AsyncIoUring, allocator: std.mem.Allocator) void {
-        std.posix.close(self.wake_event_fd);
+    pub fn inner_deinit(self: *AsyncIoUring, allocator: mem.Allocator) void {
+        syscall.close(self.wake_event_fd);
         self.inner.deinit();
         self.jobs.deinit();
         allocator.free(self.wake_event_buffer);
@@ -164,7 +230,7 @@ pub const AsyncIoUring = struct {
         allocator.destroy(self.inner);
     }
 
-    fn deinit(runner: *anyopaque, allocator: std.mem.Allocator) void {
+    fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         uring.inner_deinit(allocator);
     }
@@ -173,7 +239,7 @@ pub const AsyncIoUring = struct {
         runner: *anyopaque,
         task: usize,
         job: AsyncSubmission,
-    ) !void {
+    ) Errors.QueueJob!void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         (switch (job) {
             .timer => |inner| queue_timer(uring, task, inner),
@@ -188,13 +254,16 @@ pub const AsyncIoUring = struct {
             .connect => |inner| queue_connect(uring, task, inner.socket, inner.addr, inner.kind),
             .recv => |inner| queue_recv(uring, task, inner.socket, inner.buffer),
             .send => |inner| queue_send(uring, task, inner.socket, inner.buffer),
-        }) catch |e| if (e == error.SubmissionQueueFull) {
-            try submit(runner);
-            try queue_job(runner, task, job);
-        } else return e;
+        }) catch |e| switch (e) {
+            error.SubmissionQueueFull => {
+                try submit(runner);
+                try queue_job(runner, task, job);
+            },
+            else => |err| return err,
+        };
     }
 
-    fn queue_timer(self: *AsyncIoUring, task: usize, timespec: Timespec) !void {
+    fn queue_timer(self: *AsyncIoUring, task: usize, duration: Io.Duration) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -205,19 +274,20 @@ pub const AsyncIoUring = struct {
             .type = .{ .timer = .none },
         };
 
-        const timespec_ptr = try self.allocator.create(std.os.linux.kernel_timespec);
+        // TODO: make copierble types none pointers
+        const timespec_ptr = try self.allocator.create(linux.kernel_timespec);
         errdefer self.allocator.destroy(timespec_ptr);
 
-        timespec_ptr.* = std.os.linux.kernel_timespec{
-            .sec = @intCast(timespec.seconds),
-            .nsec = @intCast(timespec.nanos),
+        timespec_ptr.* = .{
+            .sec = @intCast(@divFloor(duration.nanoseconds, std.time.ns_per_s)),
+            .nsec = @intCast(@mod(duration.nanoseconds, std.time.ns_per_s)),
         };
         item.timespec = timespec_ptr;
 
         _ = try self.inner.timeout(index, timespec_ptr, 0, 0);
     }
 
-    fn queue_open(self: *AsyncIoUring, task: usize, path: Path, flags: AsyncOpenFlags) !void {
+    fn queue_open(self: *AsyncIoUring, task: usize, path: Path, flags: AsyncOpenFlags) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -234,8 +304,8 @@ pub const AsyncIoUring = struct {
             .task = task,
         };
 
-        const o_flags: std.os.linux.O = blk: {
-            var o: std.os.linux.O = .{};
+        const o_flags: linux.O = blk: {
+            var o: linux.O = .{};
 
             switch (flags.mode) {
                 .read => o.ACCMODE = .RDONLY,
@@ -267,7 +337,7 @@ pub const AsyncIoUring = struct {
             ),
             .abs => |inner| _ = try self.inner.openat(
                 index,
-                std.posix.AT.FDCWD,
+                posix.AT.FDCWD,
                 inner.ptr,
                 o_flags,
                 @intCast(perms),
@@ -275,42 +345,64 @@ pub const AsyncIoUring = struct {
         }
     }
 
-    fn queue_delete(self: *AsyncIoUring, task: usize, path: Path, is_dir: bool) !void {
+    fn queue_delete(self: *AsyncIoUring, task: usize, path: Path, is_dir: bool) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
-        item.job = .{ .index = index, .type = .{ .delete = .{ .path = path, .is_dir = is_dir } }, .task = task };
+        item.job = .{
+            .index = index,
+            .type = .{
+                .delete = .{
+                    .path = path,
+                    .is_dir = is_dir,
+                },
+            },
+            .task = task,
+        };
 
-        const mode: u32 = if (is_dir) std.posix.AT.REMOVEDIR else 0;
+        const mode: u32 = if (is_dir) posix.AT.REMOVEDIR else 0;
 
         switch (path) {
             .rel => |inner| _ = try self.inner.unlinkat(index, inner.dir, inner.path.ptr, mode),
-            .abs => |inner| _ = try self.inner.unlinkat(index, std.posix.AT.FDCWD, inner.ptr, mode),
+            .abs => |inner| _ = try self.inner.unlinkat(index, posix.AT.FDCWD, inner.ptr, mode),
         }
     }
 
-    fn queue_mkdir(self: *AsyncIoUring, task: usize, path: Path, mode: isize) !void {
+    fn queue_mkdir(self: *AsyncIoUring, task: usize, path: Path, mode: isize) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
-        item.job = .{ .index = index, .type = .{ .mkdir = .{ .path = path, .mode = mode } }, .task = task };
+        item.job = .{
+            .index = index,
+            .type = .{
+                .mkdir = .{
+                    .path = path,
+                    .mode = mode,
+                },
+            },
+            .task = task,
+        };
 
         switch (path) {
             .rel => |inner| _ = try self.inner.mkdirat(index, inner.dir, inner.path.ptr, @intCast(mode)),
-            .abs => |inner| _ = try self.inner.mkdirat(index, std.posix.AT.FDCWD, inner.ptr, @intCast(mode)),
+            .abs => |inner| _ = try self.inner.mkdirat(index, posix.AT.FDCWD, inner.ptr, @intCast(mode)),
         }
     }
 
-    fn queue_stat(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t) !void {
+    fn queue_stat(self: *AsyncIoUring, task: usize, fd: posix.fd_t) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
-        item.job = .{ .index = index, .type = .{ .stat = fd }, .task = task };
+        item.job = .{
+            .index = index,
+            .type = .{ .stat = fd },
+            .task = task,
+        };
 
-        const statx_ptr = try self.allocator.create(std.os.linux.Statx);
+        const statx_ptr = try self.allocator.create(linux.Statx);
         errdefer self.allocator.destroy(statx_ptr);
         item.statx = statx_ptr;
 
@@ -318,13 +410,13 @@ pub const AsyncIoUring = struct {
             index,
             fd,
             "",
-            std.os.linux.AT.EMPTY_PATH,
-            std.os.linux.STATX_BASIC_STATS,
+            linux.AT.EMPTY_PATH,
+            linux.STATX.BASIC_STATS,
             statx_ptr,
         );
     }
 
-    fn queue_read(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t, buffer: []u8, offset: ?usize) !void {
+    fn queue_read(self: *AsyncIoUring, task: usize, fd: posix.fd_t, buffer: []u8, offset: ?usize) Error!void {
         // If we don't have an offset, set it as -1.
         const real_offset: usize = if (offset) |o| o else @bitCast(@as(isize, -1));
 
@@ -346,11 +438,11 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.read(index, fd, .{ .buffer = buffer }, real_offset);
     }
 
-    fn queue_write(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t, buffer: []const u8, offset: ?usize) !void {
+    fn queue_write(self: *AsyncIoUring, task: usize, fd: posix.fd_t, buffer: []const u8, offset: ?usize) Error!void {
         // If we don't have an offset, set it as -1.
         const real_offset: usize = if (offset) |o| o else @bitCast(@as(isize, -1));
 
-        const index = try self.jobs.borrow_hint(task);
+        const index = self.jobs.borrow_hint(task) catch @panic("OOM");
         errdefer self.jobs.release(index);
         const item = self.jobs.get_ptr(index);
         item.job = .{
@@ -368,18 +460,22 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.write(index, fd, buffer, real_offset);
     }
 
-    fn queue_close(self: *AsyncIoUring, task: usize, fd: std.posix.fd_t) !void {
-        const index = try self.jobs.borrow_hint(task);
+    fn queue_close(self: *AsyncIoUring, task: usize, fd: posix.fd_t) Error!void {
+        const index = self.jobs.borrow_hint(task) catch @panic("OOM");
         errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
-        item.job = .{ .index = index, .type = .{ .close = fd }, .task = task };
+        item.job = .{
+            .index = index,
+            .type = .{ .close = fd },
+            .task = task,
+        };
 
         _ = try self.inner.close(index, fd);
     }
 
-    fn queue_accept(self: *AsyncIoUring, task: usize, socket: std.posix.socket_t, kind: Socket.Kind) !void {
-        const index = try self.jobs.borrow_hint(task);
+    fn queue_accept(self: *AsyncIoUring, task: usize, socket: posix.socket_t, kind: Socket.Kind) Error!void {
+        const index = self.jobs.borrow_hint(task) catch @panic("OOM");
         errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
@@ -389,18 +485,18 @@ pub const AsyncIoUring = struct {
                 .accept = .{
                     .socket = socket,
                     .kind = kind,
-                    .addr = undefined,
-                    .addr_len = @sizeOf(std.net.Address),
+                    .addr = .wildcard,
                 },
             },
             .task = task,
         };
+        var sockaddr, var socklen = item.job.type.accept.addr.toPosix();
 
         _ = try self.inner.accept(
             index,
             socket,
-            &item.job.type.accept.addr.any,
-            @ptrCast(&item.job.type.accept.addr_len),
+            &sockaddr,
+            &socklen,
             0,
         );
     }
@@ -408,12 +504,13 @@ pub const AsyncIoUring = struct {
     fn queue_connect(
         self: *AsyncIoUring,
         task: usize,
-        socket: std.posix.socket_t,
-        addr: std.net.Address,
+        socket: posix.socket_t,
+        addr: Socket.Address,
         kind: Socket.Kind,
-    ) !void {
-        const index = try self.jobs.borrow_hint(task);
+    ) Error!void {
+        const index = self.jobs.borrow_hint(task) catch @panic("OOM");
         errdefer self.jobs.release(index);
+
         const item = self.jobs.get_ptr(index);
         item.job = .{
             .index = index,
@@ -426,22 +523,23 @@ pub const AsyncIoUring = struct {
             },
             .task = task,
         };
+        const sockaddr, const socklen = item.job.type.connect.addr.toPosix();
 
         _ = try self.inner.connect(
             index,
             socket,
-            &item.job.type.connect.addr.any,
-            addr.getOsSockLen(),
+            &sockaddr,
+            socklen,
         );
     }
 
     fn queue_recv(
         self: *AsyncIoUring,
         task: usize,
-        socket: std.posix.socket_t,
+        socket: posix.socket_t,
         buffer: []u8,
-    ) !void {
-        const index = try self.jobs.borrow_hint(task);
+    ) Error!void {
+        const index = self.jobs.borrow_hint(task) catch @panic("OOM");
         errdefer self.jobs.release(index);
         const item = self.jobs.get_ptr(index);
         item.job = .{
@@ -458,7 +556,7 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.recv(index, socket, .{ .buffer = buffer }, 0);
     }
 
-    fn queue_send(self: *AsyncIoUring, task: usize, socket: std.posix.socket_t, buffer: []const u8) !void {
+    fn queue_send(self: *AsyncIoUring, task: usize, socket: posix.socket_t, buffer: []const u8) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -477,7 +575,7 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.send(index, socket, buffer, 0);
     }
 
-    inline fn queue_wake(self: *AsyncIoUring) !void {
+    inline fn queue_wake(self: *AsyncIoUring) Error!void {
         if (self.wake_event_fd == Cross.fd.INVALID_FD) return;
 
         const index = try self.jobs.borrow();
@@ -498,25 +596,25 @@ pub const AsyncIoUring = struct {
         );
     }
 
-    fn wake(runner: *anyopaque) !void {
+    fn wake(runner: *anyopaque) Errors.Wake!void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         const bytes: []const u8 = "00000000";
         var i: usize = 0;
-        while (i < bytes.len) i += try std.posix.write(uring.wake_event_fd, bytes);
+        while (i < bytes.len) i += try syscall.write(uring.wake_event_fd, bytes);
     }
 
-    fn submit(runner: *anyopaque) !void {
+    fn submit(runner: *anyopaque) Errors.Submit!void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
 
         _ = while (true) {
             break uring.inner.submit() catch |e| switch (e) {
                 error.SignalInterrupt => continue,
-                else => return e,
+                else => |err| return err,
             };
         };
     }
 
-    fn reap(runner: *anyopaque, completions: []Completion, wait: bool) ![]Completion {
+    fn reap(runner: *anyopaque, completions: []Completion, wait: bool) Errors.Reap![]Completion {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         // either wait for atleast 1 or just take whats there.
         const uring_nr: u32 = if (wait) 1 else 0;
@@ -525,7 +623,7 @@ pub const AsyncIoUring = struct {
             break uring.inner.copy_cqes(uring.cqes[0..], uring_nr) catch |e| {
                 switch (e) {
                     error.SignalInterrupt => continue,
-                    else => return e,
+                    else => |err| return err,
                 }
             };
         };
@@ -539,7 +637,7 @@ pub const AsyncIoUring = struct {
                 if (cqe.res < 0) {
                     log.debug("{d} - other status on SQE: {t}", .{
                         job.index,
-                        @as(LinuxError, @enumFromInt(-cqe.res)),
+                        @as(linux.E, @enumFromInt(-cqe.res)),
                     });
                 }
                 switch (job.type) {
@@ -556,52 +654,54 @@ pub const AsyncIoUring = struct {
                         if (cqe.res >= 0) switch (inner.kind) {
                             .tcp, .unix => break :blk .{
                                 .accept = .{
-                                    .actual = .{ .handle = cqe.res, .addr = inner.addr, .kind = inner.kind },
+                                    .actual = .{
+                                        .handle = cqe.res,
+                                        .addr = inner.addr,
+                                        .kind = inner.kind,
+                                    },
                                 },
                             },
                             .udp => unreachable,
                         };
 
                         const result: AcceptResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.AGAIN => .{ .err = AcceptError.WouldBlock },
-                                LinuxError.BADF => .{ .err = AcceptError.InvalidFd },
-                                LinuxError.CONNABORTED => .{ .err = AcceptError.ConnectionAborted },
-                                LinuxError.FAULT => .{ .err = AcceptError.InvalidAddress },
-                                LinuxError.INVAL => .{ .err = AcceptError.NotListening },
-                                LinuxError.MFILE => .{ .err = AcceptError.ProcessFdQuotaExceeded },
-                                LinuxError.NFILE => .{ .err = AcceptError.SystemFdQuotaExceeded },
-                                LinuxError.NOBUFS, LinuxError.NOMEM => .{ .err = AcceptError.OutOfMemory },
-                                LinuxError.NOTSOCK => .{ .err = AcceptError.NotASocket },
-                                LinuxError.OPNOTSUPP => .{ .err = AcceptError.OperationNotSupported },
+                                .AGAIN => .{ .err = AcceptError.WouldBlock },
+                                .BADF => .{ .err = AcceptError.InvalidFd },
+                                .CONNABORTED => .{ .err = AcceptError.ConnectionAborted },
+                                .FAULT => .{ .err = AcceptError.InvalidAddress },
+                                .INVAL => .{ .err = AcceptError.NotListening },
+                                .MFILE => .{ .err = AcceptError.ProcessFdQuotaExceeded },
+                                .NFILE => .{ .err = AcceptError.SystemFdQuotaExceeded },
+                                .NOBUFS, .NOMEM => .{ .err = AcceptError.OutOfMemory },
                                 else => .{ .err = AcceptError.Unexpected },
                             };
                         };
 
                         break :blk .{ .accept = result };
                     },
-                    .connect => |_| {
+                    .connect => {
                         if (cqe.res >= 0) break :blk .{ .connect = .actual };
 
                         const result: ConnectResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.ACCES, LinuxError.PERM => .{ .err = ConnectError.AccessDenied },
-                                LinuxError.ADDRINUSE => .{ .err = ConnectError.AddressInUse },
-                                LinuxError.ADDRNOTAVAIL => .{ .err = ConnectError.AddressNotAvailable },
-                                LinuxError.AFNOSUPPORT => .{ .err = ConnectError.AddressFamilyNotSupported },
-                                LinuxError.AGAIN, LinuxError.ALREADY, LinuxError.INPROGRESS => .{
+                                .ACCES, .PERM => .{ .err = ConnectError.AccessDenied },
+                                .ADDRINUSE => .{ .err = ConnectError.AddressInUse },
+                                .ADDRNOTAVAIL => .{ .err = ConnectError.AddressNotAvailable },
+                                .AFNOSUPPORT => .{ .err = ConnectError.AddressFamilyNotSupported },
+                                .AGAIN, .ALREADY, .INPROGRESS => .{
                                     .err = ConnectError.WouldBlock,
                                 },
-                                LinuxError.BADF => .{ .err = ConnectError.InvalidFd },
-                                LinuxError.CONNREFUSED => .{ .err = ConnectError.ConnectionRefused },
-                                LinuxError.FAULT => .{ .err = ConnectError.InvalidAddress },
-                                LinuxError.ISCONN => .{ .err = ConnectError.AlreadyConnected },
-                                LinuxError.NETUNREACH => .{ .err = ConnectError.NetworkUnreachable },
-                                LinuxError.NOTSOCK => .{ .err = ConnectError.NotASocket },
-                                LinuxError.PROTOTYPE => .{ .err = ConnectError.ProtocolFamilyNotSupported },
-                                LinuxError.TIMEDOUT => .{ .err = ConnectError.TimedOut },
+                                .BADF => .{ .err = ConnectError.InvalidFd },
+                                .CONNREFUSED => .{ .err = ConnectError.ConnectionRefused },
+                                .FAULT => .{ .err = ConnectError.InvalidAddress },
+                                .ISCONN => .{ .err = ConnectError.AlreadyConnected },
+                                .NETUNREACH => .{ .err = ConnectError.NetworkUnreachable },
+                                .NOTSOCK => .{ .err = ConnectError.NotASocket },
+                                .PROTOTYPE => .{ .err = ConnectError.ProtocolFamilyNotSupported },
+                                .TIMEDOUT => .{ .err = ConnectError.TimedOut },
                                 else => .{ .err = ConnectError.Unexpected },
                             };
                         };
@@ -613,17 +713,14 @@ pub const AsyncIoUring = struct {
                         if (cqe.res == 0) break :blk .{ .recv = .{ .err = RecvError.Closed } };
 
                         const result: RecvResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.AGAIN => .{ .err = RecvError.WouldBlock },
-                                LinuxError.BADF => .{ .err = RecvError.InvalidFd },
-                                LinuxError.CONNRESET => .{ .err = RecvError.Closed },
-                                LinuxError.CONNREFUSED => .{ .err = RecvError.ConnectionRefused },
-                                LinuxError.FAULT => .{ .err = RecvError.InvalidAddress },
-                                LinuxError.INVAL => .{ .err = RecvError.InvalidArguments },
-                                LinuxError.NOMEM => .{ .err = RecvError.OutOfMemory },
-                                LinuxError.NOTCONN => .{ .err = RecvError.NotConnected },
-                                LinuxError.NOTSOCK => .{ .err = RecvError.NotASocket },
+                                .NOTSOCK, .INVAL, .FAULT, .BADF => unreachable,
+                                .AGAIN => .{ .err = RecvError.WouldBlock },
+                                .CONNRESET => .{ .err = RecvError.Closed },
+                                .CONNREFUSED => .{ .err = RecvError.ConnectionRefused },
+                                .NOMEM => .{ .err = RecvError.SystemResources },
+                                .NOTCONN => .{ .err = RecvError.SocketNotConnected },
                                 else => .{ .err = RecvError.Unexpected },
                             };
                         };
@@ -634,21 +731,26 @@ pub const AsyncIoUring = struct {
                         if (cqe.res >= 0) break :blk .{ .send = .{ .actual = @intCast(cqe.res) } };
 
                         const result: SendResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.ACCES => .{ .err = SendError.AccessDenied },
-                                LinuxError.AGAIN => .{ .err = SendError.WouldBlock },
-                                LinuxError.ALREADY => .{ .err = SendError.OpenInProgress },
-                                LinuxError.BADF => .{ .err = SendError.InvalidFd },
-                                LinuxError.CONNRESET, LinuxError.PIPE => .{ .err = SendError.Closed },
-                                LinuxError.DESTADDRREQ => .{ .err = SendError.NoDestinationAddress },
-                                LinuxError.FAULT => .{ .err = SendError.InvalidAddress },
-                                LinuxError.INVAL => .{ .err = SendError.InvalidArguments },
-                                LinuxError.ISCONN => .{ .err = SendError.AlreadyConnected },
-                                LinuxError.MSGSIZE => .{ .err = SendError.InvalidSize },
-                                LinuxError.NOBUFS, LinuxError.NOMEM => .{ .err = SendError.OutOfMemory },
-                                LinuxError.NOTCONN => .{ .err = SendError.NotConnected },
-                                LinuxError.OPNOTSUPP => .{ .err = SendError.OperationNotSupported },
+                                .OPNOTSUPP,
+                                .FAULT,
+                                .NOTCONN,
+                                .ISCONN,
+                                .INVAL,
+                                .DESTADDRREQ,
+                                .BADF,
+                                => unreachable,
+                                .ACCES => .{ .err = SendError.AccessDenied },
+                                .AGAIN => .{ .err = SendError.WouldBlock },
+                                .ALREADY => .{ .err = SendError.FastOpenAlreadyInProgress },
+                                .CONNRESET, .PIPE => .{ .err = SendError.Closed },
+                                .MSGSIZE => .{ .err = SendError.MessageOversize },
+                                .NOBUFS,
+                                .NOMEM,
+                                => .{
+                                    .err = SendError.SystemResources,
+                                },
                                 else => .{ .err = SendError.Unexpected },
                             };
                         };
@@ -659,16 +761,16 @@ pub const AsyncIoUring = struct {
                         if (cqe.res == 0) break :blk .{ .mkdir = .{ .actual = {} } };
 
                         const result: MkdirResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.ACCES => .{ .err = MkdirError.AccessDenied },
-                                LinuxError.EXIST => .{ .err = MkdirError.AlreadyExists },
-                                LinuxError.LOOP, LinuxError.MLINK => .{ .err = MkdirError.Loop },
-                                LinuxError.NAMETOOLONG => .{ .err = MkdirError.NameTooLong },
-                                LinuxError.NOENT => .{ .err = MkdirError.NotFound },
-                                LinuxError.NOSPC => .{ .err = MkdirError.NoSpace },
-                                LinuxError.NOTDIR => .{ .err = MkdirError.NotADirectory },
-                                LinuxError.ROFS => .{ .err = MkdirError.ReadOnlyFileSystem },
+                                .ACCES => .{ .err = MkdirError.AccessDenied },
+                                .EXIST => .{ .err = MkdirError.AlreadyExists },
+                                .LOOP, .MLINK => .{ .err = MkdirError.Loop },
+                                .NAMETOOLONG => .{ .err = MkdirError.NameTooLong },
+                                .NOENT => .{ .err = MkdirError.NotFound },
+                                .NOSPC => .{ .err = MkdirError.NoSpace },
+                                .NOTDIR => .{ .err = MkdirError.NotADirectory },
+                                .ROFS => .{ .err = MkdirError.ReadOnlyFileSystem },
                                 else => .{ .err = MkdirError.Unexpected },
                             };
                         };
@@ -686,30 +788,30 @@ pub const AsyncIoUring = struct {
                         };
 
                         const result: InnerOpenResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.ACCES, LinuxError.PERM => .{ .err = OpenError.AccessDenied },
-                                LinuxError.BADF => .{ .err = OpenError.InvalidFd },
-                                LinuxError.BUSY => .{ .err = OpenError.Busy },
-                                LinuxError.DQUOT => .{ .err = OpenError.DiskQuotaExceeded },
-                                LinuxError.EXIST => .{ .err = OpenError.AlreadyExists },
-                                LinuxError.FAULT => .{ .err = OpenError.InvalidAddress },
-                                LinuxError.FBIG, LinuxError.OVERFLOW => .{ .err = OpenError.FileTooBig },
-                                LinuxError.INVAL => .{ .err = OpenError.InvalidArguments },
-                                LinuxError.ISDIR => .{ .err = OpenError.IsDirectory },
-                                LinuxError.LOOP => .{ .err = OpenError.Loop },
-                                LinuxError.MFILE => .{ .err = OpenError.ProcessFdQuotaExceeded },
-                                LinuxError.NAMETOOLONG => .{ .err = OpenError.NameTooLong },
-                                LinuxError.NFILE => .{ .err = OpenError.SystemFdQuotaExceeded },
-                                LinuxError.NODEV, LinuxError.NXIO => .{ .err = OpenError.DeviceNotFound },
-                                LinuxError.NOENT => .{ .err = OpenError.NotFound },
-                                LinuxError.NOMEM => .{ .err = OpenError.OutOfMemory },
-                                LinuxError.NOSPC => .{ .err = OpenError.NoSpace },
-                                LinuxError.NOTDIR => .{ .err = OpenError.NotADirectory },
-                                LinuxError.OPNOTSUPP => .{ .err = OpenError.OperationNotSupported },
-                                LinuxError.ROFS => .{ .err = OpenError.ReadOnlyFileSystem },
-                                LinuxError.TXTBSY => .{ .err = OpenError.FileLocked },
-                                LinuxError.AGAIN => .{ .err = OpenError.WouldBlock },
+                                .ACCES, .PERM => .{ .err = OpenError.AccessDenied },
+                                .BADF => .{ .err = OpenError.InvalidFd },
+                                .BUSY => .{ .err = OpenError.Busy },
+                                .DQUOT => .{ .err = OpenError.DiskQuotaExceeded },
+                                .EXIST => .{ .err = OpenError.AlreadyExists },
+                                .FAULT => .{ .err = OpenError.InvalidAddress },
+                                .FBIG, .OVERFLOW => .{ .err = OpenError.FileTooBig },
+                                .INVAL => .{ .err = OpenError.InvalidArguments },
+                                .ISDIR => .{ .err = OpenError.IsDirectory },
+                                .LOOP => .{ .err = OpenError.Loop },
+                                .MFILE => .{ .err = OpenError.ProcessFdQuotaExceeded },
+                                .NAMETOOLONG => .{ .err = OpenError.NameTooLong },
+                                .NFILE => .{ .err = OpenError.SystemFdQuotaExceeded },
+                                .NODEV, .NXIO => .{ .err = OpenError.DeviceNotFound },
+                                .NOENT => .{ .err = OpenError.NotFound },
+                                .NOMEM => .{ .err = OpenError.OutOfMemory },
+                                .NOSPC => .{ .err = OpenError.NoSpace },
+                                .NOTDIR => .{ .err = OpenError.NotADirectory },
+                                .OPNOTSUPP => .{ .err = OpenError.OperationNotSupported },
+                                .ROFS => .{ .err = OpenError.ReadOnlyFileSystem },
+                                .TXTBSY => .{ .err = OpenError.FileLocked },
+                                .AGAIN => .{ .err = OpenError.WouldBlock },
                                 else => .{ .err = OpenError.Unexpected },
                             };
                         };
@@ -720,24 +822,24 @@ pub const AsyncIoUring = struct {
                         if (cqe.res == 0) break :blk .{ .delete = .{ .actual = {} } };
 
                         const result: DeleteResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
                                 // unlink
-                                LinuxError.ACCES => .{ .err = DeleteError.AccessDenied },
-                                LinuxError.BUSY => .{ .err = DeleteError.Busy },
-                                LinuxError.FAULT => .{ .err = DeleteError.InvalidAddress },
-                                LinuxError.IO => .{ .err = DeleteError.IoError },
-                                LinuxError.ISDIR, LinuxError.PERM => .{ .err = DeleteError.IsDirectory },
-                                LinuxError.LOOP => .{ .err = DeleteError.Loop },
-                                LinuxError.NAMETOOLONG => .{ .err = DeleteError.NameTooLong },
-                                LinuxError.NOENT => .{ .err = DeleteError.NotFound },
-                                LinuxError.NOMEM => .{ .err = DeleteError.OutOfMemory },
-                                LinuxError.NOTDIR => .{ .err = DeleteError.IsNotDirectory },
-                                LinuxError.ROFS => .{ .err = DeleteError.ReadOnlyFileSystem },
-                                LinuxError.BADF => .{ .err = DeleteError.InvalidFd },
+                                .ACCES => .{ .err = DeleteError.AccessDenied },
+                                .BUSY => .{ .err = DeleteError.Busy },
+                                .FAULT => .{ .err = DeleteError.InvalidAddress },
+                                .IO => .{ .err = DeleteError.IoError },
+                                .ISDIR, .PERM => .{ .err = DeleteError.IsDirectory },
+                                .LOOP => .{ .err = DeleteError.Loop },
+                                .NAMETOOLONG => .{ .err = DeleteError.NameTooLong },
+                                .NOENT => .{ .err = DeleteError.NotFound },
+                                .NOMEM => .{ .err = DeleteError.OutOfMemory },
+                                .NOTDIR => .{ .err = DeleteError.IsNotDirectory },
+                                .ROFS => .{ .err = DeleteError.ReadOnlyFileSystem },
+                                .BADF => .{ .err = DeleteError.InvalidFd },
                                 // rmdir
-                                LinuxError.INVAL => .{ .err = DeleteError.InvalidArguments },
-                                LinuxError.NOTEMPTY => .{ .err = DeleteError.NotEmpty },
+                                .INVAL => .{ .err = DeleteError.InvalidArguments },
+                                .NOTEMPTY => .{ .err = DeleteError.NotEmpty },
                                 else => .{ .err = DeleteError.Unexpected },
                             };
                         };
@@ -749,14 +851,14 @@ pub const AsyncIoUring = struct {
                         if (cqe.res == 0) break :blk .{ .read = .{ .err = ReadError.EndOfFile } };
 
                         const result: ReadResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.AGAIN => .{ .err = ReadError.WouldBlock },
-                                LinuxError.BADF => .{ .err = ReadError.InvalidFd },
-                                LinuxError.FAULT => .{ .err = ReadError.InvalidAddress },
-                                LinuxError.INVAL => .{ .err = ReadError.InvalidArguments },
-                                LinuxError.IO => .{ .err = ReadError.IoError },
-                                LinuxError.ISDIR => .{ .err = ReadError.IsDirectory },
+                                .AGAIN => .{ .err = ReadError.WouldBlock },
+                                .BADF => .{ .err = ReadError.InvalidFd },
+                                .FAULT => .{ .err = ReadError.InvalidAddress },
+                                .INVAL => .{ .err = ReadError.InvalidArguments },
+                                .IO => .{ .err = ReadError.IoError },
+                                .ISDIR => .{ .err = ReadError.IsDirectory },
                                 else => .{ .err = ReadError.Unexpected },
                             };
                         };
@@ -767,19 +869,19 @@ pub const AsyncIoUring = struct {
                         if (cqe.res > 0) break :blk .{ .write = .{ .actual = @intCast(cqe.res) } };
 
                         const result: WriteResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.AGAIN => .{ .err = WriteError.WouldBlock },
-                                LinuxError.BADF => .{ .err = WriteError.InvalidFd },
-                                LinuxError.DESTADDRREQ => .{ .err = WriteError.NoDestinationAddress },
-                                LinuxError.DQUOT => .{ .err = WriteError.DiskQuotaExceeded },
-                                LinuxError.FAULT => .{ .err = WriteError.InvalidAddress },
-                                LinuxError.FBIG => .{ .err = WriteError.FileTooBig },
-                                LinuxError.INVAL => .{ .err = WriteError.InvalidArguments },
-                                LinuxError.IO => .{ .err = WriteError.IoError },
-                                LinuxError.NOSPC => .{ .err = WriteError.NoSpace },
-                                LinuxError.PERM => .{ .err = WriteError.AccessDenied },
-                                LinuxError.PIPE => .{ .err = WriteError.BrokenPipe },
+                                .INVAL => unreachable,
+                                .AGAIN => .{ .err = WriteError.WouldBlock },
+                                .BADF => .{ .err = WriteError.InvalidFd },
+                                .DESTADDRREQ => .{ .err = WriteError.NoDestinationAddress },
+                                .DQUOT => .{ .err = WriteError.DiskQuotaExceeded },
+                                .FAULT => .{ .err = WriteError.InvalidAddress },
+                                .FBIG => .{ .err = WriteError.FileTooBig },
+                                .IO => .{ .err = WriteError.IoError },
+                                .NOSPC => .{ .err = WriteError.NoSpace },
+                                .PERM => .{ .err = WriteError.AccessDenied },
+                                .PIPE => .{ .err = WriteError.BrokenPipe },
                                 else => .{ .err = WriteError.Unexpected },
                             };
                         };
@@ -792,36 +894,33 @@ pub const AsyncIoUring = struct {
                         if (cqe.res == 0) {
                             const statx = job_with_data.statx;
                             const stat: Stat = .{
-                                .size = @intCast(statx.size),
-                                .mode = @intCast(statx.mode),
+                                .size = statx.size,
+                                .mode = statx.mode,
                                 .accessed = .{
-                                    .seconds = @intCast(statx.atime.sec),
-                                    .nanos = @intCast(statx.atime.nsec),
+                                    .nanoseconds = (statx.atime.sec * std.time.ns_per_s) + statx.atime.nsec,
                                 },
                                 .modified = .{
-                                    .seconds = @intCast(statx.mtime.sec),
-                                    .nanos = @intCast(statx.mtime.nsec),
+                                    .nanoseconds = (statx.mtime.sec * std.time.ns_per_s) + statx.mtime.nsec,
                                 },
                                 .changed = .{
-                                    .seconds = @intCast(statx.ctime.sec),
-                                    .nanos = @intCast(statx.ctime.nsec),
+                                    .nanoseconds = (statx.ctime.sec * std.time.ns_per_s) + statx.ctime.nsec,
                                 },
                             };
                             break :blk .{ .stat = .{ .actual = stat } };
                         }
 
                         const result: StatResult = result: {
-                            const e: LinuxError = @enumFromInt(-cqe.res);
+                            const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
-                                LinuxError.ACCES => .{ .err = StatError.AccessDenied },
-                                LinuxError.BADF => .{ .err = StatError.InvalidFd },
-                                LinuxError.FAULT => .{ .err = StatError.InvalidAddress },
-                                LinuxError.INVAL => .{ .err = StatError.InvalidArguments },
-                                LinuxError.LOOP => .{ .err = StatError.Loop },
-                                LinuxError.NAMETOOLONG => .{ .err = StatError.NameTooLong },
-                                LinuxError.NOENT => .{ .err = StatError.NotFound },
-                                LinuxError.NOMEM => .{ .err = StatError.OutOfMemory },
-                                LinuxError.NOTDIR => .{ .err = StatError.NotADirectory },
+                                .ACCES => .{ .err = StatError.AccessDenied },
+                                .BADF => .{ .err = StatError.InvalidFd },
+                                .FAULT => .{ .err = StatError.InvalidAddress },
+                                .INVAL => .{ .err = StatError.InvalidArguments },
+                                .LOOP => .{ .err = StatError.Loop },
+                                .NAMETOOLONG => .{ .err = StatError.NameTooLong },
+                                .NOENT => .{ .err = StatError.NotFound },
+                                .NOMEM => .{ .err = StatError.OutOfMemory },
+                                .NOTDIR => .{ .err = StatError.NotADirectory },
                                 else => .{ .err = StatError.Unexpected },
                             };
                         };
@@ -831,7 +930,7 @@ pub const AsyncIoUring = struct {
                 }
             };
 
-            completions[i] = Completion{
+            completions[i] = .{
                 .result = result,
                 .task = job.task,
             };
@@ -841,9 +940,9 @@ pub const AsyncIoUring = struct {
     }
 
     pub fn to_async(self: *AsyncIoUring) Async {
-        return Async{
+        return .{
             .runner = self,
-            .features = AsyncFeatures.all(),
+            .features = .all(),
             .vtable = .{
                 .queue_job = queue_job,
                 .deinit = deinit,

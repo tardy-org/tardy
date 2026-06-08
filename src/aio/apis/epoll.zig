@@ -1,13 +1,18 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const LinuxError = std.os.linux.E;
+const posix = std.posix;
+const mem = std.mem;
+const Io = std.Io;
+const linux = std.os.linux;
+const syscall = @import("syscall.zig");
 
+const pool = @import("../../core/pool.zig");
 const Pool = @import("../../core/pool.zig").Pool;
 const Queue = @import("../../core/queue.zig").Queue;
+const File = @import("../../fs/file.zig").File;
 const Cross = @import("../../cross/lib.zig");
 const Stat = @import("../../fs/lib.zig").Stat;
 const Path = @import("../../fs/lib.zig").Path;
-const Timespec = @import("../../lib.zig").Timespec;
 const Socket = @import("../../net/lib.zig").Socket;
 const Completion = @import("../completion.zig").Completion;
 const Result = @import("../completion.zig").Result;
@@ -27,23 +32,33 @@ const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 
 const log = std.log.scoped(.@"tardy/aio/epoll");
 
+pub const Errors = struct {
+    pub const Timer = syscall.TimerFdCreateError || syscall.TimerFdSetError || Error;
+    pub const Send = Error;
+    pub const Recv = Error;
+    pub const Accept = Error;
+    pub const Connect = syscall.ConnectError || Error;
+    pub const QueueJob = Timer || Send || Recv || Accept || Connect;
+};
+pub const Error = syscall.EpollCtlError || pool.Error;
+
 pub const AsyncEpoll = struct {
-    epoll_fd: std.posix.fd_t,
-    wake_event_fd: std.posix.fd_t,
-    events: []std.os.linux.epoll_event,
+    epoll_fd: posix.fd_t,
+    wake_event_fd: posix.fd_t,
+    events: []linux.epoll_event,
 
     jobs: Pool(Job),
 
-    pub fn init(allocator: std.mem.Allocator, options: AsyncOptions) !AsyncEpoll {
+    pub fn init(allocator: mem.Allocator, options: AsyncOptions) !AsyncEpoll {
         const size = options.size_tasks_initial + 1;
-        const epoll_fd = try std.posix.epoll_create1(0);
+        const epoll_fd = try syscall.epoll_create1(0);
         assert(epoll_fd > -1);
-        errdefer std.posix.close(epoll_fd);
+        errdefer syscall.close(epoll_fd);
 
-        const wake_event_fd: std.posix.fd_t = @intCast(std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC));
-        errdefer std.posix.close(wake_event_fd);
+        const wake_event_fd: posix.fd_t = try syscall.eventfd(0, linux.EFD.CLOEXEC);
+        errdefer syscall.close(wake_event_fd);
 
-        const events = try allocator.alloc(std.os.linux.epoll_event, options.size_aio_reap_max);
+        const events = try allocator.alloc(linux.epoll_event, options.size_aio_reap_max);
         errdefer allocator.free(events);
 
         var jobs: Pool(Job) = try .init(allocator, size, options.pooling);
@@ -58,12 +73,12 @@ pub const AsyncEpoll = struct {
             .task = @bitCast(@as(isize, -1)),
         };
 
-        var event: std.os.linux.epoll_event = .{
-            .events = std.os.linux.EPOLL.IN,
+        var event: linux.epoll_event = .{
+            .events = linux.EPOLL.IN,
             .data = .{ .u64 = index },
         };
 
-        try std.posix.epoll_ctl(epoll_fd, std.os.linux.EPOLL.CTL_ADD, wake_event_fd, &event);
+        try syscall.epoll_ctl(epoll_fd, linux.EPOLL.CTL_ADD, wake_event_fd, &event);
 
         return .{
             .epoll_fd = epoll_fd,
@@ -73,19 +88,19 @@ pub const AsyncEpoll = struct {
         };
     }
 
-    pub fn inner_deinit(self: *AsyncEpoll, allocator: std.mem.Allocator) void {
-        std.posix.close(self.epoll_fd);
+    pub fn inner_deinit(self: *AsyncEpoll, allocator: mem.Allocator) void {
+        syscall.close(self.epoll_fd);
         allocator.free(self.events);
         self.jobs.deinit();
-        std.posix.close(self.wake_event_fd);
+        syscall.close(self.wake_event_fd);
     }
 
-    fn deinit(runner: *anyopaque, allocator: std.mem.Allocator) void {
+    fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
         const epoll: *AsyncEpoll = @ptrCast(@alignCast(runner));
         epoll.inner_deinit(allocator);
     }
 
-    pub fn queue_job(runner: *anyopaque, task: usize, job: AsyncSubmission) !void {
+    pub fn queue_job(runner: *anyopaque, task: usize, job: AsyncSubmission) Errors.QueueJob!void {
         const epoll: *AsyncEpoll = @ptrCast(@alignCast(runner));
 
         try switch (job) {
@@ -98,37 +113,33 @@ pub const AsyncEpoll = struct {
         };
     }
 
-    fn queue_timer(self: *AsyncEpoll, task: usize, timespec: Timespec) !void {
+    fn queue_timer(self: *AsyncEpoll, task: usize, duration: Io.Duration) Errors.Timer!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
         const item = self.jobs.get_ptr(index);
 
-        const timer_fd_usize = std.os.linux.timerfd_create(
-            std.os.linux.TIMERFD_CLOCK.MONOTONIC,
+        const timer_fd = try syscall.timerfd_create(
+            linux.TIMERFD_CLOCK.MONOTONIC,
             .{ .NONBLOCK = true },
         );
-        const timer_fd: i32 = @intCast(timer_fd_usize);
-        const ktimerspec: std.os.linux.itimerspec = .{
+        const ktimerspec: linux.itimerspec = .{
             .it_value = .{
-                .sec = @intCast(timespec.seconds),
-                .nsec = @intCast(timespec.nanos),
+                .sec = @intCast(@divFloor(duration.nanoseconds, std.time.ns_per_s)),
+                .nsec = @intCast(@mod(duration.nanoseconds, std.time.ns_per_s)),
             },
             .it_interval = .{ .sec = 0, .nsec = 0 },
         };
 
-        const rc = std.os.linux.timerfd_settime(timer_fd, .{}, &ktimerspec, null);
-        const e: LinuxError = std.posix.errno(rc);
-        if (e != .SUCCESS) return error.SetTimerFailed;
-
+        try syscall.timerfd_settime(timer_fd, .{}, &ktimerspec, null);
         item.* = .{
             .index = index,
             .type = .{ .timer = .{ .fd = timer_fd } },
             .task = task,
         };
 
-        var event: std.os.linux.epoll_event = .{
-            .events = std.os.linux.EPOLL.IN,
+        var event: linux.epoll_event = .{
+            .events = linux.EPOLL.IN,
             .data = .{ .u64 = index },
         };
 
@@ -138,9 +149,9 @@ pub const AsyncEpoll = struct {
     fn queue_accept(
         self: *AsyncEpoll,
         task: usize,
-        socket: std.posix.socket_t,
+        socket: Socket.Handle,
         kind: Socket.Kind,
-    ) !void {
+    ) Errors.Accept!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -151,15 +162,14 @@ pub const AsyncEpoll = struct {
                 .accept = .{
                     .socket = socket,
                     .kind = kind,
-                    .addr = undefined,
-                    .addr_len = @sizeOf(std.net.Address),
+                    .addr = .wildcard,
                 },
             },
             .task = task,
         };
 
-        var event: std.os.linux.epoll_event = .{
-            .events = std.os.linux.EPOLL.IN,
+        var event: linux.epoll_event = .{
+            .events = linux.EPOLL.IN,
             .data = .{ .u64 = index },
         };
 
@@ -169,10 +179,11 @@ pub const AsyncEpoll = struct {
     fn queue_connect(
         self: *AsyncEpoll,
         task: usize,
-        socket: std.posix.socket_t,
-        addr: std.net.Address,
+        socket: Socket.Handle,
+        // TODO: take *const
+        addr: Socket.Address,
         kind: Socket.Kind,
-    ) !void {
+    ) Errors.Connect!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -189,24 +200,23 @@ pub const AsyncEpoll = struct {
             .task = task,
         };
 
-        std.posix.connect(
+        syscall.connect(
             socket,
-            &addr.any,
-            addr.getOsSockLen(),
+            &addr,
         ) catch |e| switch (e) {
-            std.posix.ConnectError.WouldBlock => {},
-            else => return e,
+            error.WouldBlock => {},
+            else => |err| return err,
         };
 
-        var event: std.os.linux.epoll_event = .{
-            .events = std.os.linux.EPOLL.OUT,
+        var event: linux.epoll_event = .{
+            .events = linux.EPOLL.OUT,
             .data = .{ .u64 = index },
         };
 
         try self.add_or_mod_fd(socket, &event);
     }
 
-    fn queue_recv(self: *AsyncEpoll, task: usize, socket: std.posix.socket_t, buffer: []u8) !void {
+    fn queue_recv(self: *AsyncEpoll, task: usize, socket: Socket.Handle, buffer: []u8) Errors.Recv!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -222,15 +232,15 @@ pub const AsyncEpoll = struct {
             .task = task,
         };
 
-        var event: std.os.linux.epoll_event = .{
-            .events = std.os.linux.EPOLL.IN,
+        var event: linux.epoll_event = .{
+            .events = linux.EPOLL.IN,
             .data = .{ .u64 = index },
         };
 
         try self.add_or_mod_fd(socket, &event);
     }
 
-    fn queue_send(self: *AsyncEpoll, task: usize, socket: std.posix.socket_t, buffer: []const u8) !void {
+    fn queue_send(self: *AsyncEpoll, task: usize, socket: Socket.Handle, buffer: []const u8) Errors.Send!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -246,41 +256,42 @@ pub const AsyncEpoll = struct {
             .task = task,
         };
 
-        var event: std.os.linux.epoll_event = .{
-            .events = std.os.linux.EPOLL.OUT,
+        var event: linux.epoll_event = .{
+            .events = linux.EPOLL.OUT,
             .data = .{ .u64 = index },
         };
 
         try self.add_or_mod_fd(socket, &event);
     }
 
-    fn add_or_mod_fd(self: *AsyncEpoll, fd: std.posix.fd_t, event: *std.os.linux.epoll_event) !void {
-        self.add_fd(fd, event) catch |e| {
-            if (e == error.FileDescriptorAlreadyPresentInSet) {
+    fn add_or_mod_fd(self: *AsyncEpoll, fd: posix.fd_t, event: *linux.epoll_event) syscall.EpollCtlError!void {
+        self.add_fd(fd, event) catch |e| switch (e) {
+            error.FileDescriptorAlreadyPresentInSet => {
                 try self.mod_fd(fd, event);
-            } else return e;
+            },
+            else => |err| return err,
         };
     }
 
-    inline fn add_fd(self: *AsyncEpoll, fd: std.posix.fd_t, event: *std.os.linux.epoll_event) !void {
-        try std.posix.epoll_ctl(self.epoll_fd, std.os.linux.EPOLL.CTL_ADD, fd, event);
+    fn add_fd(self: *AsyncEpoll, fd: posix.fd_t, event: *linux.epoll_event) syscall.EpollCtlError!void {
+        try syscall.epoll_ctl(self.epoll_fd, linux.EPOLL.CTL_ADD, fd, event);
     }
 
-    inline fn mod_fd(self: *AsyncEpoll, fd: std.posix.fd_t, event: *std.os.linux.epoll_event) !void {
-        try std.posix.epoll_ctl(self.epoll_fd, std.os.linux.EPOLL.CTL_MOD, fd, event);
+    fn mod_fd(self: *AsyncEpoll, fd: posix.fd_t, event: *linux.epoll_event) syscall.EpollCtlError!void {
+        try syscall.epoll_ctl(self.epoll_fd, linux.EPOLL.CTL_MOD, fd, event);
     }
 
-    inline fn remove_fd(self: *AsyncEpoll, fd: std.posix.fd_t) !void {
-        try std.posix.epoll_ctl(self.epoll_fd, std.os.linux.EPOLL.CTL_DEL, fd, null);
+    fn remove_fd(self: *AsyncEpoll, fd: posix.fd_t) syscall.EpollCtlError!void {
+        try syscall.epoll_ctl(self.epoll_fd, linux.EPOLL.CTL_DEL, fd, null);
     }
 
-    pub fn wake(runner: *anyopaque) !void {
+    pub fn wake(runner: *anyopaque) syscall.WriteError!void {
         const epoll: *AsyncEpoll = @ptrCast(@alignCast(runner));
 
         const bytes: []const u8 = "00000000";
         var i: usize = 0;
         while (i < bytes.len) {
-            i += try std.posix.write(epoll.wake_event_fd, bytes[i..]);
+            i += try syscall.write(epoll.wake_event_fd, bytes[i..]);
         }
     }
 
@@ -296,7 +307,7 @@ pub const AsyncEpoll = struct {
 
             const timeout: i32 = if (!wait) 0 else -1;
             // Handle all of the epoll I/O
-            const epoll_events = std.posix.epoll_wait(epoll.epoll_fd, epoll.events[0..remaining], timeout);
+            const epoll_events = syscall.epoll_wait(epoll.epoll_fd, epoll.events[0..remaining], timeout);
             for (epoll.events[0..epoll_events]) |event| {
                 const job_index: usize = @intCast(event.data.u64);
                 assert(epoll.jobs.dirty.isSet(job_index));
@@ -314,7 +325,7 @@ pub const AsyncEpoll = struct {
                             var buffer: [8]u8 = undefined;
 
                             // Should NEVER fail.
-                            _ = std.posix.read(epoll.wake_event_fd, buffer[0..]) catch |e| {
+                            _ = syscall.read(epoll.wake_event_fd, buffer[0..]) catch |e| {
                                 log.err("wake failed: {}", .{e});
                                 unreachable;
                             };
@@ -324,11 +335,11 @@ pub const AsyncEpoll = struct {
                         .timer => |inner| {
                             const timer_fd = inner.fd;
                             defer epoll.remove_fd(timer_fd) catch unreachable;
-                            assert(event.events & std.os.linux.EPOLL.IN != 0);
+                            assert(event.events & linux.EPOLL.IN != 0);
 
                             var buffer: [8]u8 = undefined;
                             // Should NEVER fail.
-                            _ = std.posix.read(timer_fd, buffer[0..]) catch |e| {
+                            _ = syscall.read(timer_fd, buffer[0..]) catch |e| {
                                 log.debug("timer failed: {}", .{e});
                                 unreachable;
                             };
@@ -336,17 +347,16 @@ pub const AsyncEpoll = struct {
                             break :blk .none;
                         },
                         .accept => |*inner| {
-                            assert(event.events & std.os.linux.EPOLL.IN != 0);
+                            assert(event.events & linux.EPOLL.IN != 0);
 
                             const result: AcceptResult = result: {
-                                const handle = std.posix.accept(
+                                const handle = syscall.accept(
                                     inner.socket,
-                                    &inner.addr.any,
-                                    @ptrCast(&inner.addr_len),
+                                    &inner.addr,
                                     0,
                                 ) catch |e| {
                                     const err = switch (e) {
-                                        std.posix.AcceptError.WouldBlock => {
+                                        error.WouldBlock => {
                                             job_complete = false;
                                             continue;
                                         },
@@ -365,11 +375,11 @@ pub const AsyncEpoll = struct {
 
                             break :blk .{ .accept = result };
                         },
-                        .connect => |_| {
-                            assert(event.events & std.os.linux.EPOLL.OUT != 0);
+                        .connect => {
+                            assert(event.events & linux.EPOLL.OUT != 0);
 
                             const result: ConnectResult = result: {
-                                if (event.events & std.os.linux.EPOLL.ERR != 0) {
+                                if (event.events & linux.EPOLL.ERR != 0) {
                                     break :result .{ .err = ConnectError.Unexpected };
                                 } else {
                                     break :result .actual;
@@ -379,23 +389,20 @@ pub const AsyncEpoll = struct {
                             break :blk .{ .connect = result };
                         },
                         .recv => |inner| {
-                            assert(event.events & std.os.linux.EPOLL.IN != 0);
+                            assert(event.events & linux.EPOLL.IN != 0);
 
                             const result: RecvResult = result: {
-                                const length = std.posix.recv(
+                                const length = syscall.recv(
                                     inner.socket,
                                     inner.buffer,
                                     0,
                                 ) catch |e| {
                                     const err = switch (e) {
-                                        std.posix.RecvFromError.WouldBlock => {
+                                        error.WouldBlock => {
                                             job_complete = false;
                                             continue;
                                         },
-                                        std.posix.RecvFromError.SystemResources => RecvError.OutOfMemory,
-                                        std.posix.RecvFromError.SocketNotConnected => RecvError.NotConnected,
-                                        std.posix.RecvFromError.ConnectionRefused => RecvError.ConnectionRefused,
-                                        else => RecvError.Unexpected,
+                                        else => |err| err,
                                     };
 
                                     break :result .{ .err = err };
@@ -408,26 +415,20 @@ pub const AsyncEpoll = struct {
                             break :blk .{ .recv = result };
                         },
                         .send => |inner| {
-                            assert(event.events & std.os.linux.EPOLL.OUT != 0);
+                            assert(event.events & linux.EPOLL.OUT != 0);
 
                             const result: SendResult = result: {
-                                const length = std.posix.send(
+                                const length = syscall.send(
                                     inner.socket,
                                     inner.buffer,
                                     0,
                                 ) catch |e| {
                                     const err = switch (e) {
-                                        std.posix.SendError.WouldBlock => {
+                                        error.WouldBlock => {
                                             job_complete = false;
                                             continue;
                                         },
-                                        std.posix.SendError.AccessDenied => SendError.AccessDenied,
-                                        std.posix.SendError.SystemResources => SendError.OutOfMemory,
-                                        std.posix.SendError.ConnectionResetByPeer,
-                                        std.posix.SendError.BrokenPipe,
-                                        => SendError.Closed,
-                                        std.posix.SendError.FastOpenAlreadyInProgress => SendError.OpenInProgress,
-                                        else => SendError.Unexpected,
+                                        else => |err| err,
                                     };
 
                                     break :result .{ .err = err };
@@ -461,7 +462,7 @@ pub const AsyncEpoll = struct {
     }
 
     pub fn to_async(self: *AsyncEpoll) Async {
-        return Async{
+        return .{
             .runner = self,
             .features = .init(&.{
                 .timer,

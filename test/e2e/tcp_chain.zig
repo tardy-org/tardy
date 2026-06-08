@@ -2,12 +2,13 @@ const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
 
-const DeleteResult = @import("tardy").DeleteResult;
-const OpenFileResult = @import("tardy").OpenFileResult;
-const ReadResult = @import("tardy").ReadResult;
-const Runtime = @import("tardy").Runtime;
-const Socket = @import("tardy").Socket;
-const WriteResult = @import("tardy").WriteResult;
+const tardy = @import("tardy");
+const DeleteResult = tardy.DeleteResult;
+const OpenFileResult = tardy.OpenFileResult;
+const ReadResult = tardy.ReadResult;
+const Runtime = tardy.Runtime;
+const Socket = tardy.Socket;
+const WriteResult = tardy.WriteResult;
 
 const log = std.log.scoped(.@"tardy/e2e/tcp_chain");
 pub const TcpServerChain = struct {
@@ -127,7 +128,7 @@ pub const TcpServerChain = struct {
                 .recv => {
                     const length = chain.socket.?.recv(rt, chain.buffer) catch |e| switch (e) {
                         error.Closed => break :chain,
-                        else => return e,
+                        else => |err| return err,
                     };
 
                     for (chain.buffer[0..length]) |item| assert(item == 123);
@@ -171,7 +172,7 @@ pub const TcpClientChain = struct {
         defer chain.deinit();
         errdefer unreachable;
 
-        var socket: Socket = try .init(.{ .tcp = .{ .host = "127.0.0.1", .port = port } });
+        var socket: Socket = try .init(rt.io, .{ .tcp = .{ .host = "127.0.0.1", .port = port } });
 
         chain: while (chain.index < chain.steps.len) : (chain.index += 1) {
             const current_step = chain.steps[chain.index];
@@ -181,7 +182,7 @@ pub const TcpClientChain = struct {
                 .recv => {
                     const length = socket.recv(rt, chain.buffer) catch |e| switch (e) {
                         error.Closed => break :chain,
-                        else => return e,
+                        else => |err| return err,
                     };
 
                     for (chain.buffer[0..length]) |item| assert(item == 123);

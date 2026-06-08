@@ -1,13 +1,23 @@
 const std = @import("std");
+const mem = std.mem;
 const assert = std.debug.assert;
+
 const Atomic = std.atomic.Value;
 const builtin = @import("builtin");
 
 const PoolKind = @import("../core/pool.zig").PoolKind;
 const Path = @import("../fs/lib.zig").Path;
-const Timespec = @import("../lib.zig").Timespec;
+// TODO: let Socket be a file
 const Socket = @import("../net/lib.zig").Socket;
 const Completion = @import("completion.zig").Completion;
+const File = @import("../fs/file.zig").File;
+const Io = std.Io;
+const net = Io.net;
+
+const io_uring = @import("apis/io_uring.zig");
+const poll = @import("apis/poll.zig");
+const epoll = @import("apis/epoll.zig");
+const kqueue = @import("apis/kqueue.zig");
 
 const log = std.log.scoped(.@"tardy/aio");
 pub const AsyncKind = enum {
@@ -64,7 +74,7 @@ pub fn auto_async_match() AsyncType {
         .windows => return AsyncType.poll,
         .ios, .macos, .watchos, .tvos, .visionos => return AsyncType.kqueue,
         .freebsd, .openbsd, .netbsd, .dragonfly => return AsyncType.kqueue,
-        .solaris, .illumos => return AsyncType.poll,
+        .illumos => return AsyncType.poll,
         else => @compileError("Unsupported platform! Provide a custom Async I/O backend."),
     }
 }
@@ -137,7 +147,7 @@ pub const AsyncFeatures = struct {
 };
 
 pub const AsyncSubmission = union(AsyncOp) {
-    timer: Timespec,
+    timer: Io.Duration,
     open: struct {
         path: Path,
         flags: AsyncOpenFlags,
@@ -150,41 +160,45 @@ pub const AsyncSubmission = union(AsyncOp) {
         path: Path,
         mode: isize,
     },
-    stat: std.posix.fd_t,
+    stat: File.Handle,
     read: struct {
-        fd: std.posix.fd_t,
+        fd: File.Handle,
         buffer: []u8,
         offset: ?usize,
     },
     write: struct {
-        fd: std.posix.fd_t,
+        fd: File.Handle,
         buffer: []const u8,
         offset: ?usize,
     },
-    close: std.posix.fd_t,
+    close: Socket.Handle,
     accept: struct {
-        socket: std.posix.socket_t,
+        socket: Socket.Handle,
         kind: Socket.Kind,
     },
     connect: struct {
-        socket: std.posix.socket_t,
-        addr: std.net.Address,
+        socket: Socket.Handle,
+        addr: Socket.Address,
         kind: Socket.Kind,
     },
     recv: struct {
-        socket: std.posix.socket_t,
+        socket: Socket.Handle,
         buffer: []u8,
     },
     send: struct {
-        socket: std.posix.socket_t,
+        socket: Socket.Handle,
         buffer: []const u8,
     },
 };
 
+pub const QueueJobError = io_uring.Errors.QueueJob ||
+    poll.Errors.QueueJob || epoll.Errors.QueueJob ||
+    kqueue.Errors.QueueJob;
+
 pub const Async = struct {
     const VTable = struct {
-        queue_job: *const fn (*anyopaque, usize, AsyncSubmission) anyerror!void,
-        deinit: *const fn (*anyopaque, std.mem.Allocator) void,
+        queue_job: *const fn (*anyopaque, usize, AsyncSubmission) QueueJobError!void,
+        deinit: *const fn (*anyopaque, mem.Allocator) void,
         wake: *const fn (*anyopaque) anyerror!void,
         reap: *const fn (*anyopaque, []Completion, bool) anyerror![]Completion,
         submit: *const fn (*anyopaque) anyerror!void,
@@ -196,7 +210,7 @@ pub const Async = struct {
 
     attached: bool = false,
     completions: []Completion = undefined,
-    mutex: std.Thread.Mutex = .{},
+    mutex: Io.Mutex = .init,
 
     // List of Async features that this Async I/O backend has.
     // Stored as a bitmask.
@@ -209,21 +223,23 @@ pub const Async = struct {
         self.attached = true;
     }
 
-    pub fn deinit(self: *Async, allocator: std.mem.Allocator) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    pub fn deinit(self: *Async, allocator: mem.Allocator, io: Io) void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+
         self.vtable.deinit(self.runner, allocator);
     }
 
-    pub fn queue_job(self: *Async, task: usize, job: AsyncSubmission) !void {
+    pub fn queue_job(self: *Async, task: usize, job: AsyncSubmission) QueueJobError!void {
         assert(self.attached);
         log.debug("queuing up job={t} at index={d}", .{ job, task });
         try self.vtable.queue_job(self.runner, task, job);
     }
 
-    pub fn wake(self: *Async) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    pub fn wake(self: *Async, io: Io) !void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+
         assert(self.attached);
         try self.vtable.wake(self.runner);
     }

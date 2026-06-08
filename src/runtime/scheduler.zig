@@ -41,10 +41,10 @@ pub const Scheduler = struct {
         };
     }
 
-    pub fn deinit(self: *Scheduler) void {
-        self.tasks.deinit();
-        self.released.deinit(self.allocator);
-        self.triggers.deinit(self.allocator);
+    pub fn deinit(sched: *Scheduler, io: std.Io) void {
+        sched.tasks.deinit();
+        sched.released.deinit(sched.allocator);
+        sched.triggers.deinit(sched.allocator, io);
     }
 
     pub fn set_runnable(self: *Scheduler, index: usize) !void {
@@ -69,7 +69,8 @@ pub const Scheduler = struct {
     // NOTE: This can spuriously trigger a Task later in the Run Loop.
     /// Safe to call from a different Runtime.
     pub fn trigger(self: *Scheduler, index: usize) !void {
-        try self.triggers.set(index);
+        const rt: *Runtime = @fieldParentPtr("scheduler", self);
+        try self.triggers.set(rt.io, index);
     }
 
     // This is only safe to call from the Runtime that the Frame is running on.
@@ -98,7 +99,11 @@ pub const Scheduler = struct {
 
         const frame: *Frame = try .init(self.allocator, stack_size, frame_ctx, frame_fn);
 
-        const item: Task = .{ .index = index, .frame = frame, .state = .dead };
+        const item: Task = .{
+            .index = index,
+            .frame = frame,
+            .state = .dead,
+        };
         const item_ptr = self.tasks.get_ptr(index);
         item_ptr.* = item;
         try self.set_runnable(index);

@@ -1,13 +1,14 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const tardy = @import("tardy");
+const Runtime = tardy.Runtime;
+const Socket = tardy.Socket;
 
-const Runtime = @import("tardy").Runtime;
-const Socket = @import("tardy").Socket;
-
-const log = @import("lib.zig").log;
 const SharedParams = @import("lib.zig").SharedParams;
 const TcpClientChain = @import("tcp_chain.zig").TcpClientChain;
 const TcpServerChain = @import("tcp_chain.zig").TcpServerChain;
+
+const log = std.log.scoped(.@"tardy/e2e/second");
 
 pub const STACK_SIZE = 1024 * 1024 * 8;
 threadlocal var tcp_client_chain_count: usize = 1;
@@ -19,13 +20,15 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
 
     const port: u16 = rand.intRangeLessThan(u16, 30000, @intCast(std.math.maxInt(u16)));
     log.debug("tcp chain port: {d}", .{port});
-    const socket = try Socket.init(.{ .tcp = .{ .host = "127.0.0.1", .port = port } });
+
+    const socket: Socket = try .init(rt.io, .{ .tcp = .{ .host = "127.0.0.1", .port = port } });
     try socket.bind();
     try socket.listen(128);
 
     const chain = try TcpServerChain.generate_random_chain(rt.allocator, shared_params.seed);
-    log.info("creating tcp chain... ({d})", .{chain.len});
     defer rt.allocator.free(chain);
+
+    log.debug("creating tcp chain... ({d})", .{chain.len});
 
     const server_chain_ptr = try rt.allocator.create(TcpServerChain);
     errdefer rt.allocator.destroy(server_chain_ptr);

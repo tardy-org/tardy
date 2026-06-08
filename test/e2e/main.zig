@@ -1,5 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const mem = std.mem;
+const Io = std.Io;
 
 const AsyncType = @import("tardy").AsyncType;
 const Dir = @import("tardy").Dir;
@@ -9,9 +11,10 @@ const Task = @import("tardy").Task;
 const Timer = @import("tardy").Timer;
 
 const First = @import("first.zig");
-const log = @import("lib.zig").log;
 const Second = @import("second.zig");
 const SharedParams = @import("lib.zig").SharedParams;
+
+const log = std.log.scoped(.@"tardy/e2e");
 
 const backend: AsyncType = switch (options.async_option) {
     .auto => .auto,
@@ -25,12 +28,14 @@ const Tardy = @import("tardy").Tardy(backend);
 
 pub const std_options: std.Options = .{ .log_level = .debug };
 
-pub fn main() !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+const max_stderr_output = 9 * 1024 * 1024;
 
-    var args = try std.process.argsWithAllocator(allocator);
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const gpa = init.gpa;
+    var arena_alloc = init.arena;
+    const arena = arena_alloc.allocator();
+    var args = try init.minimal.args.iterateAllocator(gpa);
     defer args.deinit();
 
     _ = args.next().?;
@@ -38,11 +43,11 @@ pub fn main() !void {
     // max u64 is 21 characters long :p
     var maybe_seed_buffer: [21]u8 = undefined;
     const seed_string = args.next() orelse blk: {
-        const stdin: std.fs.File = .stdin();
-        const bytes = try stdin.readToEndAlloc(allocator, std.math.maxInt(usize));
-        defer allocator.free(bytes);
+        var stdin_r = Io.File.stdin().reader(io, &.{});
+        const bytes = try stdin_r.interface.allocRemaining(gpa, .limited(max_stderr_output));
+        defer gpa.free(bytes);
 
-        var iter = std.mem.splitScalar(u8, bytes, '\n');
+        var iter = mem.splitScalar(u8, bytes, '\n');
         const not_passed_in = "seed not passed in: ./e2e [seed]";
         const pre_new = iter.next() orelse @panic(not_passed_in);
         const length = pre_new.len;
@@ -51,7 +56,7 @@ pub fn main() !void {
         if (length >= maybe_seed_buffer.len) @panic("seed too long to be a u64");
 
         assert(length < maybe_seed_buffer.len);
-        std.mem.copyForwards(u8, &maybe_seed_buffer, pre_new);
+        mem.copyForwards(u8, &maybe_seed_buffer, pre_new);
         maybe_seed_buffer[length] = 0;
         break :blk maybe_seed_buffer[0..length :0];
     };
@@ -71,7 +76,9 @@ pub fn main() !void {
     };
     log.debug("{f}", .{std.json.fmt(shared, .{ .whitespace = .indent_1 })});
 
-    var tardy: Tardy = try .init(allocator, .{
+    // TODO: find out why using gpa here gives
+    // thread panic: incorrect alignment on aarch64-linux/macos
+    var tardy: Tardy = try .init(arena, io, .{
         .threading = .{ .multi = 2 },
         .pooling = .grow,
         .size_tasks_initial = shared.size_tasks_initial,
@@ -84,7 +91,10 @@ pub fn main() !void {
         shared: *const SharedParams,
     };
 
-    var params: EntryParams = .{ .runtime = null, .shared = &shared };
+    var params: EntryParams = .{
+        .runtime = null,
+        .shared = &shared,
+    };
 
     try tardy.entry(
         &params,
@@ -103,7 +113,7 @@ pub fn main() !void {
         }.start,
     );
 
-    std.debug.print("seed={d} passed\n", .{seed});
+    log.info("seed={d} passed", .{seed});
 }
 
 fn timeout_task(rt: *Runtime, other: *const ?*Runtime) !void {
@@ -111,7 +121,7 @@ fn timeout_task(rt: *Runtime, other: *const ?*Runtime) !void {
 
     // Checks every second to see if the other Runtime is done.
     for (0..TIMEOUT_LENGTH_S) |_| {
-        try Timer.delay(rt, .{ .seconds = 1 });
+        try Timer.delay(rt, .{ .nanoseconds = 1 * std.time.ns_per_s });
         if (other.*) |o| if (!o.running) break;
     }
 

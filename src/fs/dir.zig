@@ -1,7 +1,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const StdDir = std.fs.Dir;
+const StdDir = Io.Dir;
 const builtin = @import("builtin");
+const Io = std.Io;
 
 const Resulted = @import("../aio/completion.zig").Resulted;
 const OpenFileResult = @import("../aio/completion.zig").OpenFileResult;
@@ -23,24 +24,26 @@ const Runtime = @import("../runtime/lib.zig").Runtime;
 const File = @import("lib.zig").File;
 const Path = @import("lib.zig").Path;
 const Stat = @import("lib.zig").Stat;
+const syscall = @import("../aio/apis/syscall.zig");
 
 const log = std.log.scoped(.@"tardy/fs/dir");
-pub const Dir = packed struct {
+
+pub const Dir = struct {
     handle: std.posix.fd_t,
 
     /// Create a std.fs.Dir from a Dir.
-    pub fn to_std(self: Dir) std.fs.Dir {
-        return std.fs.Dir{ .fd = self.handle };
+    pub fn to_std(self: Dir) Io.Dir {
+        return .{ .handle = self.handle };
     }
 
     /// Create a Dir from the std.fs.Dir
-    pub fn from_std(self: std.fs.Dir) Dir {
-        return .{ .handle = self.fd };
+    pub fn from_std(self: Io.Dir) Dir {
+        return .{ .handle = self.handle };
     }
 
     /// Get `cwd` as a Dir.
     pub fn cwd() Dir {
-        return .{ .handle = std.fs.cwd().fd };
+        return .{ .handle = Io.Dir.cwd().handle };
     }
 
     /// Close the underlying Handle of this Dir.
@@ -48,11 +51,11 @@ pub const Dir = packed struct {
         if (rt.aio.features.has_capability(.close))
             try rt.scheduler.io_await(.{ .close = self.handle })
         else
-            std.posix.close(self.handle);
+            Io.File.close(.{ .handle = self.handle, .flags = .{ .nonblocking = true } }, rt.io);
     }
 
     pub fn close_blocking(self: Dir) void {
-        std.posix.close(self.handle);
+        syscall.close(self.handle);
     }
 
     /// Open a Directory.
@@ -78,25 +81,25 @@ pub const Dir = packed struct {
         } else {
             switch (path) {
                 .rel => |inner| {
-                    const dir: StdDir = .{ .fd = inner.dir };
-                    const opened = dir.openDirZ(inner.path, .{ .iterate = true }) catch |e| {
+                    const dir: StdDir = .{ .handle = inner.dir };
+                    const opened = dir.openDir(rt.io, inner.path, .{ .iterate = true }) catch |e| {
                         return switch (e) {
                             StdDir.OpenError.AccessDenied => OpenError.AccessDenied,
                             else => OpenError.Unexpected,
                         };
                     };
 
-                    return .{ .handle = opened.fd };
+                    return .{ .handle = opened.handle };
                 },
                 .abs => |inner| {
-                    const opened = std.fs.openDirAbsoluteZ(inner, .{ .iterate = true }) catch |e| {
+                    const opened = Io.Dir.openDirAbsolute(rt.io, inner, .{ .iterate = true }) catch |e| {
                         return switch (e) {
                             StdDir.OpenError.AccessDenied => OpenError.AccessDenied,
                             else => OpenError.Unexpected,
                         };
                     };
 
-                    return .{ .handle = opened.fd };
+                    return .{ .handle = opened.handle };
                 },
             }
         }
@@ -105,25 +108,31 @@ pub const Dir = packed struct {
     /// Creates and opens a Directory.
     pub fn create(rt: *Runtime, path: Path) !Dir {
         if (rt.aio.features.has_capability(.mkdir)) {
-            try rt.scheduler.io_await(.{ .mkdir = .{ .path = path, .mode = 0o775 } });
+            try rt.scheduler.io_await(.{ .mkdir = .{
+                .path = path,
+                .mode = 0o775,
+            } });
 
             const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get_ptr(index);
-            try task.result.mkdir.unwrap();
+            task.result.mkdir.unwrap() catch |err| switch (err) {
+                error.AlreadyExists => {},
+                else => |e| return e,
+            };
 
             return try Dir.open(rt, path);
         } else {
             switch (path) {
                 .rel => |p| {
-                    const dir: StdDir = .{ .fd = p.dir };
-                    dir.makeDirZ(p.path) catch |e| {
+                    const dir: StdDir = .{ .handle = p.dir };
+                    dir.createDirPath(rt.io, p.path) catch |e| {
                         return switch (e) {
                             else => MkdirError.Unexpected,
                         };
                     };
                 },
                 .abs => |p| {
-                    std.fs.makeDirAbsoluteZ(p) catch |e| {
+                    Io.Dir.createDirAbsolute(rt.io, p, .default_dir) catch |e| {
                         return switch (e) {
                             else => MkdirError.Unexpected,
                         };
@@ -147,7 +156,12 @@ pub const Dir = packed struct {
 
     /// Create a Dir relative to this Dir.
     pub fn create_dir(self: Dir, rt: *Runtime, subpath: [:0]const u8) !Dir {
-        return try Dir.create(rt, .{ .rel = .{ .dir = self.handle, .path = subpath } });
+        return try Dir.create(rt, .{
+            .rel = .{
+                .dir = self.handle,
+                .path = subpath,
+            },
+        });
     }
 
     /// Open a Dir relative to this Dir.
@@ -203,7 +217,7 @@ pub const Dir = packed struct {
             });
         } else {
             const std_dir = self.to_std();
-            return std_dir.deleteFileZ(subpath) catch |e| switch (e) {
+            return std_dir.deleteFile(rt.io, subpath) catch |e| switch (e) {
                 else => DeleteError.Unexpected,
             };
         }
@@ -220,7 +234,7 @@ pub const Dir = packed struct {
             });
         } else {
             const std_dir = self.to_std();
-            return std_dir.deleteDirZ(subpath) catch |e| switch (e) {
+            return std_dir.deleteDir(rt.io, subpath) catch |e| switch (e) {
                 else => DeleteError.Unexpected,
             };
         }
@@ -237,7 +251,7 @@ pub const Dir = packed struct {
         var walker = try base_std_dir.walk(rt.allocator);
         defer walker.deinit();
 
-        while (try walker.next()) |entry| {
+        while (try walker.next(rt.io)) |entry| {
             const new_dir = Dir.from_std(entry.dir);
             switch (entry.kind) {
                 .directory => try new_dir.delete_tree(rt, entry.basename),

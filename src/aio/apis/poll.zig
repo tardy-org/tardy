@@ -1,11 +1,18 @@
 const std = @import("std");
-const assert = std.debug.assert;
+const Io = std.Io;
+const net = Io.net;
+const debug = std.debug;
 const builtin = @import("builtin");
+const native_os = builtin.os.tag;
+const posix = std.posix;
+const syscall = @import("syscall.zig");
+const math = std.math;
+const mem = std.mem;
 
+const File = @import("../../fs/file.zig").File;
 const Pool = @import("../../core/pool.zig").Pool;
 const Cross = @import("../../cross/lib.zig");
 const Stat = @import("../../fs/lib.zig").Stat;
-const Timespec = @import("../../lib.zig").Timespec;
 const Socket = @import("../../net/lib.zig").Socket;
 const Completion = @import("../completion.zig").Completion;
 const Result = @import("../completion.zig").Result;
@@ -25,72 +32,122 @@ const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
 
 const log = std.log.scoped(.@"tardy/aio/poll");
 
+pub const Errors = struct {
+    pub const Connect = syscall.ConnectError || Error;
+    pub const Timer = Error;
+    pub const Accept = Error;
+    pub const Recv = Error;
+    pub const Send = Error;
+    pub const Wake = syscall.WriteError;
+    pub const QueueJob = Connect || Wake || Timer || Accept || Recv || Send;
+};
+
+pub const Error = mem.Allocator.Error;
+
 const TimerPair = struct {
-    milliseconds: usize,
+    duration: Io.Timestamp,
     task: usize,
 };
 
 const TimerQueue = std.PriorityQueue(TimerPair, void, struct {
-    fn compare(_: void, a: TimerPair, b: TimerPair) std.math.Order {
-        return std.math.order(a.milliseconds, b.milliseconds);
+    fn compare(_: void, a: TimerPair, b: TimerPair) math.Order {
+        return math.order(a.duration.nanoseconds, b.duration.nanoseconds);
     }
 }.compare);
 
 pub const AsyncPoll = struct {
-    allocator: std.mem.Allocator,
-    wake_pipe: [2]std.posix.fd_t,
+    allocator: mem.Allocator,
+    wake_pipe: [2]File.Handle,
 
-    fd_list: std.ArrayList(std.posix.pollfd),
-    fd_job_map: std.AutoHashMap(std.posix.fd_t, Job),
+    fd_list: std.ArrayList(syscall.pollfd),
+    fd_job_map: std.AutoHashMap(File.Handle, Job),
     timers: TimerQueue,
 
-    pub fn init(allocator: std.mem.Allocator, options: AsyncOptions) !AsyncPoll {
+    pub fn init(allocator: mem.Allocator, options: AsyncOptions) !AsyncPoll {
         const size = options.size_tasks_initial + 1;
 
         // 0 is read, 1 is write.
-        const pipe: [2]std.posix.fd_t = blk: {
-            if (comptime builtin.os.tag == .windows) {
-                const server_socket = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.STREAM, 0);
-                defer std.posix.close(server_socket);
+        const pipe: [2]File.Handle = blk: {
+            if (comptime native_os == .windows) {
+                syscall.ws2.wsaStartup(2, 2) catch unreachable;
 
-                const addr: std.net.Address = .initIp4(.{ 127, 0, 0, 1 }, 0);
-                try std.posix.bind(server_socket, &addr.any, addr.getOsSockLen());
+                const server_socket = try syscall.socket(
+                    posix.AF.INET,
+                    posix.SOCK.STREAM,
+                    0,
+                );
+                defer syscall.close(server_socket);
 
-                var binded_addr: std.posix.sockaddr = undefined;
+                const addr: Socket.Address = .{
+                    .ip = .{ .ip4 = .loopback(0) },
+                };
+                try syscall.bind(server_socket, &addr);
+
+                try syscall.listen(server_socket, 1);
+
+                const write_end = try syscall.socket(
+                    posix.AF.INET,
+                    posix.SOCK.STREAM,
+                    0,
+                );
+                errdefer syscall.close(write_end);
+
+                // Required to prevent INVALID_ADDRESS_COMPONENT error on AFD
+                var binded_addr = mem.zeroes(std.posix.sockaddr);
                 var binded_size: std.posix.socklen_t = @sizeOf(std.posix.sockaddr);
-                try std.posix.getsockname(server_socket, &binded_addr, &binded_size);
+                try syscall.getsockname(server_socket, &binded_addr, &binded_size);
+                const bounded_addr = Socket.Address.fromAny(&binded_addr);
 
-                try std.posix.listen(server_socket, 1);
+                try syscall.connect(write_end, &bounded_addr);
 
-                const write_end = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.STREAM, 0);
-                errdefer std.posix.close(write_end);
-                try std.posix.connect(write_end, &binded_addr, binded_size);
-
-                const read_end = try std.posix.accept(server_socket, null, null, 0);
-                errdefer std.posix.close(read_end);
+                const read_end = try syscall.accept(
+                    server_socket,
+                    null,
+                    0,
+                );
+                errdefer syscall.close(read_end);
 
                 break :blk .{ read_end, write_end };
-            } else break :blk try std.posix.pipe();
+            } else break :blk try syscall.pipe();
         };
-        errdefer for (pipe) |fd| std.posix.close(fd);
+        errdefer for (pipe) |fd| syscall.close(fd);
 
-        var fd_list: std.ArrayList(std.posix.pollfd) = try .initCapacity(allocator, size);
+        var fd_list: std.ArrayList(syscall.pollfd) = try .initCapacity(
+            allocator,
+            size,
+        );
         errdefer fd_list.deinit(allocator);
 
-        var fd_job_map: std.AutoHashMap(std.posix.fd_t, Job) = .init(allocator);
+        var fd_job_map: std.AutoHashMap(File.Handle, Job) = .init(allocator);
         errdefer fd_job_map.deinit();
         try fd_job_map.ensureTotalCapacity(@intCast(size));
 
-        if (comptime builtin.os.tag == .windows) {
-            try fd_list.append(allocator, .{ .fd = @ptrCast(pipe[0]), .events = std.posix.POLL.IN, .revents = 0 });
-            try fd_job_map.put(@ptrCast(pipe[0]), .{ .index = 0, .type = .wake, .task = 0 });
+        if (comptime native_os == .windows) {
+            try fd_list.append(allocator, .{
+                .fd = @ptrCast(pipe[0]),
+                .events = syscall.POLL.IN,
+                .revents = 0,
+            });
+            try fd_job_map.put(@ptrCast(pipe[0]), .{
+                .index = 0,
+                .type = .wake,
+                .task = 0,
+            });
         } else {
-            try fd_list.append(allocator, .{ .fd = pipe[0], .events = std.posix.POLL.IN, .revents = 0 });
-            try fd_job_map.put(pipe[0], .{ .index = 0, .type = .wake, .task = 0 });
+            try fd_list.append(allocator, .{
+                .fd = pipe[0],
+                .events = syscall.POLL.IN,
+                .revents = 0,
+            });
+            try fd_job_map.put(pipe[0], .{
+                .index = 0,
+                .type = .wake,
+                .task = 0,
+            });
         }
 
-        const timers: TimerQueue = .init(allocator, {});
-        errdefer timers.deinit();
+        const timers: TimerQueue = .empty;
+        errdefer timers.deinit(allocator);
 
         return .{
             .allocator = allocator,
@@ -101,19 +158,21 @@ pub const AsyncPoll = struct {
         };
     }
 
-    pub fn inner_deinit(self: *AsyncPoll, allocator: std.mem.Allocator) void {
+    pub fn inner_deinit(self: *AsyncPoll, allocator: mem.Allocator) void {
+        defer if (comptime native_os == .windows) syscall.ws2.wsaCleanup() catch unreachable;
+
         self.fd_list.deinit(allocator);
         self.fd_job_map.deinit();
-        self.timers.deinit();
-        for (self.wake_pipe) |fd| std.posix.close(fd);
+        self.timers.deinit(allocator);
+        for (self.wake_pipe) |fd| if (comptime native_os == .windows) (syscall.ws2.closesock(fd) catch unreachable) else syscall.close(fd);
     }
 
-    fn deinit(runner: *anyopaque, allocator: std.mem.Allocator) void {
+    fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
         const poll: *AsyncPoll = @ptrCast(@alignCast(runner));
         poll.inner_deinit(allocator);
     }
 
-    pub fn queue_job(runner: *anyopaque, task: usize, job: AsyncSubmission) !void {
+    pub fn queue_job(runner: *anyopaque, task: usize, job: AsyncSubmission) Errors.QueueJob!void {
         const poll: *AsyncPoll = @ptrCast(@alignCast(runner));
 
         try switch (job) {
@@ -126,30 +185,32 @@ pub const AsyncPoll = struct {
         };
     }
 
-    fn queue_timer(self: *AsyncPoll, task: usize, timespec: Timespec) !void {
-        const current: usize = @intCast(std.time.milliTimestamp());
-        const seconds_to_ms: usize = @intCast(timespec.seconds * 1000);
-        const nanos_to_ms: usize = @intCast(@divFloor(timespec.nanos, std.time.ns_per_ms));
-        const milliseconds: usize = current + seconds_to_ms + nanos_to_ms;
-
-        try self.timers.add(.{ .milliseconds = milliseconds, .task = task });
+    fn queue_timer(self: *AsyncPoll, task: usize, duration: Io.Duration) Errors.Timer!void {
+        const current = syscall.now(.real);
+        try self.timers.push(self.allocator, .{
+            .duration = current.addDuration(duration),
+            .task = task,
+        });
     }
 
     fn queue_accept(
         self: *AsyncPoll,
         task: usize,
-        socket: std.posix.socket_t,
+        socket: Socket.Handle,
         kind: Socket.Kind,
-    ) !void {
-        try self.fd_list.append(self.allocator, .{ .fd = socket, .events = std.posix.POLL.IN, .revents = 0 });
+    ) Errors.Accept!void {
+        try self.fd_list.append(self.allocator, .{
+            .fd = socket,
+            .events = syscall.POLL.IN,
+            .revents = 0,
+        });
         try self.fd_job_map.put(socket, .{
             .index = 0,
             .type = .{
                 .accept = .{
                     .socket = socket,
                     .kind = kind,
-                    .addr = undefined,
-                    .addr_len = @sizeOf(std.net.Address),
+                    .addr = .wildcard,
                 },
             },
             .task = task,
@@ -159,20 +220,24 @@ pub const AsyncPoll = struct {
     fn queue_connect(
         self: *AsyncPoll,
         task: usize,
-        socket: std.posix.socket_t,
-        addr: std.net.Address,
+        socket: Socket.Handle,
+        // TODO: take by *const
+        addr: Socket.Address,
         kind: Socket.Kind,
-    ) !void {
-        std.posix.connect(
+    ) Errors.Connect!void {
+        syscall.connect(
             socket,
-            &addr.any,
-            addr.getOsSockLen(),
+            &addr,
         ) catch |e| switch (e) {
-            std.posix.ConnectError.WouldBlock => {},
-            else => return e,
+            error.WouldBlock => {},
+            else => |err| return err,
         };
 
-        try self.fd_list.append(self.allocator, .{ .fd = socket, .events = std.posix.POLL.OUT, .revents = 0 });
+        try self.fd_list.append(self.allocator, .{
+            .fd = socket,
+            .events = syscall.POLL.OUT,
+            .revents = 0,
+        });
         try self.fd_job_map.put(socket, .{
             .index = 0,
             .type = .{
@@ -186,8 +251,17 @@ pub const AsyncPoll = struct {
         });
     }
 
-    fn queue_recv(self: *AsyncPoll, task: usize, socket: std.posix.socket_t, buffer: []u8) !void {
-        try self.fd_list.append(self.allocator, .{ .fd = socket, .events = std.posix.POLL.IN, .revents = 0 });
+    fn queue_recv(
+        self: *AsyncPoll,
+        task: usize,
+        socket: Socket.Handle,
+        buffer: []u8,
+    ) Errors.Recv!void {
+        try self.fd_list.append(self.allocator, .{
+            .fd = socket,
+            .events = syscall.POLL.IN,
+            .revents = 0,
+        });
         try self.fd_job_map.put(socket, .{
             .index = 0,
             .type = .{
@@ -200,8 +274,17 @@ pub const AsyncPoll = struct {
         });
     }
 
-    fn queue_send(self: *AsyncPoll, task: usize, socket: std.posix.socket_t, buffer: []const u8) !void {
-        try self.fd_list.append(self.allocator, .{ .fd = socket, .events = std.posix.POLL.OUT, .revents = 0 });
+    fn queue_send(
+        self: *AsyncPoll,
+        task: usize,
+        socket: Socket.Handle,
+        buffer: []const u8,
+    ) Errors.Send!void {
+        try self.fd_list.append(self.allocator, .{
+            .fd = socket,
+            .events = syscall.POLL.OUT,
+            .revents = 0,
+        });
         try self.fd_job_map.put(socket, .{
             .index = 0,
             .type = .{
@@ -214,12 +297,15 @@ pub const AsyncPoll = struct {
         });
     }
 
-    pub fn wake(runner: *anyopaque) !void {
+    pub fn wake(runner: *anyopaque) Errors.Wake!void {
         const poll: *AsyncPoll = @ptrCast(@alignCast(runner));
 
         const bytes: []const u8 = "00000000";
         var i: usize = 0;
-        while (i < bytes.len) i += try std.posix.write(poll.wake_pipe[1], bytes[i..]);
+        while (i < bytes.len) i += try syscall.write(
+            poll.wake_pipe[1],
+            bytes[i..],
+        );
     }
 
     pub fn submit(_: *anyopaque) !void {}
@@ -229,14 +315,14 @@ pub const AsyncPoll = struct {
         var reaped: usize = 0;
 
         poll_loop: while (reaped == 0 and wait) {
-            const current: usize = @intCast(std.time.milliTimestamp());
+            const current = syscall.now(.real);
 
             // Reap all completed Timers
             while (poll.timers.peek()) |peeked| {
-                if (peeked.milliseconds > current) break;
+                if (peeked.duration.nanoseconds > current.nanoseconds) break;
                 if (completions.len - reaped == 0) break;
 
-                const timer = poll.timers.remove();
+                const timer = poll.timers.pop().?;
                 completions[reaped] = .{
                     .result = .none,
                     .task = timer.task,
@@ -244,16 +330,13 @@ pub const AsyncPoll = struct {
                 reaped += 1;
             }
 
-            var timeout: i32 = if (!wait or reaped > 0) 0 else -1;
+            var timeout: i96 = if (!wait or reaped > 0) 0 else -1;
 
             // Select next Timer
-            if (poll.timers.peek()) |peeked| timeout = @intCast(peeked.milliseconds - current);
+            if (poll.timers.peek()) |peeked| timeout = @intCast(peeked.duration.nanoseconds - current.nanoseconds);
 
             log.debug("timeout = {d}", .{timeout});
-            const poll_result = if (comptime builtin.os.tag == .windows)
-                std.os.windows.poll(poll.fd_list.items.ptr, @intCast(poll.fd_list.items.len), timeout)
-            else
-                try std.posix.poll(poll.fd_list.items, timeout);
+            const poll_result = try syscall.poll(poll.fd_list.items, @intCast(@divFloor(timeout, std.time.ns_per_ms)));
 
             if (poll_result == 0 and timeout > 0) continue :poll_loop;
 
@@ -279,36 +362,32 @@ pub const AsyncPoll = struct {
                 const result: Result = result: {
                     switch (job.type) {
                         .wake => {
-                            assert(pfd.revents & std.posix.POLL.IN != 0 or pfd.revents & std.posix.POLL.RDNORM != 0);
+                            debug.assert(pfd.revents & syscall.POLL.IN != 0 or pfd.revents & syscall.POLL.RDNORM != 0);
 
                             var buf: [8]u8 = undefined;
-                            _ = std.posix.read(poll.wake_pipe[0], &buf) catch unreachable;
+                            _ = syscall.read(poll.wake_pipe[0], &buf) catch unreachable;
                             remove = false;
                             break :result .wake;
                         },
                         .accept => |*inner| {
-                            assert(pfd.revents & std.posix.POLL.IN != 0 or pfd.revents & std.posix.POLL.RDNORM != 0);
+                            debug.assert(pfd.revents & syscall.POLL.IN != 0 or pfd.revents & syscall.POLL.RDNORM != 0);
 
-                            const socket = std.posix.accept(
+                            const socket = syscall.accept(
                                 inner.socket,
-                                &inner.addr.any,
-                                @ptrCast(&inner.addr_len),
-                                std.posix.SOCK.NONBLOCK,
+                                &inner.addr,
+                                if (native_os != .windows) posix.SOCK.NONBLOCK else 0,
                             ) catch |e| {
                                 const err = switch (e) {
-                                    std.posix.AcceptError.WouldBlock => {
+                                    error.WouldBlock => {
                                         log.debug("accept wouldblock - not removing", .{});
                                         remove = false;
                                         continue;
                                     },
-                                    std.posix.AcceptError.ConnectionAborted,
-                                    std.posix.AcceptError.ConnectionResetByPeer,
+                                    error.ConnectionAborted,
                                     => AcceptError.ConnectionAborted,
-                                    std.posix.AcceptError.SocketNotListening => AcceptError.NotListening,
-                                    std.posix.AcceptError.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
-                                    std.posix.AcceptError.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
-                                    std.posix.AcceptError.FileDescriptorNotASocket => AcceptError.NotASocket,
-                                    std.posix.AcceptError.OperationNotSupported => AcceptError.OperationNotSupported,
+                                    error.SocketNotListening => AcceptError.NotListening,
+                                    error.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
+                                    error.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
                                     else => AcceptError.Unexpected,
                                 };
 
@@ -325,29 +404,29 @@ pub const AsyncPoll = struct {
                                 },
                             };
                         },
-                        .connect => |_| {
-                            assert(pfd.revents & std.posix.POLL.OUT != 0);
+                        .connect => {
+                            debug.assert(pfd.revents & syscall.POLL.OUT != 0);
 
-                            if (pfd.revents & std.posix.POLL.ERR != 0) {
+                            if (pfd.revents & syscall.POLL.ERR != 0) {
                                 break :result .{ .connect = .{ .err = ConnectError.Unexpected } };
                             } else {
                                 break :result .{ .connect = .actual };
                             }
                         },
                         .recv => |inner| {
-                            if (pfd.revents & std.posix.POLL.HUP != 0) break :result .{
+                            if (pfd.revents & syscall.POLL.HUP != 0) break :result .{
                                 .recv = .{ .err = RecvError.Closed },
                             };
 
-                            assert(pfd.revents & std.posix.POLL.IN != 0 or pfd.revents & std.posix.POLL.RDNORM != 0);
-                            const count = std.posix.recv(inner.socket, inner.buffer, 0) catch |e| {
+                            debug.assert(pfd.revents & syscall.POLL.IN != 0 or pfd.revents & syscall.POLL.RDNORM != 0);
+                            const count = syscall.recv(inner.socket, inner.buffer, 0) catch |e| {
                                 const err = switch (e) {
-                                    std.posix.RecvFromError.WouldBlock => {
+                                    error.WouldBlock => {
                                         log.debug("recv wouldblock - not removing", .{});
                                         remove = false;
                                         continue;
                                     },
-                                    std.posix.RecvFromError.ConnectionResetByPeer => RecvError.Closed,
+                                    error.ConnectionResetByPeer => RecvError.Closed,
                                     else => RecvError.Unexpected,
                                 };
 
@@ -358,21 +437,21 @@ pub const AsyncPoll = struct {
                             break :result .{ .recv = .{ .actual = count } };
                         },
                         .send => |inner| {
-                            if (pfd.revents & std.posix.POLL.HUP != 0) break :result .{
+                            if (pfd.revents & syscall.POLL.HUP != 0) break :result .{
                                 .send = .{ .err = SendError.Closed },
                             };
 
-                            assert(pfd.revents & std.posix.POLL.OUT != 0);
-                            const count = std.posix.send(inner.socket, inner.buffer, 0) catch |e| {
+                            debug.assert(pfd.revents & syscall.POLL.OUT != 0);
+                            const count = syscall.send(inner.socket, inner.buffer, 0) catch |e| {
                                 log.err("send failed with {}", .{e});
                                 const err = switch (e) {
-                                    std.posix.SendError.WouldBlock => {
+                                    error.WouldBlock => {
                                         log.debug("send wouldblock - not removing", .{});
                                         remove = false;
                                         continue;
                                     },
-                                    std.posix.SendError.ConnectionResetByPeer,
-                                    std.posix.SendError.BrokenPipe,
+                                    error.ConnectionResetByPeer,
+                                    error.BrokenPipe,
                                     => SendError.Closed,
                                     else => SendError.Unexpected,
                                 };
@@ -394,7 +473,10 @@ pub const AsyncPoll = struct {
                     }
                 };
 
-                completions[reaped] = .{ .result = result, .task = job.task };
+                completions[reaped] = .{
+                    .result = result,
+                    .task = job.task,
+                };
                 reaped += 1;
             }
         }
@@ -403,7 +485,7 @@ pub const AsyncPoll = struct {
     }
 
     pub fn to_async(self: *AsyncPoll) Async {
-        return Async{
+        return .{
             .runner = self,
             .features = .init(&.{
                 .timer,

@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 
 const AsyncKind = @import("src/aio/lib.zig").AsyncKind;
 
-const zig_version = std.SemanticVersion{ .major = 0, .minor = 15, .patch = 2 };
+const zig_version: std.SemanticVersion = .{ .major = 0, .minor = 16, .patch = 0 };
 comptime {
     // Compare versions while allowing different pre/patch metadata.
     const zig_version_eq = zig_version.major == builtin.zig_version.major and
@@ -75,6 +75,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = target.result.os.tag == .windows,
     });
 
     // build and run examples
@@ -211,14 +212,11 @@ fn build_example_module(
         .root_source_file = b.path(b.fmt("examples/{s}/main.zig", .{options.example.toString()})),
         .target = options.target,
         .optimize = options.optimize,
+        // need libc for windows sockets
+        .link_libc = options.target.result.os.tag == .windows,
     });
 
     example_mod.addImport("tardy", options.tardy_mod);
-
-    // need libc for windows sockets
-    if (options.target.result.os.tag == .windows) {
-        example_mod.link_libc = true;
-    }
 
     return example_mod;
 }
@@ -295,11 +293,6 @@ fn build_static_lib(
         .root_module = options.tardy_mod,
     });
 
-    // need libc for windows sockets
-    if (options.target.result.os.tag == .windows) {
-        static_lib.linkLibC();
-    }
-
     // depend on static step
     const install_artifact = b.addInstallArtifact(static_lib, .{});
     steps.static.dependOn(&install_artifact.step);
@@ -363,14 +356,15 @@ fn build_test_e2e(
         .target = options.target,
         .optimize = options.optimize,
         .strip = false,
+        .imports = &.{
+            .{
+                .name = "tardy",
+                .module = options.tardy_mod,
+            },
+        },
+        // need libc for windows sockets
+        .link_libc = options.target.result.os.tag == .windows,
     });
-
-    e2e_mod.addImport("tardy", options.tardy_mod);
-
-    // need libc for windows sockets
-    if (options.target.result.os.tag == .windows) {
-        e2e_mod.link_libc = true;
-    }
 
     // add needed options
     const test_options = b.addOptions();

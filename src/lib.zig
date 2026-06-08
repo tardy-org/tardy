@@ -92,14 +92,17 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
     return struct {
         const Self = @This();
         aios: std.ArrayList(*AioInnerType),
+        // TODO: maybe make this an arena
         allocator: std.mem.Allocator,
+        io: std.Io,
+        mutex: std.Io.Mutex = .init,
         options: TardyOptions,
-        mutex: std.Thread.Mutex = .{},
 
-        pub fn init(allocator: std.mem.Allocator, options: TardyOptions) !Self {
-            log.debug("aio backend: {t}", .{aio_type});
+        pub fn init(allocator: std.mem.Allocator, io: std.Io, options: TardyOptions) !Self {
+            log.info("aio backend: {t}", .{aio_type});
 
             return .{
+                .io = io,
                 .allocator = allocator,
                 .options = options,
                 .aios = try .initCapacity(allocator, 0),
@@ -113,18 +116,18 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
 
         /// This will spawn a new Runtime.
         fn spawn_runtime(self: *Self, id: usize, options: AsyncOptions) !Runtime {
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            self.mutex.lockUncancelable(self.io);
+            defer self.mutex.unlock(self.io);
 
             var aio: AsyncIO = blk: {
-                var io = try self.allocator.create(AioInnerType);
-                errdefer self.allocator.destroy(io);
+                var io_inner = try self.allocator.create(AioInnerType);
+                errdefer self.allocator.destroy(io_inner);
 
-                io.* = try .init(self.allocator, options);
-                errdefer io.inner_deinit(self.allocator);
+                io_inner.* = try .init(self.allocator, options);
+                errdefer io_inner.inner_deinit(self.allocator);
 
-                try self.aios.append(self.allocator, io);
-                var aio = io.to_async();
+                try self.aios.append(self.allocator, io_inner);
+                var aio = io_inner.to_async();
 
                 const completions = try self.allocator.alloc(Completion, self.options.size_aio_reap_max);
                 errdefer self.allocator.free(completions);
@@ -132,9 +135,9 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
                 aio.attach(completions);
                 break :blk aio;
             };
-            errdefer aio.deinit(self.allocator);
+            errdefer aio.deinit(self.allocator, self.io);
 
-            return try .init(self.allocator, aio, .{
+            return try .init(self.allocator, self.io, aio, .{
                 .id = id,
                 .pooling = self.options.pooling,
                 .size_tasks_initial = self.options.size_tasks_initial,
@@ -211,17 +214,17 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
                         while (count.load(.acquire) < total_count) {}
 
                         @call(.auto, entry_func, .{ &thread_rt, entry_parameters }) catch |e| {
-                            log.err("{d} - entry error={}", .{ thread_rt.id, e });
+                            log.err("{d} - entry error={t}", .{ thread_rt.id, e });
                             thread_rt.stop();
                         };
 
-                        thread_rt.run() catch |e| log.err("{d} - runtime error={}", .{ thread_rt.id, e });
+                        thread_rt.run() catch |e| log.err("{d} - runtime error={t}", .{ thread_rt.id, e });
 
                         // wait for the rest to stop before cleaning ourselves up.
                         // this is because the runtime is allocate on our stack and others might be checking
                         // our running status or attempting to wake us.
                         _ = count.fetchSub(1, .acquire);
-                        while (count.load(.acquire) > 0) std.Thread.sleep(std.time.ns_per_s);
+                        while (count.load(.acquire) > 0) tardy.io.sleep(.fromSeconds(1), .awake) catch unreachable;
                     }
                 }.thread_init, .{
                     self,
@@ -240,10 +243,10 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
             log.debug("all runtimes spawned, initalizing...", .{});
 
             @call(.auto, entry_func, .{ &runtime, entry_params }) catch |e| {
-                log.err("0 - entry error={}", .{e});
+                log.err("0 - entry error={t}", .{e});
                 runtime.stop();
             };
-            runtime.run() catch |e| log.err("0 - runtime error={}", .{e});
+            runtime.run() catch |e| log.err("0 - runtime error={t}", .{e});
         }
 
         /// This spawns in and enters into the runtime
@@ -266,8 +269,3 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
         }
     };
 }
-
-pub const Timespec = struct {
-    seconds: u64 = 0,
-    nanos: u64 = 0,
-};

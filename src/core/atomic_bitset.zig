@@ -5,7 +5,7 @@ const Atomic = std.atomic.Value;
 pub const AtomicDynamicBitSet = struct {
     allocator: std.mem.Allocator,
     words: []Atomic(usize),
-    lock: std.Thread.RwLock,
+    lock: std.Io.RwLock,
     /// Not safe to access. Use `get_bit_length`.
     bit_length: usize,
 
@@ -15,18 +15,24 @@ pub const AtomicDynamicBitSet = struct {
         errdefer allocator.free(words);
         const value: usize = if (default) std.math.maxInt(usize) else 0;
         for (words) |*word| word.* = .{ .raw = value };
-        return .{ .allocator = allocator, .words = words, .lock = .{}, .bit_length = size };
+        return .{
+            .allocator = allocator,
+            .words = words,
+            .lock = .init,
+            .bit_length = size,
+        };
     }
 
-    pub fn deinit(self: *AtomicDynamicBitSet, allocator: std.mem.Allocator) void {
-        self.lock.lock();
-        defer self.lock.unlock();
+    pub fn deinit(self: *AtomicDynamicBitSet, allocator: std.mem.Allocator, io: std.Io) void {
+        self.lock.lockUncancelable(io);
+        defer self.lock.unlock(io);
+
         allocator.free(self.words);
     }
 
-    fn resize(self: *AtomicDynamicBitSet, allocator: std.mem.Allocator, new_size: usize, default: bool) !void {
-        self.lock.lock();
-        defer self.lock.unlock();
+    fn resize(self: *AtomicDynamicBitSet, allocator: std.mem.Allocator, io: std.Io, new_size: usize, default: bool) !void {
+        self.lock.lockUncancelable(io);
+        defer self.lock.unlock(io);
 
         const new_word_count = try std.math.divCeil(usize, new_size, @bitSizeOf(usize));
         assert(new_word_count > self.words.len);
@@ -45,27 +51,30 @@ pub const AtomicDynamicBitSet = struct {
         }
     }
 
-    pub fn is_empty(self: *AtomicDynamicBitSet) bool {
-        self.lock.lockShared();
-        defer self.lock.unlockShared();
+    pub fn is_empty(self: *AtomicDynamicBitSet, io: std.Io) bool {
+        self.lock.lockSharedUncancelable(io);
+        defer self.lock.unlockShared(io);
+
         for (self.words) |*word| if (word.load(.acquire) != 0) return false;
         return true;
     }
 
-    pub fn get_bit_length(self: *AtomicDynamicBitSet) usize {
-        self.lock.lockShared();
-        defer self.lock.unlockShared();
+    pub fn get_bit_length(self: *AtomicDynamicBitSet, io: std.Io) usize {
+        self.lock.lockSharedUncancelable(io);
+        defer self.lock.unlockShared(io);
+
         return self.bit_length;
     }
 
-    pub fn set(self: *AtomicDynamicBitSet, index: usize) !void {
-        self.lock.lockShared();
-        defer self.lock.unlockShared();
+    pub fn set(self: *AtomicDynamicBitSet, io: std.Io, index: usize) !void {
+        self.lock.lockSharedUncancelable(io);
+        defer self.lock.unlockShared(io);
 
         if (index > self.bit_length) {
-            self.lock.unlockShared();
-            try self.resize(self.allocator, try std.math.ceilPowerOfTwo(usize, index), false);
-            self.lock.lockShared();
+            self.lock.unlockShared(io);
+            defer self.lock.lockSharedUncancelable(io);
+
+            try self.resize(self.allocator, io, try std.math.ceilPowerOfTwo(usize, index), false);
         }
         assert(self.bit_length >= index);
 
@@ -75,9 +84,9 @@ pub const AtomicDynamicBitSet = struct {
         _ = self.words[word].fetchOr(mask, .release);
     }
 
-    pub fn is_set(self: *AtomicDynamicBitSet, index: usize) bool {
-        self.lock.lockShared();
-        defer self.lock.unlockShared();
+    pub fn is_set(self: *AtomicDynamicBitSet, io: std.Io, index: usize) bool {
+        self.lock.lockSharedUncancelable(io);
+        defer self.lock.unlockShared(io);
         assert(self.bit_length >= index);
 
         const word = index / @bitSizeOf(usize);
@@ -86,9 +95,9 @@ pub const AtomicDynamicBitSet = struct {
         return (self.words[word].load(.acquire) & mask) != 0;
     }
 
-    pub fn unset(self: *AtomicDynamicBitSet, index: usize) void {
-        self.lock.lockShared();
-        defer self.lock.unlockShared();
+    pub fn unset(self: *AtomicDynamicBitSet, io: std.Io, index: usize) void {
+        self.lock.lockSharedUncancelable(io);
+        defer self.lock.unlockShared(io);
         assert(self.bit_length >= index);
 
         const word = index / @bitSizeOf(usize);
@@ -98,9 +107,10 @@ pub const AtomicDynamicBitSet = struct {
         _ = self.words[word].fetchAnd(mask, .release);
     }
 
-    pub fn unset_all(self: *AtomicDynamicBitSet) void {
-        self.lock.lockShared();
-        defer self.lock.unlockShared();
+    pub fn unset_all(self: *AtomicDynamicBitSet, io: std.Io) void {
+        self.lock.lockSharedUncancelable(io);
+        defer self.lock.unlockShared(io);
+
         for (self.words) |*word| word.store(0, .release);
     }
 };

@@ -1,5 +1,9 @@
 const std = @import("std");
 const debug = std.debug;
+const Io = std.Io;
+const net = Io.net;
+const posix = std.posix;
+const mem = std.mem;
 const builtin = @import("builtin");
 
 const AcceptResult = @import("../aio/completion.zig").AcceptResult;
@@ -12,8 +16,13 @@ const SendResult = @import("../aio/completion.zig").SendResult;
 const SendError = @import("../aio/completion.zig").SendError;
 const Frame = @import("../frame/lib.zig").Frame;
 const Runtime = @import("../runtime/lib.zig").Runtime;
+const syscall = @import("../aio/apis/syscall.zig");
 
 pub const Socket = struct {
+    handle: posix.socket_t,
+    addr: Address,
+    kind: Kind,
+    // TODO: create a udp/tcp connection without this
     pub const Kind = enum {
         tcp,
         udp,
@@ -38,61 +47,263 @@ pub const Socket = struct {
         unix: []const u8,
     };
 
-    handle: std.posix.socket_t,
-    addr: std.net.Address,
-    kind: Kind,
+    pub const Handle = net.Socket.Handle;
 
-    pub fn init(kind: InitKind) !Socket {
-        const addr = switch (kind) {
+    pub const Native = extern union {
+        any: posix.sockaddr,
+        in: posix.sockaddr.in,
+        in6: posix.sockaddr.in6,
+        un: posix.sockaddr.un,
+
+        pub fn toAddress(addr: Native) Address {
+            return switch (addr.any.family) {
+                posix.AF.INET => .{
+                    .ip = .{
+                        .ip4 = .{
+                            .port = mem.bigToNative(u16, addr.in.port),
+                            .bytes = @bitCast(addr.in.addr),
+                        },
+                    },
+                },
+                posix.AF.INET6 => .{
+                    .ip = .{
+                        .ip6 = .{
+                            .port = mem.bigToNative(u16, addr.in6.port),
+                            .bytes = addr.in6.addr,
+                            .flow = addr.in6.flowinfo,
+                            .interface = .{
+                                .index = addr.in6.scope_id,
+                            },
+                        },
+                    },
+                },
+                posix.AF.UNIX => .{
+                    .unix = .{
+                        .path = mem.sliceTo(&addr.un.path, 0x0),
+                    },
+                },
+                else => unreachable,
+            };
+        }
+    };
+
+    pub const Address = union(enum) {
+        ip: net.IpAddress,
+        unix: net.UnixAddress,
+
+        pub const wildcard: Address = .{
+            .ip = .{
+                .ip4 = .{
+                    .port = 0,
+                    .bytes = @splat(0x0),
+                },
+            },
+        };
+
+        pub const wildcard64: Address = .{
+            .ip = .{
+                .ip6 = .{
+                    .port = 0,
+                    .bytes = @splat(0x0),
+                },
+            },
+        };
+
+        pub fn format(a: Address, w: *Io.Writer) Io.Writer.Error!void {
+            switch (a) {
+                .ip => |ip| try ip.format(w),
+                .unix => |unix| {
+                    try w.print("{s}", .{unix.path});
+                },
+            }
+        }
+
+        pub const Family = enum {
+            ip4,
+            ip6,
+            unix,
+        };
+
+        pub fn family(addr: Address) Family {
+            return switch (addr) {
+                .ip => |ip| switch (ip) {
+                    .ip4 => .ip4,
+                    .ip6 => .ip6,
+                },
+                .unix => .unix,
+            };
+        }
+
+        pub fn toNative(addr: Address) Native {
+            switch (addr) {
+                .ip => |ip| {
+                    switch (ip) {
+                        .ip4 => |ip4| {
+                            const saddr: posix.sockaddr.in = .{
+                                .addr = @bitCast(ip4.bytes),
+                                .port = mem.nativeToBig(u16, ip4.port),
+                            };
+                            return .{ .in = saddr };
+                        },
+                        .ip6 => |ip6| {
+                            const saddr: posix.sockaddr.in6 = .{
+                                .addr = ip6.bytes,
+                                .flowinfo = ip6.flow,
+                                .scope_id = ip6.interface.index,
+                                .port = mem.nativeToBig(u16, ip6.port),
+                            };
+                            return .{ .in6 = saddr };
+                        },
+                    }
+                },
+                .unix => |unix| {
+                    var saddr: posix.sockaddr.un = .{
+                        .path = @splat(0x0),
+                    };
+                    @memcpy(saddr.path[0..unix.path.len], unix.path[0..]);
+                    return .{ .un = saddr };
+                },
+            }
+        }
+
+        pub fn fromAny(addr: *const posix.sockaddr) Address {
+            switch (addr.family) {
+                posix.AF.INET => {
+                    const sock = @as(*const posix.sockaddr.in, @ptrCast(@alignCast(addr))).*;
+                    return .{
+                        .ip = .{
+                            .ip4 = .{
+                                .port = mem.bigToNative(u16, sock.port),
+                                .bytes = @bitCast(sock.addr),
+                            },
+                        },
+                    };
+                },
+                posix.AF.INET6 => {
+                    const sock6 = @as(*const posix.sockaddr.in6, @ptrCast(@alignCast(addr))).*;
+                    return .{
+                        .ip = .{
+                            .ip6 = .{
+                                .port = mem.bigToNative(u16, sock6.port),
+                                .flow = sock6.flowinfo,
+                                .interface = .{ .index = sock6.scope_id },
+                                .bytes = sock6.addr,
+                            },
+                        },
+                    };
+                },
+                posix.AF.UNIX => {
+                    const sockun = @as(*const posix.sockaddr.un, @ptrCast(@alignCast(addr))).*;
+                    return .{
+                        .unix = .{
+                            .path = mem.sliceTo(&sockun.path, 0x0),
+                        },
+                    };
+                },
+                else => unreachable,
+            }
+        }
+
+        pub fn toPosix(addr: *const Address) struct { posix.sockaddr, posix.socklen_t } {
+            switch (addr.*) {
+                .ip => |ip| {
+                    switch (ip) {
+                        .ip4 => |ip4| {
+                            const saddr: posix.sockaddr.in = .{
+                                .addr = @bitCast(ip4.bytes),
+                                .port = mem.nativeToBig(u16, ip4.port),
+                            };
+                            const addr_: posix.sockaddr = @as(*const posix.sockaddr, @ptrCast(@alignCast(&saddr))).*;
+                            return .{ addr_, @sizeOf(@TypeOf(saddr)) };
+                        },
+                        .ip6 => |ip6| {
+                            const saddr: posix.sockaddr.in6 = .{
+                                .addr = ip6.bytes,
+                                .flowinfo = ip6.flow,
+                                .scope_id = ip6.interface.index,
+                                .port = mem.nativeToBig(u16, ip6.port),
+                            };
+                            const addr_: posix.sockaddr = @as(*const posix.sockaddr, @ptrCast(@alignCast(&saddr))).*;
+                            return .{ addr_, @sizeOf(@TypeOf(saddr)) };
+                        },
+                    }
+                },
+                .unix => |unix| {
+                    var saddr: posix.sockaddr.un = .{
+                        .path = @splat(0x0),
+                    };
+                    @memcpy(saddr.path[0..unix.path.len], unix.path[0..]);
+                    const addr_: posix.sockaddr = @as(*const posix.sockaddr, @ptrCast(@alignCast(&saddr))).*;
+                    return .{ addr_, @sizeOf(@TypeOf(saddr)) };
+                },
+            }
+        }
+    };
+
+    // TODO: we shouldn't need Io here
+    pub fn init(io_: Io, kind: InitKind) !Socket {
+        const addr: Address = switch (kind) {
             .tcp, .udp => |inner| blk: {
                 break :blk if (comptime builtin.os.tag == .linux)
-                    try std.net.Address.resolveIp(inner.host, inner.port)
+                    .{ .ip = try .resolve(io_, inner.host, inner.port) }
                 else
-                    try std.net.Address.parseIp(inner.host, inner.port);
+                    .{ .ip = try .parse(inner.host, inner.port) };
             },
             // Not supported on Windows at the moment.
-            .unix => |path| if (builtin.os.tag == .windows) unreachable else try std.net.Address.initUnix(path),
+            .unix => |path| if (builtin.os.tag == .windows) unreachable else .{ .unix = try .init(path) },
         };
 
         return try init_with_address(kind, addr);
     }
 
-    pub fn init_with_address(kind: Kind, addr: std.net.Address) !Socket {
+    pub fn init_with_address(kind: Kind, addr: Address) !Socket {
         const sock_type: u32 = switch (kind) {
-            .tcp, .unix => std.posix.SOCK.STREAM,
-            .udp => std.posix.SOCK.DGRAM,
+            .tcp, .unix => posix.SOCK.STREAM,
+            .udp => posix.SOCK.DGRAM,
         };
 
         const protocol: u32 = switch (kind) {
-            .tcp => std.posix.IPPROTO.TCP,
-            .udp => std.posix.IPPROTO.UDP,
+            .tcp => posix.IPPROTO.TCP,
+            .udp => posix.IPPROTO.UDP,
             .unix => 0,
         };
 
-        const flags: u32 = sock_type | std.posix.SOCK.CLOEXEC | std.posix.SOCK.NONBLOCK;
-        const socket = try std.posix.socket(addr.any.family, flags, protocol);
+        const family: u32 = switch (addr) {
+            .ip => |ip| switch (ip) {
+                .ip4 => posix.AF.INET,
+                .ip6 => posix.AF.INET6,
+            },
+            .unix => posix.AF.UNIX,
+        };
+        const flags: u32 = if (builtin.os.tag != .windows)
+            sock_type | posix.SOCK.CLOEXEC | posix.SOCK.NONBLOCK
+        else
+            sock_type;
+
+        // TODO: audit these and posix uses across tardy
+        const socket = try syscall.socket(family, flags, protocol);
 
         if (kind != .unix) {
-            if (@hasDecl(std.posix.SO, "REUSEPORT_LB")) {
-                try std.posix.setsockopt(
+            if (@hasDecl(posix.SO, "REUSEPORT_LB")) {
+                try syscall.setsockopt(
                     socket,
-                    std.posix.SOL.SOCKET,
-                    std.posix.SO.REUSEPORT_LB,
-                    &std.mem.toBytes(@as(c_int, 1)),
+                    posix.SOL.SOCKET,
+                    posix.SO.REUSEPORT_LB,
+                    &mem.toBytes(@as(u32, 1)),
                 );
-            } else if (@hasDecl(std.posix.SO, "REUSEPORT")) {
-                try std.posix.setsockopt(
+            } else if (@hasDecl(posix.SO, "REUSEPORT")) {
+                try syscall.setsockopt(
                     socket,
-                    std.posix.SOL.SOCKET,
-                    std.posix.SO.REUSEPORT,
-                    &std.mem.toBytes(@as(c_int, 1)),
+                    posix.SOL.SOCKET,
+                    posix.SO.REUSEPORT,
+                    &mem.toBytes(@as(u32, 1)),
                 );
             } else {
-                try std.posix.setsockopt(
+                try syscall.setsockopt(
                     socket,
-                    std.posix.SOL.SOCKET,
-                    std.posix.SO.REUSEADDR,
-                    &std.mem.toBytes(@as(c_int, 1)),
+                    posix.SOL.SOCKET,
+                    posix.SO.REUSEADDR,
+                    &mem.toBytes(@as(u32, 1)),
                 );
             }
         }
@@ -101,27 +312,28 @@ pub const Socket = struct {
     }
 
     /// Bind the current Socket
-    pub fn bind(self: Socket) !void {
-        try std.posix.bind(self.handle, &self.addr.any, self.addr.getOsSockLen());
+    pub fn bind(sock: Socket) !void {
+        try syscall.bind(sock.handle, &sock.addr);
     }
 
     /// Listen on the Current Socket.
     pub fn listen(self: Socket, backlog: usize) !void {
         debug.assert(self.kind.listenable());
-        try std.posix.listen(self.handle, @truncate(backlog));
+        try syscall.listen(self.handle, @truncate(backlog));
     }
 
+    // TODO: rethink the aio to io approach
     pub fn close(self: Socket, rt: *Runtime) !void {
         if (rt.aio.features.has_capability(.close))
             try rt.scheduler.io_await(.{ .close = self.handle })
         else
-            std.posix.close(self.handle);
+            syscall.close(self.handle);
     }
 
     pub fn close_blocking(self: Socket) void {
         // todo: delete the unix socket if the
         // server is being closed
-        std.posix.close(self.handle);
+        syscall.close(self.handle);
     }
 
     pub fn accept(self: Socket, rt: *Runtime) !Socket {
@@ -138,28 +350,23 @@ pub const Socket = struct {
             const task = rt.scheduler.tasks.get(index);
             return try task.result.accept.unwrap();
         } else {
-            var addr: std.net.Address = undefined;
-            var addr_len = addr.getOsSockLen();
+            var addr: Socket.Address = .wildcard;
 
-            const socket: std.posix.socket_t = blk: while (true) {
-                break :blk std.posix.accept(
+            const socket: posix.socket_t = blk: while (true) {
+                break :blk syscall.accept(
                     self.handle,
-                    &addr.any,
-                    &addr_len,
-                    std.posix.SOCK.NONBLOCK,
+                    &addr,
+                    if (builtin.os.tag != .windows) posix.SOCK.NONBLOCK else 0,
                 ) catch |e| return switch (e) {
-                    std.posix.AcceptError.WouldBlock => {
+                    error.WouldBlock => {
                         Frame.yield();
                         continue;
                     },
-                    std.posix.AcceptError.ConnectionAborted,
-                    std.posix.AcceptError.ConnectionResetByPeer,
+                    error.ConnectionAborted,
                     => AcceptError.ConnectionAborted,
-                    std.posix.AcceptError.SocketNotListening => AcceptError.NotListening,
-                    std.posix.AcceptError.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
-                    std.posix.AcceptError.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
-                    std.posix.AcceptError.FileDescriptorNotASocket => AcceptError.NotASocket,
-                    std.posix.AcceptError.OperationNotSupported => AcceptError.OperationNotSupported,
+                    error.SocketNotListening => AcceptError.NotListening,
+                    error.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
+                    error.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
                     else => AcceptError.Unexpected,
                 };
             };
@@ -187,12 +394,11 @@ pub const Socket = struct {
             try task.result.connect.unwrap();
         } else {
             while (true) {
-                break std.posix.connect(
+                break syscall.connect(
                     self.handle,
-                    &self.addr.any,
-                    self.addr.getOsSockLen(),
+                    &self.addr,
                 ) catch |e| return switch (e) {
-                    std.posix.ConnectError.WouldBlock => {
+                    error.WouldBlock => {
                         Frame.yield();
                         continue;
                     },
@@ -216,8 +422,8 @@ pub const Socket = struct {
             return try task.result.recv.unwrap();
         } else {
             const count: usize = blk: while (true) {
-                break :blk std.posix.recv(self.handle, buffer, 0) catch |e| return switch (e) {
-                    std.posix.RecvFromError.WouldBlock => {
+                break :blk syscall.recv(self.handle, buffer, 0) catch |e| return switch (e) {
+                    error.WouldBlock => {
                         Frame.yield();
                         continue;
                     },
@@ -235,8 +441,8 @@ pub const Socket = struct {
 
         while (length < buffer.len) {
             const result = self.recv(rt, buffer[length..]) catch |e| switch (e) {
-                RecvError.Closed => return length,
-                else => return e,
+                error.Closed => return length,
+                else => |err| return err,
             };
 
             length += result;
@@ -259,13 +465,13 @@ pub const Socket = struct {
             return try task.result.send.unwrap();
         } else {
             const count: usize = blk: while (true) {
-                break :blk std.posix.send(self.handle, buffer, 0) catch |e| return switch (e) {
-                    std.posix.SendError.WouldBlock => {
+                break :blk syscall.send(self.handle, buffer, 0) catch |e| return switch (e) {
+                    error.WouldBlock => {
                         Frame.yield();
                         continue;
                     },
-                    std.posix.SendError.ConnectionResetByPeer,
-                    std.posix.SendError.BrokenPipe,
+                    error.ConnectionResetByPeer,
+                    error.BrokenPipe,
                     => SendError.Closed,
                     else => SendError.Unexpected,
                 };
@@ -280,8 +486,8 @@ pub const Socket = struct {
 
         while (length < buffer.len) {
             const result = self.send(rt, buffer[length..]) catch |e| switch (e) {
-                SendError.Closed => return length,
-                else => return e,
+                error.Closed => return length,
+                else => |err| return err,
             };
             length += result;
         }
@@ -294,7 +500,7 @@ pub const Socket = struct {
         err: ?anyerror = null,
         pos: u64 = 0,
         rt: *Runtime,
-        interface: std.Io.Writer,
+        interface: Io.Writer,
 
         pub fn init(socket: Socket, rt: *Runtime, buffer: []u8) Writer {
             return .{
@@ -304,7 +510,7 @@ pub const Socket = struct {
             };
         }
 
-        pub fn initInterface(buffer: []u8) std.Io.Writer {
+        pub fn initInterface(buffer: []u8) Io.Writer {
             return .{
                 .vtable = &.{
                     .drain = drain,
@@ -314,7 +520,7 @@ pub const Socket = struct {
             };
         }
 
-        pub fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+        pub fn drain(io_w: *Io.Writer, data: []const []const u8, splat: usize) Io.Writer.Error!usize {
             const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
             const buffered = io_w.buffered();
 
@@ -346,10 +552,10 @@ pub const Socket = struct {
         }
 
         pub fn sendFile(
-            io_w: *std.Io.Writer,
-            file_reader: *std.fs.File.Reader,
-            limit: std.Io.Limit,
-        ) std.Io.Writer.FileError!usize {
+            io_w: *Io.Writer,
+            file_reader: *Io.File.Reader,
+            limit: Io.Limit,
+        ) Io.Writer.FileError!usize {
             _ = io_w; // autofix
             _ = file_reader; // autofix
             _ = limit; // autofix
@@ -362,7 +568,7 @@ pub const Socket = struct {
         err: ?anyerror = null,
         pos: u64 = 0,
         rt: *Runtime,
-        interface: std.Io.Reader,
+        interface: Io.Reader,
 
         pub fn init(socket: Socket, rt: *Runtime, buffer: []u8) Reader {
             return .{
@@ -372,7 +578,7 @@ pub const Socket = struct {
             };
         }
 
-        pub fn initInterface(buffer: []u8) std.Io.Reader {
+        pub fn initInterface(buffer: []u8) Io.Reader {
             return .{
                 .vtable = &.{
                     .stream = Reader.stream,
@@ -383,7 +589,7 @@ pub const Socket = struct {
             };
         }
 
-        fn stream(io_reader: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        fn stream(io_reader: *Io.Reader, w: *Io.Writer, limit: Io.Limit) Io.Reader.StreamError!usize {
             const r: *Reader = @alignCast(@fieldParentPtr("interface", io_reader));
             const w_dest = limit.slice(try w.writableSliceGreedy(1));
 
@@ -411,7 +617,7 @@ pub const Socket = struct {
     }
 
     // TODO: sendFile like api is a more appropriate for this
-    pub fn stream_to(from: Socket, to_w: *std.Io.Writer, rt: *Runtime) !void {
+    pub fn stream_to(from: Socket, to_w: *Io.Writer, rt: *Runtime) !void {
         debug.assert(to_w.buffer.len > 0);
 
         var file = from.reader(rt, &.{});
@@ -419,9 +625,7 @@ pub const Socket = struct {
         while (true) {
             _ = Reader.stream(file_r, to_w, .limited(to_w.buffer.len)) catch |e| switch (e) {
                 error.EndOfStream => break,
-                else => {
-                    return e;
-                },
+                else => |err| return err,
             };
             _ = to_w.vtable.drain(to_w, &.{}, 0) catch break;
         }
