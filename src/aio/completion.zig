@@ -73,6 +73,9 @@ pub const SendError = error{
     Closed,
     AccessDenied,
     WouldBlock,
+    // TODO: remove after finding out why secsock
+    // sometimes returns InvalidFd on send
+    InvalidFd,
     FastOpenAlreadyInProgress,
     ConnectionRefused,
     ConnectionResetByPeer,
