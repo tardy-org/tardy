@@ -17,7 +17,7 @@ tardy is a thread-local, I/O driven runtime for Zig, providing the core implemen
 - Coroutines (internally called Frames).
 
 ## Installing
-Compatible Zig Version: `0.15.2`
+Compatible Zig Version: `0.16.0`
 
 Latest Release: `0.3.1`
 ```

@@ -51,7 +51,10 @@ pub const Dir = struct {
         if (rt.aio.features.has_capability(.close))
             try rt.scheduler.io_await(.{ .close = self.handle })
         else
-            Io.File.close(.{ .handle = self.handle, .flags = .{ .nonblocking = true } }, rt.io);
+            Io.File.close(.{
+                .handle = self.handle,
+                .flags = .{ .nonblocking = true },
+            }, rt.io);
     }
 
     pub fn close_blocking(self: Dir) void {
@@ -67,7 +70,12 @@ pub const Dir = struct {
         };
 
         if (rt.aio.features.has_capability(.open)) {
-            try rt.scheduler.io_await(.{ .open = .{ .path = path, .flags = flags } });
+            try rt.scheduler.io_await(.{
+                .open = .{
+                    .path = path,
+                    .flags = flags,
+                },
+            });
 
             const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get_ptr(index);
@@ -146,12 +154,22 @@ pub const Dir = struct {
 
     /// Create a File relative to this Dir.
     pub fn create_file(self: Dir, rt: *Runtime, subpath: [:0]const u8, flags: File.CreateFlags) !File {
-        return try File.create(rt, .{ .rel = .{ .dir = self.handle, .path = subpath } }, flags);
+        return try .create(rt, .{
+            .rel = .{
+                .dir = self.handle,
+                .path = subpath,
+            },
+        }, flags);
     }
 
     /// Open a File relative to this Dir.
     pub fn open_file(self: Dir, rt: *Runtime, subpath: [:0]const u8, flags: File.OpenFlags) !File {
-        return try File.open(rt, .{ .rel = .{ .dir = self.handle, .path = subpath } }, flags);
+        return try .open(rt, .{
+            .rel = .{
+                .dir = self.handle,
+                .path = subpath,
+            },
+        }, flags);
     }
 
     /// Create a Dir relative to this Dir.
@@ -166,13 +184,20 @@ pub const Dir = struct {
 
     /// Open a Dir relative to this Dir.
     pub fn open_dir(self: Dir, rt: *Runtime, subpath: [:0]const u8) !Dir {
-        return try Dir.open(rt, .{ .rel = .{ .dir = self.handle, .path = subpath } });
+        return try Dir.open(rt, .{
+            .rel = .{
+                .dir = self.handle,
+                .path = subpath,
+            },
+        });
     }
 
     /// Get Stat information of this Dir.
     pub fn stat(self: Dir, rt: *Runtime) !Stat {
         if (rt.aio.features.has_capability(.stat)) {
-            try rt.scheduler.io_await(.{ .stat = self.handle });
+            try rt.scheduler.io_await(.{
+                .stat = self.handle,
+            });
 
             const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get_ptr(index);
@@ -181,13 +206,13 @@ pub const Dir = struct {
             const std_dir = self.to_std();
             const dir_stat = std_dir.stat() catch |e| {
                 return switch (e) {
-                    StdDir.StatError.AccessDenied => StatError.AccessDenied,
-                    StdDir.StatError.SystemResources => StatError.OutOfMemory,
-                    StdDir.StatError.Unexpected => StatError.Unexpected,
+                    error.AccessDenied => StatError.AccessDenied,
+                    error.SystemResources => StatError.OutOfMemory,
+                    error.Unexpected => StatError.Unexpected,
                 };
             };
 
-            return Stat{
+            return .{
                 .size = dir_stat.size,
                 .mode = dir_stat.mode,
                 .changed = .{
@@ -209,12 +234,15 @@ pub const Dir = struct {
     /// Delete a File within this Dir.
     pub fn delete_file(self: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
         if (rt.aio.features.has_capability(.delete)) {
-            try rt.scheduler.io_await(.{
-                .delete = .{
-                    .path = .{ .rel = .{ .dir = self.handle, .path = subpath } },
-                    .is_dir = false,
+            try rt.scheduler.io_await(.{ .delete = .{
+                .path = .{
+                    .rel = .{
+                        .dir = self.handle,
+                        .path = subpath,
+                    },
                 },
-            });
+                .is_dir = false,
+            } });
         } else {
             const std_dir = self.to_std();
             return std_dir.deleteFile(rt.io, subpath) catch |e| switch (e) {
@@ -227,10 +255,12 @@ pub const Dir = struct {
     pub fn delete_dir(self: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
         if (rt.aio.features.has_capability(.delete)) {
             try rt.scheduler.io_await(.{
-                .delete = .{
-                    .path = .{ .rel = .{ .dir = self.handle, .path = subpath } },
-                    .is_dir = true,
-                },
+                .delete = .{ .path = .{
+                    .rel = .{
+                        .dir = self.handle,
+                        .path = subpath,
+                    },
+                }, .is_dir = true },
             });
         } else {
             const std_dir = self.to_std();
