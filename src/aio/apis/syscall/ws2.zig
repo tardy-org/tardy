@@ -136,7 +136,7 @@ pub fn closesock(s: windows.HANDLE) !void {
 pub extern "ws2_32" fn ioctlsocket(
     s: windows.HANDLE,
     cmd: i32,
-    argp: *u32,
+    mode: *u32,
 ) callconv(.winapi) i32;
 
 pub extern "ws2_32" fn bind(
