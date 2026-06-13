@@ -1,6 +1,5 @@
 // vendored from https://github.com/ryuapp/zig-mirror/blob/dba1bf935390ddb0184a4dc72245454de6c06fd2/lib/std/posix.zig
 // https://github.com/ryuapp/zig-mirror/commit/9ac1386c10736bc249f3891f34f23424531917a5#diff-503dcf04ec9ce2a1818ec55644fa34ff5918e86bd38a565c0186b201c06dd540
-// https://github.com/ryuapp/zig-mirror/blob/aa0249d74e573742db3567f589fc6e4a00e1fff8/lib/std/os/windows.zig
 const std = @import("std");
 pub const UnexpectedError = std.Io.UnexpectedError;
 const posix = std.posix;
@@ -531,9 +530,16 @@ pub fn recvfrom(
     addrlen: ?*posix.socklen_t,
 ) RecvFromError!usize {
     // TODO: explore a windows native approach but we can currently go through C
-    // if (native_os == .windows) {
-    //     @compileError("recvfrom currently unsupported on windows");
-    // }
+    if (native_os == .windows) {
+        return try ws2.recvfrom(
+            sockfd,
+            buf.ptr,
+            buf.len,
+            flags,
+            src_addr,
+            addrlen,
+        );
+    }
 
     while (true) {
         const rc = system.recvfrom(

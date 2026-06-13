@@ -1,3 +1,5 @@
+// https://github.com/ryuapp/zig-mirror/blob/aa0249d74e573742db3567f589fc6e4a00e1fff8/lib/std/os/windows/ws2_32.zig
+// https://github.com/ryuapp/zig-mirror/blob/aa0249d74e573742db3567f589fc6e4a00e1fff8/lib/std/os/windows.zig
 const std = @import("std");
 const windows = std.os.windows;
 const ws2_32 = windows.ws2_32;
@@ -46,6 +48,66 @@ pub extern "ws2_32" fn socket(
     @"type": i32,
     protocol: i32,
 ) callconv(.winapi) windows.HANDLE;
+
+pub const WSABUF = extern struct {
+    len: windows.ULONG,
+    buf: [*]u8,
+};
+pub const LPWSAOVERLAPPED_COMPLETION_ROUTINE = *const fn (
+    dwError: u32,
+    cbTransferred: u32,
+    lpOverlapped: *OVERLAPPED,
+    dwFlags: u32,
+) callconv(.winapi) void;
+pub extern "ws2_32" fn WSARecvFrom(
+    s: windows.HANDLE,
+    lpBuffers: [*]WSABUF,
+    dwBuffercount: u32,
+    lpNumberOfBytesRecvd: ?*u32,
+    lpFlags: *u32,
+    lpFrom: ?*ws2_32.sockaddr,
+    lpFromlen: ?*i32,
+    lpOverlapped: ?*OVERLAPPED,
+    lpCompletionRoutine: ?LPWSAOVERLAPPED_COMPLETION_ROUTINE,
+) callconv(.winapi) i32;
+
+pub fn recvfrom(
+    s: windows.HANDLE,
+    buf: [*]u8,
+    len: usize,
+    flags: u32,
+    from: ?*ws2_32.sockaddr,
+    from_len: ?*ws2_32.socklen_t,
+) !u32 {
+    var buffer: WSABUF = .{ .len = @intCast(len), .buf = buf };
+    var bytes_received: windows.DWORD = undefined;
+    var flags_inout = flags;
+    if (WSARecvFrom(
+        s,
+        @ptrCast(&buffer),
+        1,
+        &bytes_received,
+        &flags_inout,
+        from,
+        @ptrCast(from_len),
+        null,
+        null,
+    ) == SOCKET_ERROR) {
+        switch (WSAGetLastError()) {
+            .NOTINITIALISED => unreachable,
+            .EINVAL => unreachable,
+            .ENETDOWN => unreachable,
+            .ECONNRESET => return error.ConnectionResetByPeer,
+            .EMSGSIZE => return error.MessageTooBig,
+            .ENOTCONN => return error.SocketNotConnected,
+            .EWOULDBLOCK => return error.WouldBlock,
+            .ETIMEDOUT => return error.ConnectionTimedOut,
+            else => |err| return unexpectedWSAError(err),
+        }
+    } else {
+        return @intCast(bytes_received);
+    }
+}
 
 extern "kernel32" fn WriteFile(
     in_hFile: windows.HANDLE,
