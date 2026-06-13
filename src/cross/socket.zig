@@ -1,12 +1,14 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const os = builtin.os.tag;
+
 const syscall = @import("../aio/apis/syscall.zig");
+pub const INVALID_SOCKET = @import("fd.zig").INVALID_FD;
 
 /// Ensures that the `std.posix.socket_t` is valid.
 pub fn is_valid(socket: std.posix.socket_t) bool {
     switch (comptime os) {
-        .windows => return socket != syscall.ws2.INVALID_SOCKET,
+        .windows => return socket != INVALID_SOCKET,
         else => return socket >= 0,
     }
 }
