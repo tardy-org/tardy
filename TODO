@@ -1,3 +1,5 @@
+Evaluate, Investigate and fix todos in the codebase
+
 allow specifying io backend for examples
 make programmer error errors unreacable in the code base for correctness
 reduce type namespacing
