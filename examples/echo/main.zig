@@ -58,8 +58,11 @@ pub fn main(init: std.process.Init) !void {
 
     const server: Socket = try .init(init.io, .{ .tcp = .{ .host = host, .port = port } });
     try server.bind();
-    try server.listen(1024);
+    try server.listen(501);
 
+    // tardy by default is
+    // - multithreaded
+    // - unbounded in terms of spawnable tasks
     var td: Tardy = try .init(init.gpa, init.io, .{
         .pooling = .static,
         .size_tasks_initial = 256,
