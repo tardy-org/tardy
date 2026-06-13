@@ -7,7 +7,7 @@ Most of the code for this project originated in [zzz](https://github.com/tardy-o
 - tardy natively supports Linux, Mac, BSD, and Windows.
 - tardy is configurable, allowing you to optimize the runtime for your specific use-case.
 
-[![Discord](https://img.shields.io/discord/1294761432922980392?logo=discord)](https://discord.gg/FP9Xb7WGPK)
+[![Discord](https://img.shields.io/discord/1294761432922980392?logo=discord)](https://discord.gg/HNEszT7qSR)
 
 ## Summary
 tardy is a thread-local, I/O driven runtime for Zig, providing the core implementation for asynchronous libraries and services.
