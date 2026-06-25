@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 
 const AsyncKind = @import("src/aio/lib.zig").AsyncKind;
 
-const zig_version: std.SemanticVersion = .{ .major = 0, .minor = 16, .patch = 0 };
+const zig_version: std.SemanticVersion = .{ .major = 0, .minor = 17, .patch = 0 };
 comptime {
     // Compare versions while allowing different pre/patch metadata.
     const zig_version_eq = zig_version.major == builtin.zig_version.major and
@@ -49,6 +49,7 @@ const Example = enum {
         return ex_string;
     }
 };
+
 pub fn build(b: *std.Build) void {
 
     // Top-level steps you can invoke on the command line.
