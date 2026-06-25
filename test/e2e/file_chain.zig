@@ -60,7 +60,7 @@ pub const FileChain = struct {
         try list.append(allocator, .create);
 
         while (true) {
-            const potentials = next_steps(list.getLast());
+            const potentials = next_steps(list.last().?.*);
             if (potentials.len == 0) break;
             const potential = rand.intRangeLessThan(usize, 0, potentials.len);
             try list.append(allocator, potentials[potential]);

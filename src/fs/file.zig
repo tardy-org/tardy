@@ -223,7 +223,7 @@ pub const File = struct {
 
             return try result.unwrap();
         } else {
-            const std_flags: StdFile.CreateFlags = .{
+            const std_flags: StdDir.CreateFileOptions = .{
                 .read = (aio_flags.mode == .read or aio_flags.mode == .read_write),
                 .truncate = aio_flags.truncate,
                 .exclusive = aio_flags.exclusive,
@@ -313,7 +313,7 @@ pub const File = struct {
 
             return try result.unwrap();
         } else {
-            const std_flags: StdFile.OpenFlags = .{
+            const std_flags: StdDir.OpenFileOptions = .{
                 .mode = switch (flags.mode) {
                     .read => .read_only,
                     .write => .write_only,

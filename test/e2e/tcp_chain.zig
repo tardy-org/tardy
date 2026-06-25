@@ -55,7 +55,7 @@ pub const TcpServerChain = struct {
         try list.append(allocator, .accept);
 
         while (true) {
-            const potentials = next_steps(list.getLast());
+            const potentials = next_steps(list.last().?.*);
             if (potentials.len == 0) break;
             const potential = rand.intRangeLessThan(usize, 0, potentials.len);
             try list.append(allocator, potentials[potential]);

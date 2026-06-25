@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 
 pub const Dir = @import("dir.zig").Dir;
 pub const File = @import("file.zig").File;
@@ -15,15 +16,22 @@ pub const Path = union(enum) {
     pub fn dupe(self: *const Path, allocator: std.mem.Allocator) !Path {
         switch (self.*) {
             .rel => |inner| {
-                const path_dupe = try allocator.dupeZ(u8, inner.path);
+                const path_dupe = try allocator.dupeSentinel(u8, inner.path, 0x0);
                 errdefer allocator.free(path_dupe);
-                return .{ .rel = .{ .dir = inner.dir, .path = path_dupe } };
+                return .{
+                    .rel = .{
+                        .dir = inner.dir,
+                        .path = path_dupe,
+                    },
+                };
             },
-            .abs => |path| return .{ .abs = try allocator.dupeZ(u8, path) },
+            .abs => |path| return .{
+                .abs = try allocator.dupeSentinel(u8, path, 0x0),
+            },
         }
     }
 };
-const Io = std.Io;
+
 pub const Stat = struct {
     size: u64,
     mode: u32 = 0,
