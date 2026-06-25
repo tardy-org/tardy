@@ -168,9 +168,9 @@ fn build_examples(
     if (options.example == .all) {
         std.log.info("zig build run -Dexample=all will only build examples and will not run them", .{});
 
-        inline for (std.meta.fields(Example)) |f| {
+        inline for (@typeInfo(Example).@"enum".field_values) |value| {
             // convert captured field value to field enum
-            const field = @as(Example, @enumFromInt(f.value));
+            const field: Example = @enumFromInt(value);
 
             // skip .none and .all for building step
             if (field == .none or field == .all) {
@@ -269,9 +269,7 @@ fn build_example_exe(
     run_artifact.step.dependOn(&install_artifact.step);
 
     // pass args to examples (.ie cat, rmdir, shove, stat)
-    if (b.args) |args| {
-        run_artifact.addArgs(args);
-    }
+    run_artifact.addPassthruArgs();
 
     steps.run.dependOn(&install_artifact.step);
     steps.run.dependOn(&run_artifact.step);
@@ -330,7 +328,10 @@ fn build_test(
 
     // Check formatting
     // usage: zig build fmt
-    const run_fmt = b.addFmt(.{ .paths = &.{"."}, .check = true });
+    const run_fmt = b.addFmt(.{
+        .paths = &.{b.path(".")},
+        .check = true,
+    });
     steps.test_fmt.dependOn(&run_fmt.step);
 
     // Run all tests
@@ -390,7 +391,7 @@ fn build_test_e2e(
     run_artifact.step.dependOn(&install_artifact.step);
 
     // pass a u64 as an arg
-    if (b.args) |args| run_artifact.addArgs(args);
+    run_artifact.addPassthruArgs();
 
     steps.test_e2e.dependOn(&install_artifact.step);
     steps.test_e2e.dependOn(&run_artifact.step);
