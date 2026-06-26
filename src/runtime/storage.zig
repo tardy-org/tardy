@@ -14,7 +14,7 @@ pub const Storage = struct {
         };
     }
 
-    pub fn deinit(self: Storage) void {
+    pub fn deinit(self: *Storage) void {
         self.arena.deinit();
     }
 

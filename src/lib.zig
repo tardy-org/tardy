@@ -207,7 +207,10 @@ pub fn Tardy(comptime selected_aio_type: AsyncType) type {
                             .pooling = options.pooling,
                             .size_tasks_initial = options.size_tasks_initial,
                             .size_aio_reap_max = options.size_aio_reap_max,
-                        }) catch return;
+                        }) catch |e| {
+                            log.err("failed to spawn runtime {d}: {t}", .{ current_id, e });
+                            return;
+                        };
                         defer thread_rt.deinit();
 
                         _ = count.fetchAdd(1, .acquire);

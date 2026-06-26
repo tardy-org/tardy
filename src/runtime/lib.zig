@@ -5,7 +5,7 @@ const Async = @import("../aio/lib.zig").Async;
 const PoolKind = @import("../core/pool.zig").PoolKind;
 const Queue = @import("../core/queue.zig").Queue;
 const Frame = @import("../frame/lib.zig").Frame;
-const Timespec = @import("../lib.zig").Timespec;
+
 const Scheduler = @import("./scheduler.zig").Scheduler;
 const Storage = @import("storage.zig").Storage;
 const Task = @import("task.zig").Task;
