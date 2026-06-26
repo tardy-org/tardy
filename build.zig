@@ -4,53 +4,8 @@ const builtin = @import("builtin");
 
 const AsyncKind = @import("src/aio/lib.zig").AsyncKind;
 
-const zig_version: std.SemanticVersion = .{ .major = 0, .minor = 17, .patch = 0 };
-comptime {
-    // Compare versions while allowing different pre/patch metadata.
-    const zig_version_eq = zig_version.major == builtin.zig_version.major and
-        zig_version.minor == builtin.zig_version.minor and
-        zig_version.patch == builtin.zig_version.patch;
-    if (!zig_version_eq) {
-        @compileError(std.fmt.comptimePrint(
-            "unsupported zig version: expected {f}, found {f}",
-            .{ zig_version, builtin.zig_version },
-        ));
-    }
-}
-
-const Example = enum {
-    none,
-    all,
-    basic,
-    cat,
-    channel,
-    echo,
-    http,
-    rmdir,
-    shove,
-    stat,
-    stream,
-
-    fn toString(ex: Example) []const u8 {
-        const ex_string = switch (ex) {
-            .basic => "basic",
-            .cat => "cat",
-            .channel => "channel",
-            .echo => "echo",
-            .http => "http",
-            .rmdir => "rmdir",
-            .shove => "shove",
-            .stat => "stat",
-            .stream => "stream",
-
-            else => "",
-        };
-
-        return ex_string;
-    }
-};
-
 pub fn build(b: *std.Build) void {
+    comptime checkVersion();
 
     // Top-level steps you can invoke on the command line.
     const build_steps = .{
@@ -395,4 +350,55 @@ fn build_test_e2e(
 
     steps.test_e2e.dependOn(&install_artifact.step);
     steps.test_e2e.dependOn(&run_artifact.step);
+}
+
+const Example = enum {
+    none,
+    all,
+    basic,
+    cat,
+    channel,
+    echo,
+    http,
+    rmdir,
+    shove,
+    stat,
+    stream,
+
+    fn toString(ex: Example) []const u8 {
+        const ex_string = switch (ex) {
+            .basic => "basic",
+            .cat => "cat",
+            .channel => "channel",
+            .echo => "echo",
+            .http => "http",
+            .rmdir => "rmdir",
+            .shove => "shove",
+            .stat => "stat",
+            .stream => "stream",
+
+            else => "",
+        };
+
+        return ex_string;
+    }
+};
+
+// ensures the currently in-use zig version is at least the minimum required
+fn checkVersion() void {
+    const minimum_zig_version: []const u8 = @import("build.zig.zon").minimum_zig_version;
+    const supported_version = std.SemanticVersion.parse(minimum_zig_version) catch unreachable;
+
+    const current_version = builtin.zig_version;
+    // Compare versions while allowing different pre/patch metadata.
+    const order = current_version.order(supported_version);
+    if (order == .lt) {
+        const message = std.fmt.comptimePrint(
+            \\The used Zig version ({s}) is not yet supported by tardy.
+            \\
+            \\Update your zig toolchain to {s}"
+            \\
+        , .{ builtin.zig_version_string, minimum_zig_version });
+        @compileError(message);
+    }
 }
