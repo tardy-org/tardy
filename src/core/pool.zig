@@ -92,7 +92,7 @@ pub fn Pool(comptime T: type) type {
 
         /// Is this full?
         pub fn full(self: *const Self) bool {
-            return self.dirty.count() == self.list.len;
+            return self.dirty.count() == self.items.len;
         }
 
         /// Returns the number of clean (or available) slots.
