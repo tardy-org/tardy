@@ -21,7 +21,7 @@ tardy is a thread-local, I/O driven runtime for Zig, providing the core implemen
 Main line Compatible Zig Version: `0.17.0-dev.956+2dca73595`
 
 ```elvish
-zig fetch --save 'git+https://github.com/bernardassan/tardy?ref=main#commit_hash'
+zig fetch --save 'git+https://github.com/tardy-org/tardy?ref=main#commit_hash'
 ```
 
 **Else**
