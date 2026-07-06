@@ -1,5 +1,5 @@
 const std = @import("std");
-const assert = std.debug.assert;
+const debug = std.debug;
 const builtin = @import("builtin");
 
 const log = std.log.scoped(.@"tardy/frame");
@@ -13,33 +13,38 @@ const Hardware = switch (builtin.cpu.arch) {
     else => @compileError("Architecture not currently supported!"),
 };
 
-const FrameEntryFn = *const fn () callconv(.c) noreturn;
+const FrameEntryFn = *allowzero const fn () callconv(.c) noreturn;
 fn EntryFn(args: anytype, comptime func: anytype) FrameEntryFn {
     const Args = @TypeOf(args);
-    return struct {
+    const Fn = struct {
         fn inner() callconv(.c) noreturn {
-            const frame = active_frame.?;
+            const frame_ptr: *Frame = active_frame.?;
 
-            //const args_ptr: *align(1) Args = @ptrFromInt(@intFromPtr(frame) - @sizeOf(Args));
-            const args_ptr: *Args = @ptrFromInt(@intFromPtr(frame) - @sizeOf(Args));
+            const args_addr = Hardware.alignment.backward(
+                @intFromPtr(frame_ptr) - @sizeOf(Args),
+            );
+            const args_ptr: *Args = @ptrFromInt(args_addr);
+
             @call(.auto, func, args_ptr.*) catch |e| {
                 log.warn("frame failed | {any}", .{e});
-                frame.status = .errored;
+                frame_ptr.status = .errored;
                 Frame.yield();
                 unreachable;
             };
 
             // When our func is done running, just yield.
-            frame.status = .done;
+            frame_ptr.status = .done;
             Frame.yield();
             unreachable;
         }
-    }.inner;
+    };
+    return Fn.inner;
 }
 
 threadlocal var active_frame: ?*Frame = null;
 
-pub const Frame = extern struct {
+const raw_alignment = Hardware.alignment.toByteUnits();
+pub const Frame = struct {
     const Status = enum(u8) {
         in_progress,
         done,
@@ -47,12 +52,11 @@ pub const Frame = extern struct {
     };
 
     /// The previous SP.
-    caller_sp: [*]u8,
+    caller_sp: *align(raw_alignment) anyopaque,
     /// The current SP.
-    current_sp: [*]u8,
+    current_sp: *align(raw_alignment) anyopaque,
     /// Stack Info
-    stack_ptr: [*]u8,
-    stack_len: usize,
+    stack_mem: []align(raw_alignment) u8,
     /// Is the Frame done?
     status: Status = .in_progress,
 
@@ -61,65 +65,78 @@ pub const Frame = extern struct {
         stack_size: usize,
         args: anytype,
         comptime func: anytype,
-    ) !*Frame {
-        const stack = try allocator.alloc(u8, stack_size);
-        errdefer allocator.free(stack);
-        const Args = @TypeOf(args);
+    ) *Frame {
+        // TODO: assert minimum stack size
+        // stack_size should be aligned to `Hardware.alignment`
+        debug.assert(Hardware.alignment.check(stack_size));
 
-        if (comptime builtin.mode == .Debug) {
-            // this should mark it easily for the debugger.
-            for (stack) |*byte| byte.* = 0xAA;
-        }
+        // Allocate Fiber/Frame Stack with abi alignment
+        const stack: []align(raw_alignment) u8 = allocator.alignedAlloc(
+            u8,
+            Hardware.alignment,
+            // in debug mode, SafeAllocator is used by default which requires some extra
+            // bookkeeping space for stack trace capturing
+            // TODO: limit multipler to 1.25
+            if (builtin.mode == .Debug) stack_size * 2 else stack_size,
+        ) catch @panic("OOM");
 
         const stack_base = @intFromPtr(stack.ptr);
-        const stack_end = @intFromPtr(stack.ptr + stack.len);
+        const stack_top = @intFromPtr(stack.ptr + stack.len);
 
         // space for the frame
-        var stack_ptr = std.mem.alignBackward(
-            usize,
-            stack_end - @sizeOf(Frame),
-            Hardware.alignment,
+        const frame_ptr = Hardware.alignment.backward(
+            stack_top - @sizeOf(Frame),
         );
-        if (stack_ptr < stack_base) return error.StackTooSmall;
-        const frame: *Frame = @ptrFromInt(stack_ptr);
+        debug.assert(frame_ptr > stack_base);
 
+        const frame: *Frame = @ptrFromInt(frame_ptr);
+
+        const Args = @TypeOf(args);
         // space for the args
-        stack_ptr -= @sizeOf(Args);
-        const arg_ptr: *Args = @ptrFromInt(stack_ptr);
+        const args_ptr = Hardware.alignment.backward(
+            frame_ptr - @sizeOf(Args),
+        );
+        debug.assert(args_ptr > stack_base);
+
+        const arg_ptr: *Args = @ptrFromInt(args_ptr);
         arg_ptr.* = args;
 
-        // space for the saved registers (pushed)
-        stack_ptr = std.mem.alignBackward(
-            usize,
-            stack_ptr - @sizeOf(usize) * Hardware.stack_count,
-            Hardware.alignment,
+        // setup space for the `Hardware.stack_count` of callee-saved registers
+        const register_ptr = Hardware.alignment.backward(
+            args_ptr - (@sizeOf(usize) * Hardware.stack_count),
         );
-        if (stack_ptr < stack_base) return error.StackTooSmall;
-        assert(std.mem.isAligned(stack_ptr, Hardware.alignment));
+        debug.assert(register_ptr > stack_base);
 
-        // set the return address appropriately
-        const entries: [*]FrameEntryFn = @ptrFromInt(stack_ptr);
-        entries[Hardware.entry] = EntryFn(args, func);
+        // address space for the callee-saved registers
+        const register_entries: []FrameEntryFn = @as([*]FrameEntryFn, @ptrFromInt(
+            register_ptr,
+        ))[0..Hardware.stack_count];
+
+        // A frame pointer of 0x0 denotes the root of the stack for the DWARF unwinder
+        // so it knows where to stop unwinding.
+        register_entries[Hardware.frame_ptr] = @ptrFromInt(0x0);
+
+        // return address/instruction pointer we jump to for the execution of fiber's
+        // entry point function after returning from `tardy_swap_frame`
+        register_entries[Hardware.entry] = EntryFn(args, func);
 
         frame.* = .{
             .caller_sp = undefined,
-            .current_sp = @ptrFromInt(stack_ptr),
-            .stack_ptr = stack.ptr,
-            .stack_len = stack.len,
+            .current_sp = @ptrFromInt(register_ptr),
+            .stack_mem = stack,
         };
 
         return frame;
     }
 
-    pub fn deinit(self: *const Frame, allocator: std.mem.Allocator) void {
-        const stack = self.stack_ptr[0..self.stack_len];
-        allocator.free(stack);
+    pub fn deinit(self: *Frame, allocator: std.mem.Allocator) void {
+        allocator.free(self.stack_mem);
     }
 
     /// This runs/continues a Frame.
     pub fn proceed(frame: *Frame) void {
         const old_frame = active_frame;
-        assert(old_frame != frame);
+        debug.assert(old_frame != frame);
         active_frame = frame;
         defer active_frame = old_frame;
 
@@ -134,10 +151,24 @@ pub const Frame = extern struct {
 };
 
 const x64SysV = struct {
+    /// [0] %r15 pushq %r15 - Lowest Address (where %rsp points)
+    /// [1] %r14 pushq %r14
+    /// [2] %r13 pushq %r13
+    /// [3] %r12 pushq %r12
+    /// [4] %rbp pushq %rbp - Frame Pointer
+    /// [5] %rbx pushq %rbx
+    /// [6] RIP call (implicit) - Entry Function / Return Address
     pub const stack_count = 7;
-    pub const entry = stack_count - 1;
-    pub const alignment = 16;
-    extern fn tardy_swap_frame(noalias *[*]u8, noalias *[*]u8) callconv(.c) void;
+    /// %rbp
+    pub const frame_ptr = 4;
+    /// Entry Function at Return Address (RIP)
+    pub const entry = 6;
+    pub const alignment: std.mem.Alignment = .@"16";
+
+    extern fn tardy_swap_frame(
+        noalias **align(raw_alignment) anyopaque,
+        noalias **align(raw_alignment) anyopaque,
+    ) callconv(.c) void;
 
     comptime {
         asm (@embedFile("asm/x86_64_sysv.asm"));
@@ -145,10 +176,29 @@ const x64SysV = struct {
 };
 
 const x64Windows = struct {
+    /// [0] to [19] %xmm6 to %xmm15 - Takes up 20 indices (160 bytes total)
+    /// [20] %r15 - First GPR popped (lowest address of pushed GPRs)
+    /// [21] %r14
+    /// [22] %r13
+    /// [23] %r12
+    /// [24] %rsi
+    /// [25] %rdi
+    /// [26] %rbp - Frame Pointer
+    /// [27] %rbx
+    /// [28] %gs:0x08 - Stack Base (Top of Stack)
+    /// [29] %gs:0x10 - Stack Limit (Bottom of Stack)
+    /// [30] RIP - Entry Function / Return Addres
     pub const stack_count = 31;
-    pub const entry = stack_count - 1;
-    pub const alignment = 16;
-    extern fn tardy_swap_frame(noalias *[*]u8, noalias *[*]u8) callconv(.c) void;
+    /// %rbp
+    pub const frame_ptr = 26;
+    /// Return Address (RIP)
+    pub const entry = 30;
+    pub const alignment: std.mem.Alignment = .@"16";
+
+    extern fn tardy_swap_frame(
+        noalias **align(raw_alignment) anyopaque,
+        noalias **align(raw_alignment) anyopaque,
+    ) callconv(.c) void;
 
     comptime {
         asm (@embedFile("asm/x86_64_win.asm"));
@@ -156,12 +206,41 @@ const x64Windows = struct {
 };
 
 const aarch64General = struct {
+    /// [0] fp (x29)  - Lowest Address / Frame Pointer
+    /// [1] lr (x30) - Entry Function / Return Address
+    /// [2] d8
+    /// [3] d9
+    /// [4] d10
+    /// [5] d11
+    /// [6] d12
+    /// [7] d13
+    /// [8] d14
+    /// [9] d15
+    /// [10] x19
+    /// [11] x20
+    /// [12] x21
+    /// [13] x22
+    /// [14] x23
+    /// [15] x24
+    /// [16] x25
+    /// [17] x26
+    /// [18] x27
+    /// [19] x28 - Highest Address
     pub const stack_count = 20;
-    pub const entry = 0;
-    pub const alignment = 16;
-    extern fn tardy_swap_frame(noalias *[*]u8, noalias *[*]u8) callconv(.c) void;
+    /// Frame Pointer (FP)
+    pub const frame_ptr = 0;
+    /// Entry Function at Link Register (LR)
+    pub const entry = 1;
+    pub const alignment: std.mem.Alignment = .@"16";
+
+    extern fn tardy_swap_frame(
+        noalias **align(raw_alignment) anyopaque,
+        noalias **align(raw_alignment) anyopaque,
+    ) callconv(.c) void;
 
     comptime {
+        // TODO: move assembly into `tardy_swap_frame` definition
+        // TODO: allowzero for sp and check if 0x0 so I can skip part of the asm dance
         asm (@embedFile("asm/aarch64_gen.asm"));
     }
 };

@@ -94,7 +94,7 @@ pub const FileChain = struct {
         };
     }
 
-    pub fn deinit(self: *const FileChain, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *FileChain, allocator: std.mem.Allocator) void {
         defer allocator.free(self.steps);
         defer allocator.free(self.buffer);
         defer switch (self.path) {
