@@ -33,8 +33,6 @@ const max_stderr_output = 9 * 1024 * 1024;
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const gpa = init.gpa;
-    var arena_alloc = init.arena;
-    const arena = arena_alloc.allocator();
     var args = try init.minimal.args.iterateAllocator(gpa);
     defer args.deinit();
 
@@ -56,7 +54,7 @@ pub fn main(init: std.process.Init) !void {
         if (length >= maybe_seed_buffer.len) @panic("seed too long to be a u64");
 
         assert(length < maybe_seed_buffer.len);
-        mem.copyForwards(u8, &maybe_seed_buffer, pre_new);
+        @memcpy(maybe_seed_buffer[0..length], pre_new);
         maybe_seed_buffer[length] = 0;
         break :blk maybe_seed_buffer[0..length :0];
     };
@@ -76,9 +74,7 @@ pub fn main(init: std.process.Init) !void {
     };
     log.debug("{f}", .{std.json.fmt(shared, .{ .whitespace = .indent_1 })});
 
-    // TODO: find out why using gpa here gives
-    // thread panic: incorrect alignment on aarch64-linux/macos
-    var tardy: Tardy = try .init(arena, io, .{
+    var tardy: Tardy = try .init(gpa, io, .{
         .threading = .{ .multi = 2 },
         .pooling = .grow,
         .size_tasks_initial = shared.size_tasks_initial,

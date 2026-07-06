@@ -6,7 +6,8 @@ const AtomicDynamicBitSet = @import("../core/atomic_bitset.zig").AtomicDynamicBi
 const Pool = @import("../core/pool.zig").Pool;
 const PoolKind = @import("../core/pool.zig").PoolKind;
 const Queue = @import("../core/queue.zig").Queue;
-const Frame = @import("../frame/lib.zig").Frame;
+const frame = @import("../frame/lib.zig");
+const Frame = frame.Frame;
 const Runtime = @import("lib.zig").Runtime;
 const Task = @import("task.zig").Task;
 
@@ -42,6 +43,10 @@ pub const Scheduler = struct {
     }
 
     pub fn deinit(sched: *Scheduler, io: std.Io) void {
+        var iter = sched.tasks.iterator();
+        while (iter.next_ptr()) |task| {
+            task.frame.deinit(sched.allocator);
+        }
         sched.tasks.deinit();
         sched.released.deinit(sched.allocator);
         sched.triggers.deinit(sched.allocator, io);
@@ -97,11 +102,11 @@ pub const Scheduler = struct {
             }
         };
 
-        const frame: *Frame = try .init(self.allocator, stack_size, frame_ctx, frame_fn);
+        const frame_ptr: *Frame = .init(self.allocator, stack_size, frame_ctx, frame_fn);
 
         const item: Task = .{
             .index = index,
-            .frame = frame,
+            .frame = frame_ptr,
             .state = .dead,
         };
         const item_ptr = self.tasks.get_ptr(index);
