@@ -1,5 +1,4 @@
 const std = @import("std");
-const Frame = @import("../frame/lib.zig").Frame;
 const Runtime = @import("lib.zig").Runtime;
 
 pub const Timer = struct {

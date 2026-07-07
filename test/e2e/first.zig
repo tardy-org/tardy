@@ -1,14 +1,10 @@
 const std = @import("std");
-const assert = std.debug.assert;
-const Atomic = std.atomic.Value;
 const tardy = @import("tardy");
 const Dir = tardy.Dir;
 const Runtime = tardy.Runtime;
 
 const FileChain = @import("file_chain.zig").FileChain;
 const SharedParams = @import("lib.zig").SharedParams;
-
-pub const STACK_SIZE = 1024 * 1024 * 8;
 
 const log = std.log.scoped(.@"tardy/e2e/first");
 
@@ -23,7 +19,8 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
     var prng: std.Random.DefaultPrng = .init(shared_params.seed);
     const rand = prng.random();
 
-    const chain_count = shared_params.size_tasks_initial * rand.intRangeAtMost(usize, 1, 2);
+    const rand_int = rand.intRangeAtMost(usize, 1, 2);
+    const chain_count = shared_params.size_tasks_initial * rand_int;
     file_chain_counter = chain_count;
 
     log.debug("creating file chains... ({d})", .{chain_count});
@@ -39,7 +36,13 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
             (shared_params.seed + i) % std.math.maxInt(usize),
         );
         defer rt.allocator.free(sub_chain);
-        const subpath = try std.fmt.allocPrintSentinel(rt.allocator, "{s}-{d}", .{ shared_params.seed_string, i }, 0x0);
+
+        const subpath = try std.fmt.allocPrintSentinel(
+            rt.allocator,
+            "{s}-{d}",
+            .{ shared_params.seed_string, i },
+            0x0,
+        );
         defer rt.allocator.free(subpath);
 
         chain_ptr.* = try .init(
@@ -50,10 +53,11 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
         );
         errdefer chain_ptr.deinit(rt.allocator);
 
+        // TODO: make it function, then args, then stack_size
         try rt.spawn(
-            .{ chain_ptr, rt, &file_chain_counter, shared_params.seed_string },
             FileChain.chain_frame,
-            STACK_SIZE,
+            .{ chain_ptr, rt, &file_chain_counter, shared_params.seed_string },
+            .KiB(20),
         );
     }
 }

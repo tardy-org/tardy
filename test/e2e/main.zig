@@ -99,10 +99,10 @@ pub fn main(init: std.process.Init) !void {
                 switch (rt.id) {
                     0 => {
                         p.runtime = rt;
-                        try rt.spawn(.{ rt, p.shared }, First.start_frame, First.STACK_SIZE);
-                        try rt.spawn(.{ rt, p.shared }, Second.start_frame, Second.STACK_SIZE);
+                        try rt.spawn(First.start_frame, .{ rt, p.shared }, .KiB(24));
+                        try rt.spawn(Second.start_frame, .{ rt, p.shared }, .KiB(16));
                     },
-                    1 => try rt.spawn(.{ rt, &p.runtime }, timeout_task, 1024 * 1024 * 8),
+                    1 => try rt.spawn(timeout_task, .{ rt, &p.runtime }, .KiB(25)),
                     else => unreachable,
                 }
             }

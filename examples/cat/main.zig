@@ -2,12 +2,9 @@ const std = @import("std");
 const Io = std.Io;
 
 const tardy = @import("tardy");
-const Cross = tardy.Cross;
 const Dir = tardy.Dir;
 const File = tardy.File;
-const Frame = tardy.Frame;
 const Runtime = tardy.Runtime;
-const Task = tardy.Task;
 
 const log = std.log.scoped(.@"tardy/example/cat");
 pub const std_options: std.Options = .{ .log_level = .err };

@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 
 const log = std.log.scoped(.@"tardy/frame");
 
+// TODO: make Frame a Struct with all this inside it
 const Hardware = switch (builtin.cpu.arch) {
     .x86_64 => switch (builtin.os.tag) {
         .windows => x64Windows,
@@ -14,7 +15,7 @@ const Hardware = switch (builtin.cpu.arch) {
 };
 
 const FrameEntryFn = *allowzero const fn () callconv(.c) noreturn;
-fn EntryFn(args: anytype, comptime func: anytype) FrameEntryFn {
+fn EntryFn(comptime coroutine_fn: anytype, args: anytype) FrameEntryFn {
     const Args = @TypeOf(args);
     const Fn = struct {
         fn inner() callconv(.c) noreturn {
@@ -25,14 +26,20 @@ fn EntryFn(args: anytype, comptime func: anytype) FrameEntryFn {
             );
             const args_ptr: *Args = @ptrFromInt(args_addr);
 
-            @call(.auto, func, args_ptr.*) catch |e| {
+            @call(.auto, coroutine_fn, args_ptr.*) catch |e| {
                 log.warn("frame failed | {any}", .{e});
                 frame_ptr.status = .errored;
                 Frame.yield();
                 unreachable;
             };
 
-            // When our func is done running, just yield.
+            if (builtin.mode == .Debug) {
+                log.info("Coroutine \n`fn * const {any}`\nWith args `{any}`\nUsed {Bi} / {Bi} bytes of stack", .{
+                    @TypeOf(coroutine_fn), @TypeOf(args), frame_ptr.stackUsed(), frame_ptr.stack_mem.len,
+                });
+            }
+
+            // When our coroutine is done running, just yield.
             frame_ptr.status = .done;
             Frame.yield();
             unreachable;
@@ -60,30 +67,85 @@ pub const Frame = struct {
     /// Is the Frame done?
     status: Status = .in_progress,
 
+    pub const Stack = enum(usize) {
+        @"2KiB" = 2 * unit,
+        @"8KiB" = 8 * unit,
+        @"16KiB" = 16 * unit,
+        @"32KiB" = 32 * unit,
+        @"64KiB" = 64 * unit,
+        @"128KiB" = 128 * unit,
+        @"256KiB" = 256 * unit,
+        @"1MiB" = 1 * unit * unit,
+        /// linux OS thread default
+        max_thread_stack = 8 * unit * unit,
+        _,
+
+        /// 64KB: Generally resonable number, for simple callbacks, no recursion,
+        /// small locals, minor compute work, shallow call stacks.
+        pub const std: Stack = .@"64KiB";
+        /// 1MB: deep call chains, JSON parsers, recursive algorithms
+        pub const large: Stack = .@"1MiB";
+
+        /// This is a best effort guess
+        pub const auto: Stack = switch (builtin.mode) {
+            // 256KB: default — covers most async I/O handlers
+            .Debug => .@"256KiB",
+            .ReleaseSafe => .@"128KiB",
+            .ReleaseFast => .@"32KiB",
+            .ReleaseSmall => .@"8KiB",
+        };
+
+        const unit = 1024;
+
+        fn Usize(size: Stack) usize {
+            debug.assert(@intFromEnum(size) < @intFromEnum(Stack.max_thread_stack));
+            return @intFromEnum(size);
+        }
+
+        pub fn MiB(size: usize) Stack {
+            debug.assert(size < unit);
+            return @enumFromInt(size * unit * unit);
+        }
+
+        pub fn KiB(size: usize) Stack {
+            debug.assert(size < unit);
+            return @enumFromInt(size * unit);
+        }
+    };
+
+    fn stackUsed(frame: *Frame) usize {
+        if (builtin.mode != .Debug) @compileError("only available in Debug mode");
+        // Stack grows downward — scan from bottom for the first non-0xAA byte
+        // (Debug mode fills freed/unused memory with 0xAA)
+        const stack = frame.stack_mem;
+        var unused: usize = 0;
+        while (unused < stack.len and stack[unused] == 0xAA) : (unused += 1) {}
+        return (stack.len - unused) * @sizeOf(u8);
+    }
+
     pub fn init(
         allocator: std.mem.Allocator,
-        stack_size: usize,
+        comptime coroutine_fn: anytype,
         args: anytype,
-        comptime func: anytype,
+        stack_size: ?Stack,
     ) *Frame {
-        // TODO: assert minimum stack size
-        // stack_size should be aligned to `Hardware.alignment`
-        debug.assert(Hardware.alignment.check(stack_size));
-
         // Allocate Fiber/Frame Stack with abi alignment
-        const stack: []align(raw_alignment) u8 = allocator.alignedAlloc(
-            u8,
-            Hardware.alignment,
-            // in debug mode, SafeAllocator is used by default which requires some extra
-            // bookkeeping space for stack trace capturing
-            // TODO: limit multipler to 1.25
-            if (builtin.mode == .Debug) stack_size * 2 else stack_size,
-        ) catch @panic("OOM");
+        const stack: []align(raw_alignment) u8 = allocator.alignedAlloc(u8, Hardware.alignment, size: {
+            const size = if (stack_size) |stack| stack.Usize() else Stack.auto.Usize();
+            // stack_size should be aligned to `Hardware.alignment`
+            debug.assert(Hardware.alignment.check(size));
+            break :size switch (builtin.cpu.arch) {
+                // In debug mode, the Dwarf unwinder for aarch64 requires a bit more
+                // space for stack trace capturing for bookkeeping
+                .aarch64, .aarch64_be => if (builtin.mode == .Debug) 2 * size else size,
+                else => size,
+            };
+        }) catch @panic("OOM");
 
         const stack_base = @intFromPtr(stack.ptr);
         const stack_top = @intFromPtr(stack.ptr + stack.len);
 
-        // space for the frame
+        // space for the frame pointer
         const frame_ptr = Hardware.alignment.backward(
             stack_top - @sizeOf(Frame),
         );
@@ -92,7 +154,7 @@ pub const Frame = struct {
         const frame: *Frame = @ptrFromInt(frame_ptr);
 
         const Args = @TypeOf(args);
-        // space for the args
+        // space for the args pointer
         const args_ptr = Hardware.alignment.backward(
             frame_ptr - @sizeOf(Args),
         );
@@ -118,7 +180,7 @@ pub const Frame = struct {
 
         // return address/instruction pointer we jump to for the execution of fiber's
         // entry point function after returning from `tardy_swap_frame`
-        register_entries[Hardware.entry] = EntryFn(args, func);
+        register_entries[Hardware.entry] = EntryFn(coroutine_fn, args);
 
         frame.* = .{
             .caller_sp = undefined,

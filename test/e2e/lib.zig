@@ -1,5 +1,4 @@
 const std = @import("std");
-const Atomic = std.atomic.Value;
 
 pub const SharedParams = struct {
     // Seed Info

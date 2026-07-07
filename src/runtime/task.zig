@@ -1,11 +1,7 @@
 const std = @import("std");
-const assert = std.debug.assert;
 
 const Result = @import("../aio/completion.zig").Result;
 const Frame = @import("../frame/lib.zig").Frame;
-const Runtime = @import("../runtime/lib.zig").Runtime;
-
-const log = std.log.scoped(.@"tardy/runtime/task");
 
 pub const Task = struct {
     pub const State = union(enum) {
