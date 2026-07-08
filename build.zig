@@ -32,6 +32,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = target.result.os.tag == .windows,
+        .error_tracing = true,
+        .pic = true,
     });
 
     // build and run examples

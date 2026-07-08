@@ -247,7 +247,7 @@ test "Pool: BufferPool ([][]u8)" {
     defer buffer_pool.deinit();
 
     for (buffer_pool.items) |*item| {
-        mem.copyForwards(u8, item, "ABCDEF");
+        @memcpy(item[0..6], "ABCDEF");
     }
 
     for (buffer_pool.items) |item| {
