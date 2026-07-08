@@ -3,7 +3,7 @@ const assert = std.debug.assert;
 const builtin = @import("builtin");
 const mem = std.mem;
 const Io = std.Io;
-const is_windows = builtin.os.tag == .windows;
+const is_unix = builtin.os.tag != .windows;
 
 const AsyncType = @import("tardy").AsyncType;
 const Dir = @import("tardy").Dir;
@@ -104,7 +104,7 @@ pub fn main(init: std.process.Init) !void {
                         try rt.spawn(
                             First.start_frame,
                             .{ rt, p.shared },
-                            if (!is_windows) .KiB(28) else .MiB(2), // 1.32
+                            if (is_unix) .KiB(28) else .MiB(2), // 1.32
                         );
                         try rt.spawn(Second.start_frame, .{ rt, p.shared }, .@"32KiB");
                     },

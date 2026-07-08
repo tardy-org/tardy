@@ -3,6 +3,8 @@ const mem = std.mem;
 const debug = std.debug;
 const builtin = @import("builtin");
 
+const is_unix = builtin.os.tag != .windows;
+
 const log = std.log.scoped(.@"tardy/frame");
 
 // TODO: make Frame a Struct with all this inside it
@@ -78,6 +80,7 @@ pub const Frame = struct {
         @"128KiB" = 128 * unit,
         @"256KiB" = 256 * unit,
         @"1MiB" = 1 * unit * unit,
+        @"2MiB" = 2 * unit * unit,
         /// linux OS thread default
         max_thread_stack = 8 * unit * unit,
         _,
@@ -88,13 +91,14 @@ pub const Frame = struct {
         /// 1MB: deep call chains, JSON parsers, recursive algorithms
         pub const large: Stack = .@"1MiB";
 
-        /// This is a best effort guess
+        /// This is a best effort guess and will be updated
+        /// consistently to match most real world usage
         pub const auto: Stack = switch (builtin.mode) {
             // 256KB: default — covers most async I/O handlers
-            .Debug => .@"256KiB",
-            .ReleaseSafe => .@"128KiB",
-            .ReleaseFast => .@"32KiB",
-            .ReleaseSmall => .@"8KiB",
+            .Debug => if (is_unix) .@"256KiB" else .@"2MiB",
+            .ReleaseSafe => if (is_unix) .@"128KiB" else .@"1MiB",
+            .ReleaseFast => if (is_unix) .@"32KiB" else .@"256KiB",
+            .ReleaseSmall => if (is_unix) .@"8KiB" else .@"126KiB",
         };
 
         const unit = 1024;
