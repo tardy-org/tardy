@@ -47,7 +47,7 @@ pub fn main(init: std.process.Init) !void {
         file_name,
         struct {
             fn init_fn(rt: *Runtime, path: [:0]const u8) !void {
-                try rt.spawn(.{ rt, path }, main_frame, 1024 * 1024 * 2);
+                try rt.spawn(main_frame, .{ rt, path }, .@"2MiB");
             }
         }.init_fn,
     );

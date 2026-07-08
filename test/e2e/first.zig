@@ -58,7 +58,7 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
         try rt.spawn(
             FileChain.chain_frame,
             .{ chain_ptr, rt, &file_chain_counter, shared_params.seed_string },
-            if (is_unix) .@"32KiB" else .MiB(2), // 1.32
+            if (is_unix) .KiB(48) else .MiB(2),
         );
     }
 }

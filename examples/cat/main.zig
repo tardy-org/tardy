@@ -71,7 +71,7 @@ pub fn main(init: std.process.Init) !void {
         &params,
         struct {
             fn start(rt: *Runtime, p: *EntryParams) !void {
-                try rt.spawn(.{ rt, p }, main_frame, 1024 * 1024 * 4);
+                try rt.spawn(main_frame, .{ rt, p }, .auto);
             }
         }.start,
     );

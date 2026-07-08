@@ -53,7 +53,7 @@ pub fn main(init: std.process.Init) !void {
         file_name,
         struct {
             fn start(rt: *Runtime, name: [:0]const u8) !void {
-                try rt.spawn(.{ rt, name }, main_frame, 1024 * 1024 * 2);
+                try rt.spawn(main_frame, .{ rt, name }, .@"2MiB");
             }
         }.start,
     );

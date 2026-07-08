@@ -32,7 +32,7 @@ fn echo_frame(rt: *Runtime, server: *const Socket) !void {
     );
 
     // spawn off a new frame.
-    try rt.spawn(.{ rt, server }, echo_frame, 1024 * 16);
+    try rt.spawn(echo_frame, .{ rt, server }, .@"16KiB");
 
     var buffer: [501]u8 = undefined;
     while (true) {
@@ -74,7 +74,7 @@ pub fn main(init: std.process.Init) !void {
         &server,
         struct {
             fn start(rt: *Runtime, tcp_server: *const Socket) !void {
-                try rt.spawn(.{ rt, tcp_server }, echo_frame, 1024 * 16);
+                try rt.spawn(echo_frame, .{ rt, tcp_server }, .@"32KiB");
             }
         }.start,
     );

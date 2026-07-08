@@ -104,7 +104,7 @@ pub fn main(init: std.process.Init) !void {
                         try rt.spawn(
                             First.start_frame,
                             .{ rt, p.shared },
-                            if (is_unix) .KiB(28) else .MiB(2), // 1.32
+                            if (is_unix) .KiB(28) else .MiB(2),
                         );
                         try rt.spawn(Second.start_frame, .{ rt, p.shared }, .@"32KiB");
                     },

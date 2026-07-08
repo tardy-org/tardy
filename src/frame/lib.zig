@@ -73,14 +73,17 @@ pub const Frame = struct {
 
     pub const Stack = enum(usize) {
         @"2KiB" = 2 * unit,
+        @"4KiB" = 4 * unit,
         @"8KiB" = 8 * unit,
         @"16KiB" = 16 * unit,
         @"32KiB" = 32 * unit,
         @"64KiB" = 64 * unit,
         @"128KiB" = 128 * unit,
         @"256KiB" = 256 * unit,
+        @"512KiB" = 512 * unit,
         @"1MiB" = 1 * unit * unit,
         @"2MiB" = 2 * unit * unit,
+        @"4MiB" = 4 * unit * unit,
         /// linux OS thread default
         max_thread_stack = 8 * unit * unit,
         _,
@@ -94,7 +97,6 @@ pub const Frame = struct {
         /// This is a best effort guess and will be updated
         /// consistently to match most real world usage
         pub const auto: Stack = switch (builtin.mode) {
-            // 256KB: default — covers most async I/O handlers
             .Debug => if (is_unix) .@"256KiB" else .@"2MiB",
             .ReleaseSafe => if (is_unix) .@"128KiB" else .@"1MiB",
             .ReleaseFast => if (is_unix) .@"32KiB" else .@"256KiB",
