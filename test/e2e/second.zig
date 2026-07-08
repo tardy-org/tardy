@@ -41,11 +41,11 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
     try rt.spawn(
         TcpClientChain.chain_frame,
         .{ client_chain_ptr, rt, &tcp_client_chain_count, port },
-        .@"16KiB",
+        .@"32KiB",
     );
     try rt.spawn(
         TcpServerChain.chain_frame,
         .{ server_chain_ptr, rt, &tcp_server_chain_count, socket },
-        .@"16KiB",
+        .@"32KiB",
     );
 }

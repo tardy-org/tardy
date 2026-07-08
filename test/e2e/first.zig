@@ -1,7 +1,9 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const tardy = @import("tardy");
 const Dir = tardy.Dir;
 const Runtime = tardy.Runtime;
+const is_windows = builtin.os.tag == .windows;
 
 const FileChain = @import("file_chain.zig").FileChain;
 const SharedParams = @import("lib.zig").SharedParams;
@@ -57,7 +59,7 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
         try rt.spawn(
             FileChain.chain_frame,
             .{ chain_ptr, rt, &file_chain_counter, shared_params.seed_string },
-            .KiB(20),
+            if (!is_windows) .@"32KiB" else .MiB(2), // 1.32
         );
     }
 }

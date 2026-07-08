@@ -1,4 +1,5 @@
 const std = @import("std");
+const mem = std.mem;
 const debug = std.debug;
 const builtin = @import("builtin");
 
@@ -34,8 +35,8 @@ fn EntryFn(comptime coroutine_fn: anytype, args: anytype) FrameEntryFn {
             };
 
             if (builtin.mode == .Debug) {
-                log.info("Coroutine \n`fn * const {any}`\nWith args `{any}`\nUsed {Bi} / {Bi} bytes of stack", .{
-                    @TypeOf(coroutine_fn), @TypeOf(args), frame_ptr.stackUsed(), frame_ptr.stack_mem.len,
+                log.debug("Coroutine \nfn: `* const {any}`\nUsed {Bi} / {Bi} bytes of stack", .{
+                    @TypeOf(coroutine_fn), frame_ptr.stackUsed(), frame_ptr.stack_mem.len,
                 });
             }
 
@@ -51,6 +52,7 @@ fn EntryFn(comptime coroutine_fn: anytype, args: anytype) FrameEntryFn {
 threadlocal var active_frame: ?*Frame = null;
 
 const raw_alignment = Hardware.alignment.toByteUnits();
+// https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2014/n4024.pdf
 pub const Frame = struct {
     const Status = enum(u8) {
         in_progress,
@@ -98,7 +100,7 @@ pub const Frame = struct {
         const unit = 1024;
 
         fn Usize(size: Stack) usize {
-            debug.assert(@intFromEnum(size) < @intFromEnum(Stack.max_thread_stack));
+            debug.assert(@intFromEnum(size) <= @intFromEnum(Stack.max_thread_stack));
             return @intFromEnum(size);
         }
 
@@ -115,16 +117,19 @@ pub const Frame = struct {
 
     fn stackUsed(frame: *Frame) usize {
         if (builtin.mode != .Debug) @compileError("only available in Debug mode");
+        // Debug mode fills freed/unused memory with 0xAA
+        const canary_byte: u8 = 0xAA;
         // Stack grows downward — scan from bottom for the first non-0xAA byte
-        // (Debug mode fills freed/unused memory with 0xAA)
         const stack = frame.stack_mem;
-        var unused: usize = 0;
-        while (unused < stack.len and stack[unused] == 0xAA) : (unused += 1) {}
+        // We look for the first byte that is NOT our canary.
+        const unused = mem.findNone(u8, stack, &.{
+            canary_byte,
+        }).?;
         return (stack.len - unused) * @sizeOf(u8);
     }
 
     pub fn init(
-        allocator: std.mem.Allocator,
+        allocator: mem.Allocator,
         comptime coroutine_fn: anytype,
         args: anytype,
         stack_size: ?Stack,
@@ -134,12 +139,7 @@ pub const Frame = struct {
             const size = if (stack_size) |stack| stack.Usize() else Stack.auto.Usize();
             // stack_size should be aligned to `Hardware.alignment`
             debug.assert(Hardware.alignment.check(size));
-            break :size switch (builtin.cpu.arch) {
-                // In debug mode, the Dwarf unwinder for aarch64 requires a bit more
-                // space for stack trace capturing for bookkeeping
-                .aarch64, .aarch64_be => if (builtin.mode == .Debug) 2 * size else size,
-                else => size,
-            };
+            break :size size;
         }) catch @panic("OOM");
 
         const stack_base = @intFromPtr(stack.ptr);
@@ -191,7 +191,7 @@ pub const Frame = struct {
         return frame;
     }
 
-    pub fn deinit(self: *Frame, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Frame, allocator: mem.Allocator) void {
         allocator.free(self.stack_mem);
     }
 
@@ -225,7 +225,7 @@ const x64SysV = struct {
     pub const frame_ptr = 4;
     /// Entry Function at Return Address (RIP)
     pub const entry = 6;
-    pub const alignment: std.mem.Alignment = .@"16";
+    pub const alignment: mem.Alignment = .@"16";
 
     extern fn tardy_swap_frame(
         noalias **align(raw_alignment) anyopaque,
@@ -255,7 +255,7 @@ const x64Windows = struct {
     pub const frame_ptr = 26;
     /// Return Address (RIP)
     pub const entry = 30;
-    pub const alignment: std.mem.Alignment = .@"16";
+    pub const alignment: mem.Alignment = .@"16";
 
     extern fn tardy_swap_frame(
         noalias **align(raw_alignment) anyopaque,
@@ -293,7 +293,7 @@ const aarch64General = struct {
     pub const frame_ptr = 0;
     /// Entry Function at Link Register (LR)
     pub const entry = 1;
-    pub const alignment: std.mem.Alignment = .@"16";
+    pub const alignment: mem.Alignment = .@"16";
 
     extern fn tardy_swap_frame(
         noalias **align(raw_alignment) anyopaque,
