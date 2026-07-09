@@ -57,8 +57,16 @@ pub fn main(init: std.process.Init) !void {
         struct {
             fn init_fn(rt: *Runtime, spsc: *Spsc(usize)) !void {
                 switch (rt.id) {
-                    0 => try rt.spawn(.{ rt, spsc.producer(rt) }, producer_frame, 1024 * 32),
-                    1 => try rt.spawn(.{ rt, spsc.consumer(rt) }, consumer_frame, 1024 * 32),
+                    0 => try rt.spawn(
+                        producer_frame,
+                        .{ rt, spsc.producer(rt) },
+                        .@"32KiB",
+                    ),
+                    1 => try rt.spawn(
+                        consumer_frame,
+                        .{ rt, spsc.consumer(rt) },
+                        .@"32KiB",
+                    ),
                     else => unreachable,
                 }
             }

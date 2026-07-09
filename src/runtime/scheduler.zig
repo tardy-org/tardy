@@ -93,7 +93,12 @@ pub const Scheduler = struct {
         Frame.yield();
     }
 
-    pub fn spawn(self: *Scheduler, frame_ctx: anytype, comptime frame_fn: anytype, stack_size: usize) !void {
+    pub fn spawn(
+        self: *Scheduler,
+        comptime coroutine_fn: anytype,
+        args: anytype,
+        stack_size: ?Frame.Stack,
+    ) !void {
         const index = blk: {
             if (self.released.pop()) |index| {
                 break :blk self.tasks.borrow_assume_unset(index);
@@ -102,7 +107,12 @@ pub const Scheduler = struct {
             }
         };
 
-        const frame_ptr: *Frame = .init(self.allocator, stack_size, frame_ctx, frame_fn);
+        const frame_ptr: *Frame = .init(
+            self.allocator,
+            coroutine_fn,
+            args,
+            stack_size,
+        );
 
         const item: Task = .{
             .index = index,

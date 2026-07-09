@@ -103,7 +103,12 @@ pub const FileChain = struct {
         };
     }
 
-    pub fn chain_frame(chain: *FileChain, rt: *Runtime, counter: *usize, seed_string: [:0]const u8) !void {
+    pub fn chain_frame(
+        chain: *FileChain,
+        rt: *Runtime,
+        counter: *usize,
+        seed_string: [:0]const u8,
+    ) !void {
         defer rt.allocator.destroy(chain);
         defer chain.deinit(rt.allocator);
 
@@ -113,22 +118,34 @@ pub const FileChain = struct {
         while (chain.index < chain.steps.len) : (chain.index += 1) {
             switch (chain.steps[chain.index]) {
                 .create => {
-                    const file: File = try .create(rt, chain.path, .{ .mode = .read_write });
+                    const file: File = try .create(rt, chain.path, .{
+                        .mode = .read_write,
+                    });
                     chain.file = file;
                 },
                 .open => {
-                    const file: File = try .open(rt, chain.path, .{ .mode = .read_write });
+                    const file: File = try .open(rt, chain.path, .{
+                        .mode = .read_write,
+                    });
                     chain.file = file;
                 },
                 .read => {
-                    const length = try chain.file.?.read_all(rt, chain.buffer, read_head);
+                    const length = try chain.file.?.read_all(
+                        rt,
+                        chain.buffer,
+                        read_head,
+                    );
                     assert(length == @min(chain.buffer.len, write_head - read_head));
                     for (chain.buffer[0..length]) |item| assert(item == 123);
                     read_head += length;
                 },
                 .write => {
                     for (chain.buffer[0..]) |*item| item.* = 123;
-                    write_head += try chain.file.?.write_all(rt, chain.buffer, write_head);
+                    write_head += try chain.file.?.write_all(
+                        rt,
+                        chain.buffer,
+                        write_head,
+                    );
                 },
                 .stat => {
                     const stat = try chain.file.?.stat(rt);

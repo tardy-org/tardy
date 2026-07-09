@@ -1,9 +1,13 @@
 const std = @import("std");
+const mem = std.mem;
 const debug = std.debug;
 const builtin = @import("builtin");
 
+const is_unix = builtin.os.tag != .windows;
+
 const log = std.log.scoped(.@"tardy/frame");
 
+// TODO: make Frame a Struct with all this inside it
 const Hardware = switch (builtin.cpu.arch) {
     .x86_64 => switch (builtin.os.tag) {
         .windows => x64Windows,
@@ -14,7 +18,7 @@ const Hardware = switch (builtin.cpu.arch) {
 };
 
 const FrameEntryFn = *allowzero const fn () callconv(.c) noreturn;
-fn EntryFn(args: anytype, comptime func: anytype) FrameEntryFn {
+fn EntryFn(comptime coroutine_fn: anytype, args: anytype) FrameEntryFn {
     const Args = @TypeOf(args);
     const Fn = struct {
         fn inner() callconv(.c) noreturn {
@@ -25,14 +29,20 @@ fn EntryFn(args: anytype, comptime func: anytype) FrameEntryFn {
             );
             const args_ptr: *Args = @ptrFromInt(args_addr);
 
-            @call(.auto, func, args_ptr.*) catch |e| {
+            @call(.auto, coroutine_fn, args_ptr.*) catch |e| {
                 log.warn("frame failed | {any}", .{e});
                 frame_ptr.status = .errored;
                 Frame.yield();
                 unreachable;
             };
 
-            // When our func is done running, just yield.
+            if (builtin.mode == .Debug) {
+                log.debug("Coroutine \nfn: `* const {any}`\nUsed {Bi} / {Bi} bytes of stack", .{
+                    @TypeOf(coroutine_fn), frame_ptr.stackUsed(), frame_ptr.stack_mem.len,
+                });
+            }
+
+            // When our coroutine is done running, just yield.
             frame_ptr.status = .done;
             Frame.yield();
             unreachable;
@@ -44,6 +54,7 @@ fn EntryFn(args: anytype, comptime func: anytype) FrameEntryFn {
 threadlocal var active_frame: ?*Frame = null;
 
 const raw_alignment = Hardware.alignment.toByteUnits();
+// https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2014/n4024.pdf
 pub const Frame = struct {
     const Status = enum(u8) {
         in_progress,
@@ -60,30 +71,87 @@ pub const Frame = struct {
     /// Is the Frame done?
     status: Status = .in_progress,
 
-    pub fn init(
-        allocator: std.mem.Allocator,
-        stack_size: usize,
-        args: anytype,
-        comptime func: anytype,
-    ) *Frame {
-        // TODO: assert minimum stack size
-        // stack_size should be aligned to `Hardware.alignment`
-        debug.assert(Hardware.alignment.check(stack_size));
+    pub const Stack = enum(usize) {
+        @"2KiB" = 2 * unit,
+        @"4KiB" = 4 * unit,
+        @"8KiB" = 8 * unit,
+        @"16KiB" = 16 * unit,
+        @"32KiB" = 32 * unit,
+        @"64KiB" = 64 * unit,
+        @"128KiB" = 128 * unit,
+        @"256KiB" = 256 * unit,
+        @"512KiB" = 512 * unit,
+        @"1MiB" = 1 * unit * unit,
+        @"2MiB" = 2 * unit * unit,
+        @"4MiB" = 4 * unit * unit,
+        /// linux OS thread default
+        max_thread_stack = 8 * unit * unit,
+        _,
 
+        /// 64KB: Generally resonable number, for simple callbacks, no recursion,
+        /// small locals, minor compute work, shallow call stacks.
+        pub const std: Stack = .@"64KiB";
+        /// 1MB: deep call chains, JSON parsers, recursive algorithms
+        pub const large: Stack = .@"1MiB";
+
+        /// This is a best effort guess and will be updated
+        /// consistently to match most real world usage
+        pub const auto: Stack = switch (builtin.mode) {
+            .Debug => if (is_unix) .@"256KiB" else .@"2MiB",
+            .ReleaseSafe => if (is_unix) .@"128KiB" else .@"1MiB",
+            .ReleaseFast => if (is_unix) .@"32KiB" else .@"256KiB",
+            .ReleaseSmall => if (is_unix) .@"8KiB" else .@"126KiB",
+        };
+
+        const unit = 1024;
+
+        fn Usize(size: Stack) usize {
+            debug.assert(@intFromEnum(size) <= @intFromEnum(Stack.max_thread_stack));
+            return @intFromEnum(size);
+        }
+
+        pub fn MiB(size: usize) Stack {
+            debug.assert(size < unit);
+            return @enumFromInt(size * unit * unit);
+        }
+
+        pub fn KiB(size: usize) Stack {
+            debug.assert(size < unit);
+            return @enumFromInt(size * unit);
+        }
+    };
+
+    fn stackUsed(frame: *Frame) usize {
+        if (builtin.mode != .Debug) @compileError("only available in Debug mode");
+        // Debug mode fills freed/unused memory with 0xAA
+        const canary_byte: u8 = 0xAA;
+        // Stack grows downward — scan from bottom for the first non-0xAA byte
+        const stack = frame.stack_mem;
+        // We look for the first byte that is NOT our canary.
+        const unused = mem.findNone(u8, stack, &.{
+            canary_byte,
+        }).?;
+        return (stack.len - unused) * @sizeOf(u8);
+    }
+
+    pub fn init(
+        allocator: mem.Allocator,
+        comptime coroutine_fn: anytype,
+        args: anytype,
+        stack_size: ?Stack,
+    ) *Frame {
         // Allocate Fiber/Frame Stack with abi alignment
-        const stack: []align(raw_alignment) u8 = allocator.alignedAlloc(
-            u8,
-            Hardware.alignment,
-            // in debug mode, SafeAllocator is used by default which requires some extra
-            // bookkeeping space for stack trace capturing
-            // TODO: limit multipler to 1.25
-            if (builtin.mode == .Debug) stack_size * 2 else stack_size,
-        ) catch @panic("OOM");
+        const stack: []align(raw_alignment) u8 = allocator.alignedAlloc(u8, Hardware.alignment, size: {
+            const size = if (stack_size) |stack| stack.Usize() else Stack.auto.Usize();
+            // stack_size should be aligned to `Hardware.alignment`
+            debug.assert(Hardware.alignment.check(size));
+            break :size size;
+        }) catch @panic("OOM");
 
         const stack_base = @intFromPtr(stack.ptr);
         const stack_top = @intFromPtr(stack.ptr + stack.len);
 
-        // space for the frame
+        // space for the frame pointer
         const frame_ptr = Hardware.alignment.backward(
             stack_top - @sizeOf(Frame),
         );
@@ -92,7 +160,7 @@ pub const Frame = struct {
         const frame: *Frame = @ptrFromInt(frame_ptr);
 
         const Args = @TypeOf(args);
-        // space for the args
+        // space for the args pointer
         const args_ptr = Hardware.alignment.backward(
             frame_ptr - @sizeOf(Args),
         );
@@ -118,7 +186,7 @@ pub const Frame = struct {
 
         // return address/instruction pointer we jump to for the execution of fiber's
         // entry point function after returning from `tardy_swap_frame`
-        register_entries[Hardware.entry] = EntryFn(args, func);
+        register_entries[Hardware.entry] = EntryFn(coroutine_fn, args);
 
         frame.* = .{
             .caller_sp = undefined,
@@ -129,7 +197,7 @@ pub const Frame = struct {
         return frame;
     }
 
-    pub fn deinit(self: *Frame, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Frame, allocator: mem.Allocator) void {
         allocator.free(self.stack_mem);
     }
 
@@ -163,7 +231,7 @@ const x64SysV = struct {
     pub const frame_ptr = 4;
     /// Entry Function at Return Address (RIP)
     pub const entry = 6;
-    pub const alignment: std.mem.Alignment = .@"16";
+    pub const alignment: mem.Alignment = .@"16";
 
     extern fn tardy_swap_frame(
         noalias **align(raw_alignment) anyopaque,
@@ -193,7 +261,7 @@ const x64Windows = struct {
     pub const frame_ptr = 26;
     /// Return Address (RIP)
     pub const entry = 30;
-    pub const alignment: std.mem.Alignment = .@"16";
+    pub const alignment: mem.Alignment = .@"16";
 
     extern fn tardy_swap_frame(
         noalias **align(raw_alignment) anyopaque,
@@ -231,7 +299,7 @@ const aarch64General = struct {
     pub const frame_ptr = 0;
     /// Entry Function at Link Register (LR)
     pub const entry = 1;
-    pub const alignment: std.mem.Alignment = .@"16";
+    pub const alignment: mem.Alignment = .@"16";
 
     extern fn tardy_swap_frame(
         noalias **align(raw_alignment) anyopaque,

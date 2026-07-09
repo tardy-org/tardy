@@ -1,12 +1,11 @@
 const std = @import("std");
-const assert = std.debug.assert;
+const debug = std.debug;
 
 const Async = @import("../aio/lib.zig").Async;
 const PoolKind = @import("../core/pool.zig").PoolKind;
-const Queue = @import("../core/queue.zig").Queue;
-const Frame = @import("../frame/lib.zig").Frame;
 
 const Scheduler = @import("./scheduler.zig").Scheduler;
+const Frame = @import("../frame/lib.zig").Frame;
 const Storage = @import("storage.zig").Storage;
 const Task = @import("task.zig").Task;
 
@@ -89,11 +88,15 @@ pub const Runtime = struct {
     /// Spawns a new Frame. This creates a new heap-allocated stack for the Frame to run.
     pub fn spawn(
         rt: *Runtime,
-        frame_ctx: anytype,
-        comptime frame_fn: anytype,
-        stack_size: usize,
+        comptime coroutine_fn: anytype,
+        args: anytype,
+        stack_size: ?Frame.Stack,
     ) !void {
-        try rt.scheduler.spawn(frame_ctx, frame_fn, stack_size);
+        try rt.scheduler.spawn(
+            coroutine_fn,
+            args,
+            stack_size,
+        );
     }
 
     fn run_task(rt: *Runtime, task: *Task) !void {
@@ -137,17 +140,25 @@ pub const Runtime = struct {
             var force_woken = false;
 
             // Processing Section
-            var iter = rt.scheduler.tasks.dirty.iterator(.{ .kind = .set });
+            var iter = rt.scheduler.tasks.dirty.iterator(.{
+                .kind = .set,
+            });
             while (iter.next()) |index| {
                 log.debug("{d} - processing index={d}", .{ rt.id, index });
                 const task = rt.scheduler.tasks.get_ptr(index);
                 switch (task.state) {
                     .runnable => {
-                        log.debug("{d} - running index={d}", .{ rt.id, index });
+                        log.debug("{d} - running index={d}", .{
+                            rt.id,
+                            index,
+                        });
                         try rt.run_task(task);
                         rt.current_task = null;
                     },
-                    .wait_for_trigger => if (rt.scheduler.triggers.is_set(rt.io, index)) {
+                    .wait_for_trigger => if (rt.scheduler.triggers.is_set(
+                        rt.io,
+                        index,
+                    )) {
                         log.debug("{d} - trigger={d} | state={t}", .{
                             rt.id,
                             index,
@@ -186,7 +197,7 @@ pub const Runtime = struct {
                 const index = completion.task;
                 log.debug("{d} - completion={d}", .{ rt.id, index });
                 const task = rt.scheduler.tasks.get_ptr(index);
-                assert(task.state == .wait_for_io);
+                debug.assert(task.state == .wait_for_io);
                 task.result = completion.result;
                 try rt.scheduler.set_runnable(index);
             }

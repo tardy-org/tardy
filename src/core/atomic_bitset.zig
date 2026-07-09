@@ -44,8 +44,10 @@ pub const AtomicDynamicBitSet = struct {
         } else {
             defer allocator.free(old_words);
             const new_words = try allocator.alloc(Atomic(usize), new_word_count);
-            std.mem.copyForwards(Atomic(usize), new_words[0..old_words.len], old_words[0..]);
-            for (new_words[old_words.len..]) |*word| word.* = .{ .raw = value };
+            @memcpy(new_words[0..old_words.len], old_words[0..]);
+            for (new_words[old_words.len..]) |*word| word.* = .{
+                .raw = value,
+            };
             self.words = new_words;
             self.bit_length = new_size;
         }

@@ -10,7 +10,6 @@ const TcpServerChain = @import("tcp_chain.zig").TcpServerChain;
 
 const log = std.log.scoped(.@"tardy/e2e/second");
 
-pub const STACK_SIZE = 1024 * 1024 * 8;
 threadlocal var tcp_client_chain_count: usize = 1;
 threadlocal var tcp_server_chain_count: usize = 1;
 
@@ -40,13 +39,13 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
     client_chain_ptr.* = try server_chain_ptr.derive_client_chain();
 
     try rt.spawn(
-        .{ client_chain_ptr, rt, &tcp_client_chain_count, port },
         TcpClientChain.chain_frame,
-        STACK_SIZE,
+        .{ client_chain_ptr, rt, &tcp_client_chain_count, port },
+        .@"32KiB",
     );
     try rt.spawn(
-        .{ server_chain_ptr, rt, &tcp_server_chain_count, socket },
         TcpServerChain.chain_frame,
-        STACK_SIZE,
+        .{ server_chain_ptr, rt, &tcp_server_chain_count, socket },
+        .@"32KiB",
     );
 }

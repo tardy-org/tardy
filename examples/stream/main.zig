@@ -22,7 +22,7 @@ const EntryParams = struct {
 const log = std.log.scoped(.@"tardy/example/stream");
 
 fn stream_frame(rt: *Runtime, server: *const Socket, file_name: [:0]const u8) !void {
-    defer rt.spawn(.{ rt, server, file_name }, stream_frame, 1024 * 1024 * 4) catch unreachable;
+    defer rt.spawn(stream_frame, .{ rt, server, file_name }, .@"4MiB") catch unreachable;
 
     const socket = try server.accept(rt);
     defer socket.close_blocking();
@@ -89,7 +89,11 @@ pub fn main(init: std.process.Init) !void {
         &params,
         struct {
             fn start(rt: *Runtime, p: *EntryParams) !void {
-                try rt.spawn(.{ rt, p.server_socket, p.file_name }, stream_frame, 1024 * 1024 * 4);
+                try rt.spawn(
+                    stream_frame,
+                    .{ rt, p.server_socket, p.file_name },
+                    .@"4MiB",
+                );
             }
         }.start,
     );

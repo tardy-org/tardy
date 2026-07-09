@@ -2,12 +2,9 @@ const std = @import("std");
 const Io = std.Io;
 
 const tardy = @import("tardy");
-const Cross = tardy.Cross;
 const Dir = tardy.Dir;
 const File = tardy.File;
-const Frame = tardy.Frame;
 const Runtime = tardy.Runtime;
-const Task = tardy.Task;
 
 const log = std.log.scoped(.@"tardy/example/cat");
 pub const std_options: std.Options = .{ .log_level = .err };
@@ -74,7 +71,7 @@ pub fn main(init: std.process.Init) !void {
         &params,
         struct {
             fn start(rt: *Runtime, p: *EntryParams) !void {
-                try rt.spawn(.{ rt, p }, main_frame, 1024 * 1024 * 4);
+                try rt.spawn(main_frame, .{ rt, p }, .auto);
             }
         }.start,
     );

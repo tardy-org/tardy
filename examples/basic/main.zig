@@ -31,7 +31,7 @@ pub fn main(init: std.process.Init) !void {
         {},
         struct {
             fn init_fn(rt: *Runtime, _: void) !void {
-                try rt.spawn(.{rt}, log_frame, 1024 * 16);
+                try rt.spawn(log_frame, .{rt}, .@"16KiB");
             }
         }.init_fn,
     );

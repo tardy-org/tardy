@@ -14,7 +14,6 @@ const Timer = tardy.Timer;
 const Tardy = tardy.Tardy(.auto);
 const log = std.log.scoped(.@"tardy/example/http");
 
-const STACK_SIZE: usize = 1024 * 16;
 const HTTP_RESPONSE = "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 27\r\nContent-Type: text/plain\r\n\r\nThis is an HTTP benchmark\r\n";
 
 fn main_frame(rt: *Runtime, server: *const Socket) !void {
@@ -28,7 +27,7 @@ fn main_frame(rt: *Runtime, server: *const Socket) !void {
     );
 
     // spawn off a new frame.
-    try rt.spawn(.{ rt, server }, main_frame, STACK_SIZE);
+    try rt.spawn(main_frame, .{ rt, server }, .@"16KiB");
 
     var buffer: [1024]u8 = undefined;
     var recv_length: usize = 0;
@@ -68,7 +67,7 @@ pub fn main(init: std.process.Init) !void {
         &server,
         struct {
             fn start(rt: *Runtime, tcp_server: *const Socket) !void {
-                try rt.spawn(.{ rt, tcp_server }, main_frame, STACK_SIZE);
+                try rt.spawn(main_frame, .{ rt, tcp_server }, .@"16KiB");
             }
         }.start,
     );

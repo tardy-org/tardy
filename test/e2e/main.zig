@@ -1,7 +1,9 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const builtin = @import("builtin");
 const mem = std.mem;
 const Io = std.Io;
+const is_unix = builtin.os.tag != .windows;
 
 const AsyncType = @import("tardy").AsyncType;
 const Dir = @import("tardy").Dir;
@@ -99,10 +101,14 @@ pub fn main(init: std.process.Init) !void {
                 switch (rt.id) {
                     0 => {
                         p.runtime = rt;
-                        try rt.spawn(.{ rt, p.shared }, First.start_frame, First.STACK_SIZE);
-                        try rt.spawn(.{ rt, p.shared }, Second.start_frame, Second.STACK_SIZE);
+                        try rt.spawn(
+                            First.start_frame,
+                            .{ rt, p.shared },
+                            if (is_unix) .KiB(28) else .MiB(2),
+                        );
+                        try rt.spawn(Second.start_frame, .{ rt, p.shared }, .@"32KiB");
                     },
-                    1 => try rt.spawn(.{ rt, &p.runtime }, timeout_task, 1024 * 1024 * 8),
+                    1 => try rt.spawn(timeout_task, .{ rt, &p.runtime }, .@"32KiB"),
                     else => unreachable,
                 }
             }
