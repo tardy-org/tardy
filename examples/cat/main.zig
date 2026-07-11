@@ -12,7 +12,7 @@ const backend: AsyncIO.Kind = .init(options.async_backend);
 const Tardy = tardy.Tardy(backend);
 
 const log = std.log.scoped(.@"tardy/example/cat");
-pub const std_options: std.Options = .{ .log_level = .debug };
+pub const std_options: std.Options = .{ .log_level = .info };
 
 const EntryParams = struct { file_name: [:0]const u8 };
 

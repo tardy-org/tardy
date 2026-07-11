@@ -1,7 +1,7 @@
 const std = @import("std");
 const debug = std.debug;
 
-const AsyncIO = @import("../aio.zig");
+const AsyncIO = @import("../AsyncIO.zig");
 const PoolKind = @import("../core/pool.zig").PoolKind;
 
 const Scheduler = @import("./scheduler.zig").Scheduler;

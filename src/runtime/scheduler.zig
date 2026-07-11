@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const AsyncIO = @import("../aio.zig");
+const AsyncIO = @import("../AsyncIO.zig");
 const AtomicDynamicBitSet = @import("../core/atomic_bitset.zig").AtomicDynamicBitSet;
 const Pool = @import("../core/pool.zig").Pool;
 const PoolKind = @import("../core/pool.zig").PoolKind;
