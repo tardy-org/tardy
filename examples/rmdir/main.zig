@@ -1,13 +1,17 @@
 const std = @import("std");
 const Io = std.Io;
 
+const options = @import("options");
 const tardy = @import("tardy");
 const Cross = tardy.Cross;
 const Dir = tardy.Dir;
 const Runtime = tardy.Runtime;
 const Task = tardy.Task;
+const AsyncIO = tardy.AsyncIO;
 
-const Tardy = tardy.Tardy(.auto);
+const backend: AsyncIO.Kind = .init(options.async_option);
+const Tardy = tardy.Tardy(backend);
+
 const log = std.log.scoped(.@"tardy/example/rmdir");
 
 fn main_frame(rt: *Runtime, name: [:0]const u8) !void {

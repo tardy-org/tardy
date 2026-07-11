@@ -1,6 +1,7 @@
 const std = @import("std");
 const Io = std.Io;
 
+const options = @import("options");
 const tardy = @import("tardy");
 const AcceptResult = tardy.AcceptResult;
 const Cross = tardy.Cross;
@@ -13,8 +14,11 @@ const SendResult = tardy.SendResult;
 const Socket = tardy.Socket;
 const Task = tardy.Task;
 const Timer = tardy.Timer;
+const AsyncIO = tardy.AsyncIO;
 
-const Tardy = tardy.Tardy(.auto);
+const backend: AsyncIO.Kind = .init(options.async_option);
+const Tardy = tardy.Tardy(backend);
+
 const EntryParams = struct {
     file_name: [:0]const u8,
     server_socket: *const Socket,

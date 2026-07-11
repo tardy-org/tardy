@@ -1,6 +1,7 @@
 const std = @import("std");
 const Io = std.Io;
 
+const options = @import("options");
 const tardy = @import("tardy");
 const Dir = tardy.Dir;
 const File = tardy.File;
@@ -8,8 +9,11 @@ const Runtime = tardy.Runtime;
 const Stat = tardy.Stat;
 const StatResult = tardy.StatResult;
 const Task = tardy.Task;
+const AsyncIO = tardy.AsyncIO;
 
-const Tardy = tardy.Tardy(.auto);
+const backend: AsyncIO.Kind = .init(options.async_option);
+const Tardy = tardy.Tardy(backend);
+
 const log = std.log.scoped(.@"tardy/example/stat");
 
 fn main_frame(rt: *Runtime, name: [:0]const u8) !void {

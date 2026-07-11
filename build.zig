@@ -1,11 +1,14 @@
 const std = @import("std");
-const assert = std.debug.assert;
+const debug = std.debug;
 const builtin = @import("builtin");
 
-const AsyncKind = @import("src/aio/lib.zig").AsyncKind;
+const log = std.log.scoped(.@"build.zig");
 
 pub fn build(b: *std.Build) void {
     comptime checkVersion();
+
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
 
     // Top-level steps you can invoke on the command line.
     const build_steps = .{
@@ -23,9 +26,6 @@ pub fn build(b: *std.Build) void {
         .async_backend = b.option(AsyncKind, "async", "async backend to use") orelse .auto,
     };
 
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
-
     // create a public tardy module
     const tardy = b.addModule("tardy", .{
         .root_source_file = b.path("src/lib.zig"),
@@ -36,27 +36,34 @@ pub fn build(b: *std.Build) void {
         .pic = true,
     });
 
+    const options: BuildOptions = .{
+        .async_backend = build_options.async_backend,
+        .tardy_mod = tardy,
+        .optimize = optimize,
+        .target = target,
+    };
+
     // build and run examples
     // usage: zig [build/build run] -Dexample[example_name]
     build_examples(b, .{
         .run = build_steps.run,
         .install = b.getInstallStep(),
     }, .{
+        .async_backend = build_options.async_backend,
         .tardy_mod = tardy,
         .example = build_options.example,
         .optimize = optimize,
         .target = target,
+        .skip_run_step_steup = undefined,
     });
 
     // build tardy as a static lib
     // usage: zig build static
-    build_static_lib(b, .{
-        .static = build_steps.static,
-    }, .{
-        .tardy_mod = tardy,
-        .optimize = optimize,
-        .target = target,
-    });
+    build_static_lib(
+        b,
+        .{ .static = build_steps.static },
+        options,
+    );
 
     // build and run tests
     // usage: refer to function declaration
@@ -64,22 +71,15 @@ pub fn build(b: *std.Build) void {
         .test_unit = build_steps.test_unit,
         .test_fmt = build_steps.test_fmt,
         .@"test" = build_steps.@"test",
-    }, .{
-        .tardy_mod = tardy,
-        .optimize = optimize,
-        .target = target,
-    });
+    }, options);
 
     // build and run e2e test
     // usage: zig build test_e2e -Dasync=[async_backend] -- [u64 num]
-    build_test_e2e(b, .{
-        .test_e2e = build_steps.test_e2e,
-    }, .{
-        .async_backend = build_options.async_backend,
-        .tardy_mod = tardy,
-        .optimize = optimize,
-        .target = target,
-    });
+    build_test_e2e(
+        b,
+        .{ .test_e2e = build_steps.test_e2e },
+        options,
+    );
 }
 
 // used for building and running examples
@@ -89,85 +89,72 @@ fn build_examples(
         run: *std.Build.Step,
         install: *std.Build.Step,
     },
-    options: struct {
-        tardy_mod: *std.Build.Module,
-        example: Example,
-        target: std.Build.ResolvedTarget,
-        optimize: std.builtin.OptimizeMode,
-    },
+    options: ExampleOptions,
 ) void {
-    if (options.example == .none) {
-        return;
-    }
-
     // build/run specific example
-    if (options.example != .none and options.example != .all) {
-        build_example_exe(
-            b,
-            .{
-                .run = steps.run,
-                .install = steps.install,
-            },
-            .{
-                .tardy_mod = options.tardy_mod,
-                .example = options.example,
-                .all_examples = false,
-                .optimize = options.optimize,
-                .target = options.target,
-            },
-        );
+    switch (options.example) {
+        .none => return,
+        // build .all example
+        // run wont work for .all example
+        .all => {
+            log.info("zig build run -Dexample=all will only build examples and will not run them", .{});
 
-        return;
-    }
+            inline for (@typeInfo(Example).@"enum".field_values) |value| {
+                // convert captured field value to field enum
+                const field: Example = @enumFromInt(value);
 
-    // build .all example
-    // run wont work for .all example
-    if (options.example == .all) {
-        std.log.info("zig build run -Dexample=all will only build examples and will not run them", .{});
+                // skip .none and .all for building step
+                if (field == .none or field == .all) continue;
 
-        inline for (@typeInfo(Example).@"enum".field_values) |value| {
-            // convert captured field value to field enum
-            const field: Example = @enumFromInt(value);
-
-            // skip .none and .all for building step
-            if (field == .none or field == .all) {
-                continue;
+                build_example_exe(
+                    b,
+                    .{
+                        .run = steps.run,
+                        .install = steps.install,
+                    },
+                    .{
+                        .async_backend = options.async_backend,
+                        .tardy_mod = options.tardy_mod,
+                        .example = field,
+                        .optimize = options.optimize,
+                        .target = options.target,
+                        .skip_run_step_steup = true,
+                    },
+                );
             }
-
-            build_example_exe(
+        },
+        else => {
+            return build_example_exe(
                 b,
                 .{
                     .run = steps.run,
                     .install = steps.install,
                 },
                 .{
+                    .async_backend = options.async_backend,
                     .tardy_mod = options.tardy_mod,
-                    .example = field,
-                    .all_examples = true,
+                    .example = options.example,
                     .optimize = options.optimize,
                     .target = options.target,
+                    .skip_run_step_steup = false,
                 },
             );
-        }
-        return;
+        },
     }
 }
 
 fn build_example_module(
     b: *std.Build,
-    options: struct {
-        tardy_mod: *std.Build.Module,
-        example: Example,
-        target: std.Build.ResolvedTarget,
-        optimize: std.builtin.OptimizeMode,
-    },
+    options: ExampleOptions,
 ) *std.Build.Module {
-    assert(options.example != .none);
-    assert(options.example != .all);
+    debug.assert(options.example != .none);
+    debug.assert(options.example != .all);
 
     // create a private example module
     const example_mod = b.createModule(.{
-        .root_source_file = b.path(b.fmt("examples/{s}/main.zig", .{options.example.toString()})),
+        .root_source_file = b.path(
+            b.fmt("examples/{t}/main.zig", .{options.example}),
+        ),
         .target = options.target,
         .optimize = options.optimize,
         // need libc for windows sockets
@@ -175,6 +162,14 @@ fn build_example_module(
     });
 
     example_mod.addImport("tardy", options.tardy_mod);
+
+    const example_options = b.addOptions();
+    example_options.addOption(
+        AsyncKind,
+        "async_option",
+        options.async_backend,
+    );
+    example_mod.addOptions("options", example_options);
 
     return example_mod;
 }
@@ -186,42 +181,31 @@ fn build_example_exe(
         run: *std.Build.Step,
         install: *std.Build.Step,
     },
-    options: struct {
-        tardy_mod: *std.Build.Module,
-        example: Example,
-        all_examples: bool,
-        target: std.Build.ResolvedTarget,
-        optimize: std.builtin.OptimizeMode,
-    },
+    options: ExampleOptions,
 ) void {
-    assert(options.example != .none);
-    assert(options.example != .all);
+    debug.assert(options.example != .none);
+    debug.assert(options.example != .all);
 
-    const example_mod = build_example_module(b, .{
-        .tardy_mod = options.tardy_mod,
-        .example = options.example,
-        .optimize = options.optimize,
-        .target = options.target,
-    });
+    const example_mod = build_example_module(b, options);
 
     const example_exe = b.addExecutable(.{
-        .name = options.example.toString(),
+        .name = @tagName(options.example),
         .root_module = example_mod,
         // without llvm leads to error: undefined symbol: tardy_swap_frame
         .use_llvm = true,
     });
 
-    const install_artifact = b.addInstallArtifact(example_exe, .{});
+    const install_artifact = b.addInstallArtifact(
+        example_exe,
+        .{},
+    );
 
     // depend on build/install step
     steps.install.dependOn(&install_artifact.step);
 
     // Should not run all examples at the same time
-    if (options.all_examples) {
-        return;
-    }
+    if (options.skip_run_step_steup) return;
 
-    // depend on run step
     const run_artifact = b.addRunArtifact(example_exe);
     run_artifact.step.dependOn(&install_artifact.step);
 
@@ -237,11 +221,7 @@ fn build_static_lib(
     steps: struct {
         static: *std.Build.Step,
     },
-    options: struct {
-        tardy_mod: *std.Build.Module,
-        target: std.Build.ResolvedTarget,
-        optimize: std.builtin.OptimizeMode,
-    },
+    options: BuildOptions,
 ) void {
     const static_lib = b.addLibrary(.{
         .linkage = .static,
@@ -250,7 +230,10 @@ fn build_static_lib(
     });
 
     // depend on static step
-    const install_artifact = b.addInstallArtifact(static_lib, .{});
+    const install_artifact = b.addInstallArtifact(
+        static_lib,
+        .{},
+    );
     steps.static.dependOn(&install_artifact.step);
 }
 
@@ -261,11 +244,7 @@ fn build_test(
         test_fmt: *std.Build.Step,
         @"test": *std.Build.Step,
     },
-    options: struct {
-        tardy_mod: *std.Build.Module,
-        target: std.Build.ResolvedTarget,
-        optimize: std.builtin.OptimizeMode,
-    },
+    options: BuildOptions,
 ) void {
     // Run general unit tests
     // usage: zig build test_unit
@@ -302,12 +281,7 @@ fn build_test_e2e(
     steps: struct {
         test_e2e: *std.Build.Step,
     },
-    options: struct {
-        async_backend: AsyncKind,
-        tardy_mod: *std.Build.Module,
-        target: std.Build.ResolvedTarget,
-        optimize: std.builtin.OptimizeMode,
-    },
+    options: BuildOptions,
 ) void {
     // create a private example module
     const e2e_mod = b.createModule(.{
@@ -327,7 +301,11 @@ fn build_test_e2e(
 
     // add needed options
     const test_options = b.addOptions();
-    test_options.addOption(AsyncKind, "async_option", options.async_backend);
+    test_options.addOption(
+        AsyncKind,
+        "async_option",
+        options.async_backend,
+    );
 
     e2e_mod.addOptions("options", test_options);
 
@@ -354,42 +332,12 @@ fn build_test_e2e(
     steps.test_e2e.dependOn(&run_artifact.step);
 }
 
-const Example = enum {
-    none,
-    all,
-    basic,
-    cat,
-    channel,
-    echo,
-    http,
-    rmdir,
-    shove,
-    stat,
-    stream,
-
-    fn toString(ex: Example) []const u8 {
-        const ex_string = switch (ex) {
-            .basic => "basic",
-            .cat => "cat",
-            .channel => "channel",
-            .echo => "echo",
-            .http => "http",
-            .rmdir => "rmdir",
-            .shove => "shove",
-            .stat => "stat",
-            .stream => "stream",
-
-            else => "",
-        };
-
-        return ex_string;
-    }
-};
-
 // ensures the currently in-use zig version is at least the minimum required
 fn checkVersion() void {
     const minimum_zig_version: []const u8 = @import("build.zig.zon").minimum_zig_version;
-    const supported_version = std.SemanticVersion.parse(minimum_zig_version) catch unreachable;
+    const supported_version = std.SemanticVersion.parse(
+        minimum_zig_version,
+    ) catch unreachable;
 
     const current_version = builtin.zig_version;
     // Compare versions while allowing different pre/patch metadata.
@@ -404,3 +352,41 @@ fn checkVersion() void {
         @compileError(message);
     }
 }
+
+const ExampleOptions = struct {
+    async_backend: AsyncKind,
+    tardy_mod: *std.Build.Module,
+    example: Example,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    skip_run_step_steup: bool,
+};
+
+const BuildOptions = struct {
+    async_backend: AsyncKind,
+    tardy_mod: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+};
+
+const Example = enum {
+    none,
+    all,
+    basic,
+    cat,
+    channel,
+    echo,
+    http,
+    rmdir,
+    shove,
+    stat,
+    stream,
+};
+
+pub const AsyncKind = enum {
+    auto,
+    io_uring,
+    epoll,
+    kqueue,
+    poll,
+};

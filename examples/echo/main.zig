@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const options = @import("options");
 const tardy = @import("tardy");
 const AcceptResult = tardy.AcceptResult;
 const Cross = tardy.Cross;
@@ -10,8 +11,11 @@ const SendResult = tardy.SendResult;
 const Socket = tardy.Socket;
 const Task = tardy.Task;
 const Timer = tardy.Timer;
+const AsyncIO = tardy.AsyncIO;
 
-const Tardy = tardy.Tardy(.auto);
+const backend: AsyncIO.Kind = .init(options.async_option);
+const Tardy = tardy.Tardy(backend);
+
 const log = std.log.scoped(.@"tardy/example/echo");
 
 fn echo_frame(rt: *Runtime, server: *const Socket) !void {
@@ -56,7 +60,10 @@ pub fn main(init: std.process.Init) !void {
     const host = "0.0.0.0";
     const port = 9862;
 
-    const server: Socket = try .init(init.io, .{ .tcp = .{ .host = host, .port = port } });
+    const server: Socket = try .init(
+        init.io,
+        .{ .tcp = .{ .host = host, .port = port } },
+    );
     try server.bind();
     try server.listen(501);
 
