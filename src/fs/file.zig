@@ -15,8 +15,7 @@ const ReadResult = @import("../aio/completion.zig").ReadResult;
 const ReadError = @import("../aio/completion.zig").ReadError;
 const WriteResult = @import("../aio/completion.zig").WriteResult;
 const WriteError = @import("../aio/completion.zig").WriteError;
-const FileMode = @import("../aio/lib.zig").FileMode;
-const AsyncOpenFlags = @import("../aio/lib.zig").AsyncOpenFlags;
+const AsyncIO = @import("../aio.zig");
 const Cross = @import("../cross/lib.zig");
 const Frame = @import("../frame/lib.zig").Frame;
 const Runtime = @import("../runtime/lib.zig").Runtime;
@@ -153,14 +152,14 @@ pub const File = struct {
     }
 
     pub const CreateFlags = struct {
-        mode: FileMode = .write,
+        mode: AsyncIO.FileMode = .write,
         perms: isize = 0o644,
         truncate: bool = true,
         overwrite: bool = true,
     };
 
     pub const OpenFlags = struct {
-        mode: FileMode = .read,
+        mode: AsyncIO.FileMode = .read,
     };
 
     pub fn to_std(self: File) Io.File {
@@ -201,7 +200,7 @@ pub const File = struct {
     }
 
     pub fn create(rt: *Runtime, path: Path, flags: CreateFlags) !File {
-        const aio_flags: AsyncOpenFlags = .{
+        const aio_flags: AsyncIO.OpenFlags = .{
             .mode = flags.mode,
             .perms = flags.perms,
             .create = true,
@@ -296,7 +295,7 @@ pub const File = struct {
 
     pub fn open(rt: *Runtime, path: Path, flags: OpenFlags) !File {
         if (rt.aio.features.has_capability(.open)) {
-            const aio_flags: AsyncOpenFlags = .{
+            const aio_flags: AsyncIO.OpenFlags = .{
                 .mode = flags.mode,
                 .create = false,
                 .directory = false,
@@ -470,6 +469,7 @@ pub const File = struct {
         } else {
             const std_file = self.to_std();
 
+            // TODO: fix `error.Unseekable` when fd is a fifo
             // TODO: Proper and improved error handling (also why not error.*)
             if (offset) |o| {
                 return blk: while (true) {

@@ -1,7 +1,7 @@
 const std = @import("std");
 const debug = std.debug;
 
-const Async = @import("../aio/lib.zig").Async;
+const AsyncIO = @import("../aio.zig");
 const PoolKind = @import("../core/pool.zig").PoolKind;
 
 const Scheduler = @import("./scheduler.zig").Scheduler;
@@ -26,14 +26,14 @@ pub const Runtime = struct {
     scheduler: Scheduler,
     // TODO: audit if this is needed, or all request can go through `aio`
     io: std.Io,
-    aio: Async,
+    aio: AsyncIO,
     id: usize,
     running: bool,
 
     // The currently running Task's index.
     current_task: ?usize = null,
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, aio: Async, options: RuntimeOptions) !Runtime {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, aio: AsyncIO, options: RuntimeOptions) !Runtime {
         const scheduler: Scheduler = try .init(
             allocator,
             options.size_tasks_initial,

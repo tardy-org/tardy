@@ -9,6 +9,7 @@ const syscall = @import("syscall.zig");
 const math = std.math;
 const mem = std.mem;
 
+const tardy = @import("../../lib.zig");
 const File = @import("../../fs/file.zig").File;
 const Pool = @import("../../core/pool.zig").Pool;
 const Cross = @import("../../cross/lib.zig");
@@ -25,10 +26,7 @@ const RecvError = @import("../completion.zig").RecvError;
 const SendResult = @import("../completion.zig").SendResult;
 const SendError = @import("../completion.zig").SendError;
 const Job = @import("../job.zig").Job;
-const Async = @import("../lib.zig").Async;
-const AsyncOptions = @import("../lib.zig").AsyncOptions;
-const AsyncFeatures = @import("../lib.zig").AsyncFeatures;
-const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
+const AsyncIO = tardy.AsyncIO;
 
 const log = std.log.scoped(.@"tardy/aio/poll");
 
@@ -63,7 +61,7 @@ pub const AsyncPoll = struct {
     fd_job_map: std.AutoHashMap(File.Handle, Job),
     timers: TimerQueue,
 
-    pub fn init(allocator: mem.Allocator, options: AsyncOptions) !AsyncPoll {
+    pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !AsyncPoll {
         const size = options.size_tasks_initial + 1;
 
         // 0 is read, 1 is write.
@@ -172,7 +170,7 @@ pub const AsyncPoll = struct {
         poll.inner_deinit(allocator);
     }
 
-    pub fn queue_job(runner: *anyopaque, task: usize, job: AsyncSubmission) Errors.QueueJob!void {
+    pub fn queue_job(runner: *anyopaque, task: usize, job: AsyncIO.Submission) Errors.QueueJob!void {
         const poll: *AsyncPoll = @ptrCast(@alignCast(runner));
 
         try switch (job) {
@@ -484,7 +482,7 @@ pub const AsyncPoll = struct {
         return completions[0..reaped];
     }
 
-    pub fn to_async(self: *AsyncPoll) Async {
+    pub fn to_async(self: *AsyncPoll) AsyncIO {
         return .{
             .runner = self,
             .features = .init(&.{

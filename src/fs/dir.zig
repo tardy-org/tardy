@@ -18,8 +18,7 @@ const CreateDirResult = @import("../aio/completion.zig").CreateDirResult;
 const MkdirResult = @import("../aio/completion.zig").MkdirResult;
 const MkdirError = @import("../aio/completion.zig").MkdirError;
 const StatError = @import("../aio/completion.zig").StatError;
-const FileMode = @import("../aio/lib.zig").FileMode;
-const AsyncOpenFlags = @import("../aio/lib.zig").AsyncOpenFlags;
+const AsyncIO = @import("../aio.zig");
 const Runtime = @import("../runtime/lib.zig").Runtime;
 const File = @import("lib.zig").File;
 const Path = @import("lib.zig").Path;
@@ -63,7 +62,7 @@ pub const Dir = struct {
 
     /// Open a Directory.
     pub fn open(rt: *Runtime, path: Path) !Dir {
-        const flags: AsyncOpenFlags = .{
+        const flags: AsyncIO.OpenFlags = .{
             .mode = .read,
             .create = false,
             .directory = true,

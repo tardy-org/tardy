@@ -35,11 +35,9 @@ const WriteError = @import("../completion.zig").WriteError;
 const StatResult = @import("../completion.zig").StatResult;
 const StatError = @import("../completion.zig").StatError;
 const Job = @import("../job.zig").Job;
-const Async = @import("../lib.zig").Async;
-const AsyncOptions = @import("../lib.zig").AsyncOptions;
-const AsyncFeatures = @import("../lib.zig").AsyncFeatures;
-const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
-const AsyncOpenFlags = @import("../lib.zig").AsyncOpenFlags;
+const tardy = @import("../../lib.zig");
+
+const AsyncIO = tardy.AsyncIO;
 const syscall = @import("syscall.zig");
 const posix = std.posix;
 
@@ -143,7 +141,7 @@ pub const AsyncIoUring = struct {
         break :blk flags;
     };
 
-    pub fn init(allocator: mem.Allocator, options: AsyncOptions) (mem.Allocator.Error || Errors.Init)!AsyncIoUring {
+    pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) (mem.Allocator.Error || Errors.Init)!AsyncIoUring {
         // Extra job for the wake event_fd.
         const size = options.size_tasks_initial + 1;
 
@@ -238,7 +236,7 @@ pub const AsyncIoUring = struct {
     fn queue_job(
         runner: *anyopaque,
         task: usize,
-        job: AsyncSubmission,
+        job: AsyncIO.Submission,
     ) Errors.QueueJob!void {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         (switch (job) {
@@ -287,7 +285,12 @@ pub const AsyncIoUring = struct {
         _ = try self.inner.timeout(index, timespec_ptr, 0, 0);
     }
 
-    fn queue_open(self: *AsyncIoUring, task: usize, path: Path, flags: AsyncOpenFlags) Error!void {
+    fn queue_open(
+        self: *AsyncIoUring,
+        task: usize,
+        path: Path,
+        flags: AsyncIO.OpenFlags,
+    ) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -939,7 +942,7 @@ pub const AsyncIoUring = struct {
         return completions[0..count];
     }
 
-    pub fn to_async(self: *AsyncIoUring) Async {
+    pub fn to_async(self: *AsyncIoUring) AsyncIO {
         return .{
             .runner = self,
             .features = .all(),

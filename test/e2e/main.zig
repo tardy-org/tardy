@@ -1,32 +1,27 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const builtin = @import("builtin");
 const mem = std.mem;
 const Io = std.Io;
-const is_unix = builtin.os.tag != .windows;
+const builtin = @import("builtin");
 
-const AsyncType = @import("tardy").AsyncType;
-const Dir = @import("tardy").Dir;
 const options = @import("options");
-const Runtime = @import("tardy").Runtime;
-const Task = @import("tardy").Task;
-const Timer = @import("tardy").Timer;
+const tardy = @import("tardy");
+const AsyncIO = tardy.AsyncIO;
+const Dir = tardy.Dir;
+const Runtime = tardy.Runtime;
+const Task = tardy.Task;
+const Timer = tardy.Timer;
 
 const First = @import("first.zig");
 const Second = @import("second.zig");
 const SharedParams = @import("lib.zig").SharedParams;
 
+const is_unix = builtin.os.tag != .windows;
+
 const log = std.log.scoped(.@"tardy/e2e");
 
-const backend: AsyncType = switch (options.async_option) {
-    .auto => .auto,
-    .kqueue => .kqueue,
-    .io_uring => .io_uring,
-    .epoll => .epoll,
-    .poll => .poll,
-    .custom => unreachable,
-};
-const Tardy = @import("tardy").Tardy(backend);
+const backend: AsyncIO.Kind = .init(options.async_backend);
+const Tardy = tardy.Tardy(backend);
 
 pub const std_options: std.Options = .{ .log_level = .debug };
 

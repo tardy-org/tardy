@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-pub const AsyncSubmission = @import("../aio/lib.zig").AsyncSubmission;
+const AsyncIO = @import("../aio.zig");
 const AtomicDynamicBitSet = @import("../core/atomic_bitset.zig").AtomicDynamicBitSet;
 const Pool = @import("../core/pool.zig").Pool;
 const PoolKind = @import("../core/pool.zig").PoolKind;
@@ -13,7 +13,7 @@ const Task = @import("task.zig").Task;
 
 const TaskWithJob = struct {
     task: Task,
-    job: ?AsyncSubmission = null,
+    job: ?AsyncIO.Submission = null,
 };
 
 pub const Scheduler = struct {
@@ -79,7 +79,7 @@ pub const Scheduler = struct {
     }
 
     // This is only safe to call from the Runtime that the Frame is running on.
-    pub fn io_await(self: *Scheduler, job: AsyncSubmission) !void {
+    pub fn io_await(self: *Scheduler, job: AsyncIO.Submission) !void {
         const rt: *Runtime = @fieldParentPtr("scheduler", self);
         const index = rt.current_task.?;
         const task = self.tasks.get_ptr(index);

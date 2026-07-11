@@ -25,10 +25,9 @@ const RecvError = @import("../completion.zig").RecvError;
 const SendResult = @import("../completion.zig").SendResult;
 const SendError = @import("../completion.zig").SendError;
 const Job = @import("../job.zig").Job;
-const Async = @import("../lib.zig").Async;
-const AsyncOptions = @import("../lib.zig").AsyncOptions;
-const AsyncFeatures = @import("../lib.zig").AsyncFeatures;
-const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
+const tardy = @import("../../lib.zig");
+
+const AsyncIO = tardy.AsyncIO;
 
 const log = std.log.scoped(.@"tardy/aio/epoll");
 
@@ -49,7 +48,7 @@ pub const AsyncEpoll = struct {
 
     jobs: Pool(Job),
 
-    pub fn init(allocator: mem.Allocator, options: AsyncOptions) !AsyncEpoll {
+    pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !AsyncEpoll {
         const size = options.size_tasks_initial + 1;
         const epoll_fd = try syscall.epoll_create1(0);
         assert(epoll_fd > -1);
@@ -100,7 +99,11 @@ pub const AsyncEpoll = struct {
         epoll.inner_deinit(allocator);
     }
 
-    pub fn queue_job(runner: *anyopaque, task: usize, job: AsyncSubmission) Errors.QueueJob!void {
+    pub fn queue_job(
+        runner: *anyopaque,
+        task: usize,
+        job: AsyncIO.Submission,
+    ) Errors.QueueJob!void {
         const epoll: *AsyncEpoll = @ptrCast(@alignCast(runner));
 
         try switch (job) {
@@ -461,7 +464,7 @@ pub const AsyncEpoll = struct {
         return completions[0..reaped];
     }
 
-    pub fn to_async(self: *AsyncEpoll) Async {
+    pub fn to_async(self: *AsyncEpoll) AsyncIO {
         return .{
             .runner = self,
             .features = .init(&.{

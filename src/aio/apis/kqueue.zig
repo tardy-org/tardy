@@ -19,10 +19,9 @@ const RecvError = @import("../completion.zig").RecvError;
 const SendResult = @import("../completion.zig").SendResult;
 const SendError = @import("../completion.zig").SendError;
 const Job = @import("../job.zig").Job;
-const Async = @import("../lib.zig").Async;
-const AsyncOptions = @import("../lib.zig").AsyncOptions;
-const AsyncFeatures = @import("../lib.zig").AsyncFeatures;
-const AsyncSubmission = @import("../lib.zig").AsyncSubmission;
+const tardy = @import("../../lib.zig");
+
+const AsyncIO = tardy.AsyncIO;
 const syscall = @import("syscall.zig");
 
 const log = std.log.scoped(.@"tardy/aio/kqueue");
@@ -46,7 +45,7 @@ pub const AsyncKqueue = struct {
 
     jobs: Pool(Job),
 
-    pub fn init(allocator: std.mem.Allocator, options: AsyncOptions) !AsyncKqueue {
+    pub fn init(allocator: std.mem.Allocator, options: AsyncIO.Options) !AsyncKqueue {
         const kqueue_fd = try syscall.kqueue();
         assert(kqueue_fd > -1);
         errdefer syscall.close(kqueue_fd);
@@ -95,7 +94,7 @@ pub const AsyncKqueue = struct {
         kqueue.inner_deinit(allocator);
     }
 
-    pub fn queue_job(runner: *anyopaque, task: usize, job: AsyncSubmission) Errors.QueueJob!void {
+    pub fn queue_job(runner: *anyopaque, task: usize, job: AsyncIO.Submission) Errors.QueueJob!void {
         const kqueue: *AsyncKqueue = @ptrCast(@alignCast(runner));
 
         (switch (job) {
@@ -492,7 +491,7 @@ pub const AsyncKqueue = struct {
         return completions[0..reaped];
     }
 
-    pub fn to_async(self: *AsyncKqueue) Async {
+    pub fn to_async(self: *AsyncKqueue) AsyncIO {
         return .{
             .runner = self,
             .features = .init(&.{
