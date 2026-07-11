@@ -5,10 +5,6 @@ const mem = std.mem;
 const Io = std.Io;
 const linux = std.os.linux;
 
-const Cross = @import("../../cross/lib.zig");
-const File = @import("../../fs/file.zig").File;
-const Stat = @import("../../fs/lib.zig").Stat;
-const Path = @import("../../fs/lib.zig").Path;
 const Socket = @import("../../net/lib.zig").Socket;
 const tardy = @import("../../root.zig");
 const results = tardy.results;

@@ -6,7 +6,7 @@ const pool = tardy.core.pool;
 const queue = tardy.core.queue;
 const atomic_bitset = tardy.core.atomic_bitset;
 const AsyncIO = tardy.AsyncIO;
-const Frame = tardy.Frame;
+const Coroutine = tardy.Coroutine;
 const Runtime = @import("lib.zig").Runtime;
 const Task = @import("task.zig").Task;
 
@@ -75,7 +75,7 @@ pub const Scheduler = struct {
         task.state = .wait_for_trigger;
         self.runnable -= 1;
 
-        Frame.yield();
+        Coroutine.yield();
     }
 
     // NOTE: This can spuriously trigger a Task later in the Run Loop.
@@ -97,14 +97,14 @@ pub const Scheduler = struct {
 
         // Queue the related I/O job.
         try rt.aio.queue_job(index, job);
-        Frame.yield();
+        Coroutine.yield();
     }
 
     pub fn spawn(
         self: *Scheduler,
         comptime coroutine_fn: anytype,
         args: anytype,
-        stack_size: ?Frame.Stack,
+        stack_size: ?Coroutine.Stack,
     ) !void {
         const index = blk: {
             if (self.released.pop()) |index| {
@@ -114,7 +114,7 @@ pub const Scheduler = struct {
             }
         };
 
-        const frame_ptr: *Frame = .init(
+        const frame_ptr: *Coroutine = .init(
             self.allocator,
             coroutine_fn,
             args,

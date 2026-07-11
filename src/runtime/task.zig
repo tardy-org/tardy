@@ -21,5 +21,5 @@ pub const Task = struct {
     // 8 bytes
     index: usize,
     // 8 bytes
-    frame: *tardy.Frame,
+    frame: *tardy.Coroutine,
 };

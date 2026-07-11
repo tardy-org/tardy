@@ -1,8 +1,7 @@
 const std = @import("std");
-const assert = std.debug.assert;
+const debug = std.debug;
 const Io = std.Io;
 const posix = std.posix;
-const Atomic = std.atomic.Value;
 
 const Socket = @import("../../net/lib.zig").Socket;
 const tardy = @import("../../root.zig");
@@ -35,7 +34,7 @@ pub const AsyncKqueue = struct {
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIO.Options) !AsyncKqueue {
         const kqueue_fd = try syscall.kqueue();
-        assert(kqueue_fd > -1);
+        debug.assert(kqueue_fd > -1);
         errdefer syscall.close(kqueue_fd);
 
         const events = try allocator.alloc(
@@ -352,7 +351,7 @@ pub const AsyncKqueue = struct {
 
             for (kqueue.events[0..kqueue_events]) |event| {
                 const job_index = event.udata;
-                assert(kqueue.jobs.dirty.isSet(job_index));
+                debug.assert(kqueue.jobs.dirty.isSet(job_index));
 
                 var job_complete = true;
                 defer if (job_complete) kqueue.jobs.release(job_index);
@@ -362,18 +361,18 @@ pub const AsyncKqueue = struct {
                 const result: results.Result = result: {
                     switch (job.type) {
                         .wake => {
-                            assert(event.filter == posix.system.EVFILT.USER);
-                            assert(event.ident == WAKE_IDENT);
+                            debug.assert(event.filter == posix.system.EVFILT.USER);
+                            debug.assert(event.ident == WAKE_IDENT);
                             job_complete = false;
                             break :result .wake;
                         },
                         .timer => |inner| {
-                            assert(event.filter == posix.system.EVFILT.TIMER);
-                            assert(inner == .none);
+                            debug.assert(event.filter == posix.system.EVFILT.TIMER);
+                            debug.assert(inner == .none);
                             break :result .none;
                         },
                         .accept => |*inner| {
-                            assert(event.filter == posix.system.EVFILT.READ);
+                            debug.assert(event.filter == posix.system.EVFILT.READ);
 
                             const socket_fd = syscall.accept(
                                 inner.socket,
@@ -396,7 +395,7 @@ pub const AsyncKqueue = struct {
                             };
                         },
                         .connect => {
-                            assert(event.filter == posix.system.EVFILT.WRITE);
+                            debug.assert(event.filter == posix.system.EVFILT.WRITE);
 
                             const ConnectError = results.ConnectError;
                             const result: results.ConnectResult = blk: {
@@ -431,7 +430,7 @@ pub const AsyncKqueue = struct {
                             };
                         },
                         .recv => |inner| {
-                            assert(event.filter == posix.system.EVFILT.READ);
+                            debug.assert(event.filter == posix.system.EVFILT.READ);
                             const rc = syscall.recvfrom(
                                 inner.socket,
                                 inner.buffer,
@@ -458,7 +457,7 @@ pub const AsyncKqueue = struct {
                                 };
                         },
                         .send => |inner| {
-                            assert(event.filter == posix.system.EVFILT.WRITE);
+                            debug.assert(event.filter == posix.system.EVFILT.WRITE);
                             const rc = syscall.send(
                                 inner.socket,
                                 inner.buffer,

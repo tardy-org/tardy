@@ -6,14 +6,14 @@ const Io = std.Io;
 const builtin = @import("builtin");
 const mem = std.mem;
 
-const Cross = @import("../../cross/lib.zig");
+const tardy = @import("../../root.zig");
+const results = tardy.results;
+const pool = tardy.core.pool;
+const cross = tardy.cross;
 const Stat = @import("../../fs/lib.zig").Stat;
 const Path = @import("../../fs/lib.zig").Path;
 const Socket = @import("../../net/lib.zig").Socket;
 const Job = @import("../job.zig").Job;
-const tardy = @import("../../root.zig");
-const results = tardy.results;
-const pool = tardy.core.pool;
 
 const AsyncIO = tardy.AsyncIO;
 const syscall = @import("syscall.zig");
@@ -561,7 +561,7 @@ pub const AsyncIoUring = struct {
     }
 
     inline fn queue_wake(self: *AsyncIoUring) Error!void {
-        if (self.wake_event_fd == Cross.fd.INVALID_FD) return;
+        if (self.wake_event_fd == cross.fd.INVALID_FD) return;
 
         const index = try self.jobs.borrow();
         errdefer self.jobs.release(index);

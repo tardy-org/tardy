@@ -85,7 +85,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             };
 
             // for post-spawn syncing
-            var spawned_count: Atomic(usize) = .init(0);
+            var spawned_count: atomic.Value(usize) = .init(0);
             const spawning_count = runtime_count - 1;
 
             var runtime = try self.spawn_runtime(0, .{
@@ -109,7 +109,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                 threads.deinit(self.allocator);
             }
             // for in-spawn id assignment
-            var spawn_id: Atomic(usize) = .init(1);
+            var spawn_id: atomic.Value(usize) = .init(1);
 
             for (0..spawning_count) |_| {
                 const current_index = spawn_id.fetchAdd(1, .monotonic);
@@ -119,7 +119,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                         options: Options,
                         parent: *AsyncIO,
                         entry_parameters: @TypeOf(entry_params),
-                        count: *Atomic(usize),
+                        count: *atomic.Value(usize),
                         total_count: usize,
                         current_id: usize,
                     ) void {
@@ -242,17 +242,15 @@ const Options = struct {
 
 const std = @import("std");
 const assert = std.debug.assert;
-const Atomic = std.atomic.Value;
+const atomic = std.atomic;
 const builtin = @import("builtin");
 
 pub const results = @import("aio/results.zig");
 pub const AsyncIO = @import("AsyncIO.zig");
-pub const Spsc = @import("channel/spsc.zig").Spsc;
+pub const channel = @import("channel.zig");
 pub const core = @import("core.zig");
-/// Cross-platform abstractions.
-/// For the `std.posix` interface types.
-pub const Cross = @import("cross/lib.zig");
-pub const Frame = @import("frame/lib.zig").Frame;
+pub const Coroutine = @import("Coroutine.zig");
+pub const cross = @import("cross.zig");
 pub const File = @import("fs/lib.zig").File;
 pub const Dir = @import("fs/lib.zig").Dir;
 pub const Path = @import("fs/lib.zig").Path;

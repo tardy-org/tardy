@@ -2,8 +2,7 @@ const std = @import("std");
 const Atomic = std.atomic.Value;
 
 const tardy = @import("../root.zig");
-const SpscAtomicRing = @import("../core/atomic_ring.zig").SpscAtomicRing;
-const Ring = @import("../core/ring.zig").Ring;
+const atomic_ring = tardy.core.atomic_ring;
 const Runtime = tardy.Runtime;
 
 const log = std.log.scoped(.@"tardy/channels/spsc");
@@ -19,11 +18,15 @@ pub fn Spsc(comptime T: type) type {
         const Self = @This();
 
         fn trigger_consumer(self: *Self) !void {
-            try self.consumer_rt.load(.acquire).?.trigger(self.consumer_index.load(.acquire));
+            try self.consumer_rt.load(.acquire).?.trigger(
+                self.consumer_index.load(.acquire),
+            );
         }
 
         fn trigger_producer(self: *Self) !void {
-            try self.producer_rt.load(.acquire).?.trigger(self.producer_index.load(.acquire));
+            try self.producer_rt.load(.acquire).?.trigger(
+                self.producer_index.load(.acquire),
+            );
         }
 
         pub const Producer = struct {
@@ -41,7 +44,10 @@ pub fn Spsc(comptime T: type) type {
                         if (!self.inner.consumer_open.load(.acquire)) return error.Closed;
                         self.inner.ring.push(message) catch |e| switch (e) {
                             error.RingFull => {
-                                self.inner.producer_index.store(self.rt.current_task.?, .release);
+                                self.inner.producer_index.store(
+                                    self.rt.current_task.?,
+                                    .release,
+                                );
                                 try self.inner.trigger_consumer();
                                 try self.rt.scheduler.trigger_await();
                                 continue;
@@ -75,7 +81,10 @@ pub fn Spsc(comptime T: type) type {
                             // If we are empty, trigger the producer to run.
                             error.RingEmpty => {
                                 if (!self.inner.producer_open.load(.acquire)) return error.Closed;
-                                self.inner.consumer_index.store(self.rt.current_task.?, .release);
+                                self.inner.consumer_index.store(
+                                    self.rt.current_task.?,
+                                    .release,
+                                );
                                 try self.inner.trigger_producer();
                                 try self.rt.scheduler.trigger_await();
                                 continue;
@@ -93,7 +102,7 @@ pub fn Spsc(comptime T: type) type {
             }
         };
 
-        ring: SpscAtomicRing(T),
+        ring: atomic_ring.SpscAtomicRing(T),
 
         producer_rt: Atomic(?*Runtime) align(std.atomic.cache_line),
         producer_index: Atomic(usize) align(std.atomic.cache_line),
@@ -140,7 +149,10 @@ pub fn Spsc(comptime T: type) type {
             )) |_| @panic("Only one producer can exist for a Spsc");
 
             self.producer_open.store(true, .release);
-            if (self.consumer_rt.load(.acquire) != null) self.state.store(.running, .release);
+            if (self.consumer_rt.load(.acquire) != null) self.state.store(
+                .running,
+                .release,
+            );
             return .{ .inner = self, .rt = runtime };
         }
 
@@ -153,7 +165,10 @@ pub fn Spsc(comptime T: type) type {
             )) |_| @panic("Only one consumer can exist for a Spsc");
 
             self.consumer_open.store(true, .release);
-            if (self.producer_rt.load(.acquire) != null) self.state.store(.running, .release);
+            if (self.producer_rt.load(.acquire) != null) self.state.store(
+                .running,
+                .release,
+            );
             return .{ .inner = self, .rt = runtime };
         }
     };

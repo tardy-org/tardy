@@ -11,9 +11,6 @@ const mem = std.mem;
 
 const tardy = @import("../../root.zig");
 const File = @import("../../fs/file.zig").File;
-const Pool = @import("../../core/pool.zig").Pool;
-const Cross = @import("../../cross/lib.zig");
-const Stat = @import("../../fs/lib.zig").Stat;
 const Socket = @import("../../net/lib.zig").Socket;
 const Job = @import("../job.zig").Job;
 const AsyncIO = tardy.AsyncIO;

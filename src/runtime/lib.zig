@@ -2,7 +2,7 @@ const std = @import("std");
 const debug = std.debug;
 
 const tardy = @import("../root.zig");
-const Frame = tardy.Frame;
+const Coroutine = tardy.Coroutine;
 const AsyncIO = tardy.AsyncIO;
 const pool = tardy.core.pool;
 const Storage = @import("storage.zig").Storage;
@@ -90,7 +90,7 @@ pub const Runtime = struct {
         rt: *Runtime,
         comptime coroutine_fn: anytype,
         args: anytype,
-        stack_size: ?Frame.Stack,
+        stack_size: ?Coroutine.Stack,
     ) !void {
         try rt.scheduler.spawn(
             coroutine_fn,

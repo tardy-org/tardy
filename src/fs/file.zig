@@ -9,8 +9,8 @@ const syscall = @import("../aio/apis/syscall.zig");
 const tardy = @import("../root.zig");
 const results = tardy.results;
 const AsyncIO = tardy.AsyncIO;
-const Cross = @import("../cross/lib.zig");
-const Frame = tardy.Frame;
+const cross = tardy.cross;
+const Coroutine = tardy.Coroutine;
 const Runtime = tardy.Runtime;
 const Path = @import("lib.zig").Path;
 const Stat = @import("lib.zig").Stat;
@@ -168,17 +168,17 @@ pub const File = struct {
 
     /// Get `stdout` as a File.
     pub fn std_out() File {
-        return .{ .handle = Cross.get_std_out() };
+        return .{ .handle = cross.get_std_out() };
     }
 
     /// Get `stdin` as a File.
     pub fn std_in() File {
-        return .{ .handle = Cross.get_std_in() };
+        return .{ .handle = cross.get_std_in() };
     }
 
     /// Get `stderr` as a File.
     pub fn std_err() File {
-        return .{ .handle = Cross.get_std_err() };
+        return .{ .handle = cross.get_std_err() };
     }
 
     pub fn close(self: File, rt: *Runtime) !void {
@@ -233,7 +233,7 @@ pub const File = struct {
                             std_flags,
                         ) catch |e| return switch (e) {
                             error.WouldBlock => {
-                                Frame.yield();
+                                Coroutine.yield();
                                 continue;
                             },
                             error.AccessDenied => OpenError.AccessDenied,
@@ -255,7 +255,7 @@ pub const File = struct {
                             else => OpenError.Unexpected,
                         };
                     };
-                    try Cross.fd.to_nonblock(opened.handle);
+                    try cross.fd.to_nonblock(opened.handle);
 
                     return .{ .handle = opened.handle };
                 },
@@ -268,7 +268,7 @@ pub const File = struct {
                             std_flags,
                         ) catch |e| return switch (e) {
                             error.WouldBlock => {
-                                Frame.yield();
+                                Coroutine.yield();
                                 continue;
                             },
                             error.AccessDenied => OpenError.AccessDenied,
@@ -289,7 +289,7 @@ pub const File = struct {
                             else => OpenError.Unexpected,
                         };
                     };
-                    try Cross.fd.to_nonblock(opened.handle);
+                    try cross.fd.to_nonblock(opened.handle);
 
                     return .{ .handle = opened.handle };
                 },
@@ -332,7 +332,7 @@ pub const File = struct {
                     const opened: StdFile = blk: while (true) {
                         break :blk dir.openFile(rt.io, inner.path, std_flags) catch |e| return switch (e) {
                             error.WouldBlock => {
-                                Frame.yield();
+                                Coroutine.yield();
                                 continue;
                             },
                             error.AccessDenied => OpenError.AccessDenied,
@@ -354,7 +354,7 @@ pub const File = struct {
                             else => OpenError.Unexpected,
                         };
                     };
-                    try Cross.fd.to_nonblock(opened.handle);
+                    try cross.fd.to_nonblock(opened.handle);
 
                     return .{ .handle = opened.handle };
                 },
@@ -363,7 +363,7 @@ pub const File = struct {
                     const opened: StdFile = blk: while (true) {
                         break :blk Io.Dir.openFileAbsolute(rt.io, inner, std_flags) catch |e| return switch (e) {
                             error.WouldBlock => {
-                                Frame.yield();
+                                Coroutine.yield();
                                 continue;
                             },
                             error.AccessDenied => OpenError.AccessDenied,
@@ -384,7 +384,7 @@ pub const File = struct {
                             else => OpenError.Unexpected,
                         };
                     };
-                    try Cross.fd.to_nonblock(opened.handle);
+                    try cross.fd.to_nonblock(opened.handle);
 
                     return .{ .handle = opened.handle };
                 },
@@ -418,7 +418,7 @@ pub const File = struct {
                             o,
                         ) catch |e| return switch (e) {
                             error.WouldBlock => {
-                                Frame.yield();
+                                Coroutine.yield();
                                 continue;
                             },
                             error.Unseekable => unreachable,
@@ -436,7 +436,7 @@ pub const File = struct {
                             &.{buffer},
                         ) catch |e| return switch (e) {
                             error.WouldBlock => {
-                                Frame.yield();
+                                Coroutine.yield();
                                 continue;
                             },
                             error.AccessDenied => ReadError.AccessDenied,
@@ -496,7 +496,7 @@ pub const File = struct {
                 return blk: while (true) {
                     break :blk std_file.writePositional(rt.io, &.{buffer}, o) catch |e| switch (e) {
                         error.WouldBlock => {
-                            Frame.yield();
+                            Coroutine.yield();
                             continue;
                         },
                         error.Unseekable => unreachable,
@@ -514,7 +514,7 @@ pub const File = struct {
                 return blk: while (true) {
                     break :blk std_file.writeStreaming(rt.io, &.{}, &.{buffer}, 0) catch |e| switch (e) {
                         error.WouldBlock => {
-                            Frame.yield();
+                            Coroutine.yield();
                             continue;
                         },
                         error.DiskQuota => WriteError.DiskQuotaExceeded,
