@@ -1,28 +1,3 @@
-const std = @import("std");
-const debug = std.debug;
-const Io = std.Io;
-const posix = std.posix;
-
-const Socket = @import("../../net/lib.zig").Socket;
-const tardy = @import("../../root.zig");
-const results = tardy.results;
-const pool = tardy.core.pool;
-const AsyncIO = tardy.AsyncIO;
-const Job = @import("../job.zig").Job;
-const syscall = @import("syscall.zig");
-
-const log = std.log.scoped(.@"tardy/aio/kqueue");
-
-pub const Errors = struct {
-    pub const Connect = syscall.ConnectError || Error;
-    pub const Submit = syscall.KEventError;
-    pub const Wake = syscall.KEventError;
-    pub const QueueJob = Connect || Submit || Wake || Error;
-};
-const Error = error{ChangeQueueFull} || pool.Error;
-
-const WAKE_IDENT = 1;
-
 pub const AsyncKqueue = struct {
     kqueue_fd: posix.fd_t,
 
@@ -518,3 +493,28 @@ pub const AsyncKqueue = struct {
         };
     }
 };
+
+const log = std.log.scoped(.@"tardy/aio/kqueue");
+
+pub const Errors = struct {
+    pub const Connect = syscall.ConnectError || Error;
+    pub const Submit = syscall.KEventError;
+    pub const Wake = syscall.KEventError;
+    pub const QueueJob = Connect || Submit || Wake || Error;
+};
+const Error = error{ChangeQueueFull} || pool.Error;
+
+const WAKE_IDENT = 1;
+
+const std = @import("std");
+const debug = std.debug;
+const Io = std.Io;
+const posix = std.posix;
+
+const Socket = @import("../../net/lib.zig").Socket;
+const tardy = @import("../../root.zig");
+const results = tardy.results;
+const pool = tardy.core.pool;
+const AsyncIO = tardy.AsyncIO;
+const Job = @import("../job.zig").Job;
+const syscall = @import("syscall.zig");

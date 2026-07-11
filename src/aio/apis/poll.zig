@@ -1,59 +1,17 @@
-const std = @import("std");
-const Io = std.Io;
-const net = Io.net;
-const debug = std.debug;
-const builtin = @import("builtin");
-const native_os = builtin.os.tag;
-const posix = std.posix;
-const syscall = @import("syscall.zig");
-const math = std.math;
-const mem = std.mem;
-
-const tardy = @import("../../root.zig");
-const File = @import("../../fs/file.zig").File;
-const Socket = @import("../../net/lib.zig").Socket;
-const Job = @import("../job.zig").Job;
-const AsyncIO = tardy.AsyncIO;
-const results = tardy.results;
-
-const log = std.log.scoped(.@"tardy/aio/poll");
-
-pub const Errors = struct {
-    pub const Connect = syscall.ConnectError || Error;
-    pub const Timer = Error;
-    pub const Accept = Error;
-    pub const Recv = Error;
-    pub const Send = Error;
-    pub const Wake = syscall.WriteError;
-    pub const QueueJob = Connect || Wake || Timer || Accept || Recv || Send;
-};
-
-pub const Error = mem.Allocator.Error;
-
-const TimerPair = struct {
-    duration: Io.Timestamp,
-    task: usize,
-};
-
-const TimerQueue = std.PriorityQueue(TimerPair, void, struct {
-    fn compare(_: void, a: TimerPair, b: TimerPair) math.Order {
-        return math.order(a.duration.nanoseconds, b.duration.nanoseconds);
-    }
-}.compare);
-
 pub const AsyncPoll = struct {
     allocator: mem.Allocator,
-    wake_pipe: [2]File.Handle,
+    wake_pipe: [2]fs.File.Handle,
 
     fd_list: std.ArrayList(syscall.pollfd),
-    fd_job_map: std.AutoHashMap(File.Handle, Job),
+    fd_job_map: std.AutoHashMap(fs.File.Handle, Job),
+
     timers: TimerQueue,
 
     pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !AsyncPoll {
         const size = options.size_tasks_initial + 1;
 
         // 0 is read, 1 is write.
-        const pipe: [2]File.Handle = blk: {
+        const pipe: [2]fs.File.Handle = blk: {
             if (comptime native_os == .windows) {
                 syscall.ws2.wsaStartup(2, 2) catch unreachable;
 
@@ -104,7 +62,7 @@ pub const AsyncPoll = struct {
         );
         errdefer fd_list.deinit(allocator);
 
-        var fd_job_map: std.AutoHashMap(File.Handle, Job) = .init(allocator);
+        var fd_job_map: std.AutoHashMap(fs.File.Handle, Job) = .init(allocator);
         errdefer fd_job_map.deinit();
         try fd_job_map.ensureTotalCapacity(@intCast(size));
 
@@ -517,3 +475,45 @@ pub const AsyncPoll = struct {
         };
     }
 };
+
+const log = std.log.scoped(.@"tardy/aio/poll");
+
+pub const Errors = struct {
+    pub const Connect = syscall.ConnectError || Error;
+    pub const Timer = Error;
+    pub const Accept = Error;
+    pub const Recv = Error;
+    pub const Send = Error;
+    pub const Wake = syscall.WriteError;
+    pub const QueueJob = Connect || Wake || Timer || Accept || Recv || Send;
+};
+
+const TimerPair = struct {
+    duration: Io.Timestamp,
+    task: usize,
+};
+
+const TimerQueue = std.PriorityQueue(TimerPair, void, struct {
+    fn compare(_: void, a: TimerPair, b: TimerPair) math.Order {
+        return math.order(a.duration.nanoseconds, b.duration.nanoseconds);
+    }
+}.compare);
+
+const std = @import("std");
+const Io = std.Io;
+const net = Io.net;
+const debug = std.debug;
+const posix = std.posix;
+const math = std.math;
+const mem = std.mem;
+pub const Error = mem.Allocator.Error;
+const builtin = @import("builtin");
+const native_os = builtin.os.tag;
+
+const Socket = @import("../../net/lib.zig").Socket;
+const tardy = @import("../../root.zig");
+const fs = tardy.fs;
+const AsyncIO = tardy.AsyncIO;
+const results = tardy.results;
+const Job = @import("../job.zig").Job;
+const syscall = @import("syscall.zig");

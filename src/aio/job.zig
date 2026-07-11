@@ -1,13 +1,3 @@
-const std = @import("std");
-const Io = std.Io;
-
-const Path = @import("../fs/lib.zig").Path;
-const File = @import("../fs/file.zig").File;
-const Socket = @import("../net/lib.zig").Socket;
-const tardy = @import("../root.zig");
-
-const AsyncIO = tardy.AsyncIO;
-
 pub const Job = struct {
     type: union(enum) {
         wake,
@@ -15,10 +5,10 @@ pub const Job = struct {
         open: OpenJob,
         mkdir: MkdirJob,
         delete: DeleteJob,
-        stat: File.Handle,
+        stat: fs.File.Handle,
         read: ReadJob,
         write: WriteJob,
-        close: File.Handle,
+        close: fs.File.Handle,
         accept: AcceptJob,
         connect: ConnectJob,
         send: SendJob,
@@ -36,29 +26,29 @@ const TimerJob = union(enum) {
 };
 
 const OpenJob = struct {
-    path: Path,
+    path: fs.Path,
     kind: enum { file, dir },
     flags: AsyncIO.OpenFlags,
 };
 
 const MkdirJob = struct {
-    path: Path,
+    path: fs.Path,
     mode: isize,
 };
 
 const DeleteJob = struct {
-    path: Path,
+    path: fs.Path,
     is_dir: bool,
 };
 
 const ReadJob = struct {
-    fd: File.Handle,
+    fd: fs.File.Handle,
     buffer: []u8,
     offset: ?usize,
 };
 
 const WriteJob = struct {
-    fd: File.Handle,
+    fd: fs.File.Handle,
     buffer: []const u8,
     offset: ?usize,
 };
@@ -85,3 +75,11 @@ const RecvJob = struct {
     socket: Socket.Handle,
     buffer: []u8,
 };
+
+const std = @import("std");
+const Io = std.Io;
+
+const Socket = @import("../net/lib.zig").Socket;
+const tardy = @import("../root.zig");
+const fs = tardy.fs;
+const AsyncIO = tardy.AsyncIO;

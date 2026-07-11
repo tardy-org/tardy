@@ -3,8 +3,7 @@ const std = @import("std");
 const options = @import("options");
 const tardy = @import("tardy");
 const Runtime = tardy.Runtime;
-const Spsc = tardy.Spsc;
-const Task = tardy.Task;
+const Spsc = tardy.channel.spsc.Spsc;
 const Timer = tardy.Timer;
 const AsyncIO = tardy.AsyncIO;
 

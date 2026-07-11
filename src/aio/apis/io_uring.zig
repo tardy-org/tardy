@@ -1,89 +1,4 @@
-// TODO: move imports of all files to the bottom
-const std = @import("std");
-const assert = std.debug.assert;
-const linux = std.os.linux;
-const Io = std.Io;
-const builtin = @import("builtin");
-const mem = std.mem;
-
-const tardy = @import("../../root.zig");
-const results = tardy.results;
-const pool = tardy.core.pool;
-const cross = tardy.cross;
-const Stat = @import("../../fs/lib.zig").Stat;
-const Path = @import("../../fs/lib.zig").Path;
-const Socket = @import("../../net/lib.zig").Socket;
-const Job = @import("../job.zig").Job;
-
-const AsyncIO = tardy.AsyncIO;
-const syscall = @import("syscall.zig");
-const posix = std.posix;
-
-pub const Errors = struct {
-    pub const Reap = Submit || Error;
-    pub const QueueJob = Error || Submit;
-    pub const Wake = syscall.WriteError;
-
-    pub const Init = error{
-        EntriesZero,
-        EntriesNotPowerOfTwo,
-        ParamsOutsideAccessibleAddressSpace,
-        // The resv array contains non-zero data, p.flags contains an unsupported flag,
-        // entries out of bounds, IORING_SETUP_SQ_AFF was specified without IORING_SETUP_SQPOLL,
-        // or IORING_SETUP_CQSIZE was specified but linux.io_uring_params.cq_entries was invalid:
-        ArgumentsInvalid,
-        ProcessFdQuotaExceeded,
-        SystemFdQuotaExceeded,
-        SystemResources,
-        // IORING_SETUP_SQPOLL was specified but effective user ID lacks sufficient privileges,
-        // or a container seccomp policy prohibits io_uring syscalls:
-        PermissionDenied,
-        SystemOutdated,
-    } || posix.MMapError || Error;
-
-    pub const Submit = error{
-        SystemResources,
-        // The SQE `fd` is invalid, or IOSQE_FIXED_FILE was set but no files were registered:
-        FileDescriptorInvalid,
-        // The file descriptor is valid, but the ring is not in the right state.
-        // See io_uring_register(2) for how to enable the ring.
-        FileDescriptorInBadState,
-        // The application attempted to overcommit the number of requests it can have pending.
-        // The application should wait for some completions and try again:
-        CompletionQueueOvercommitted,
-        // The SQE is invalid, or valid but the ring was setup with IORING_SETUP_IOPOLL:
-        SubmissionQueueEntryInvalid,
-        // The buffer is outside the process' accessible address space, or IORING_OP_READ_FIXED
-        // or IORING_OP_WRITE_FIXED was specified but no buffers were registered, or the range
-        // described by `addr` and `len` is not within the buffer registered at `buf_index`:
-        BufferInvalid,
-        RingShuttingDown,
-        // The kernel believes our `self.fd` does not refer to an io_uring instance,
-        // or the opcode is valid but not supported by this kernel (more likely):
-        OpcodeNotSupported,
-        // The thread submitting the work is invalid. This may occur if IORING_ENTER_GETEVENTS
-        // and IORING_SETUP_DEFER_TASKRUN is set, but the submitting thread is not the thread
-        // that initially created or enabled the io_uring associated with fd.
-        InvalidThread,
-        // The operation was interrupted by a delivery of a signal before it could complete.
-        // This can happen while waiting for events with IORING_ENTER_GETEVENTS:
-        SignalInterrupt,
-        Unexpected,
-    };
-};
-
-pub const Error = error{
-    SubmissionQueueFull,
-} || pool.Error;
-
-const log = std.log.scoped(.@"tardy/aio/io_uring");
-
-const JobBundle = struct {
-    job: Job,
-    statx: *linux.Statx = undefined,
-    timespec: *linux.kernel_timespec = undefined,
-};
-
+// TODO: make it a type
 pub const AsyncIoUring = struct {
     allocator: mem.Allocator,
     inner: *linux.IoUring,
@@ -270,7 +185,7 @@ pub const AsyncIoUring = struct {
     fn queue_open(
         self: *AsyncIoUring,
         task: usize,
-        path: Path,
+        path: fs.Path,
         flags: AsyncIO.OpenFlags,
     ) Error!void {
         const index = try self.jobs.borrow_hint(task);
@@ -330,7 +245,7 @@ pub const AsyncIoUring = struct {
         }
     }
 
-    fn queue_delete(self: *AsyncIoUring, task: usize, path: Path, is_dir: bool) Error!void {
+    fn queue_delete(self: *AsyncIoUring, task: usize, path: fs.Path, is_dir: bool) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -354,7 +269,7 @@ pub const AsyncIoUring = struct {
         }
     }
 
-    fn queue_mkdir(self: *AsyncIoUring, task: usize, path: Path, mode: isize) Error!void {
+    fn queue_mkdir(self: *AsyncIoUring, task: usize, path: fs.Path, mode: isize) Error!void {
         const index = try self.jobs.borrow_hint(task);
         errdefer self.jobs.release(index);
 
@@ -905,7 +820,7 @@ pub const AsyncIoUring = struct {
 
                         if (cqe.res == 0) {
                             const statx = job_with_data.statx;
-                            const stat: Stat = .{
+                            const stat: fs.Stat = .{
                                 .size = statx.size,
                                 .mode = statx.mode,
                                 .accessed = .{
@@ -966,3 +881,86 @@ pub const AsyncIoUring = struct {
         };
     }
 };
+
+pub const Errors = struct {
+    pub const Reap = Submit || Error;
+    pub const QueueJob = Error || Submit;
+    pub const Wake = syscall.WriteError;
+
+    pub const Init = error{
+        EntriesZero,
+        EntriesNotPowerOfTwo,
+        ParamsOutsideAccessibleAddressSpace,
+        // The resv array contains non-zero data, p.flags contains an unsupported flag,
+        // entries out of bounds, IORING_SETUP_SQ_AFF was specified without IORING_SETUP_SQPOLL,
+        // or IORING_SETUP_CQSIZE was specified but linux.io_uring_params.cq_entries was invalid:
+        ArgumentsInvalid,
+        ProcessFdQuotaExceeded,
+        SystemFdQuotaExceeded,
+        SystemResources,
+        // IORING_SETUP_SQPOLL was specified but effective user ID lacks sufficient privileges,
+        // or a container seccomp policy prohibits io_uring syscalls:
+        PermissionDenied,
+        SystemOutdated,
+    } || posix.MMapError || Error;
+
+    pub const Submit = error{
+        SystemResources,
+        // The SQE `fd` is invalid, or IOSQE_FIXED_FILE was set but no files were registered:
+        FileDescriptorInvalid,
+        // The file descriptor is valid, but the ring is not in the right state.
+        // See io_uring_register(2) for how to enable the ring.
+        FileDescriptorInBadState,
+        // The application attempted to overcommit the number of requests it can have pending.
+        // The application should wait for some completions and try again:
+        CompletionQueueOvercommitted,
+        // The SQE is invalid, or valid but the ring was setup with IORING_SETUP_IOPOLL:
+        SubmissionQueueEntryInvalid,
+        // The buffer is outside the process' accessible address space, or IORING_OP_READ_FIXED
+        // or IORING_OP_WRITE_FIXED was specified but no buffers were registered, or the range
+        // described by `addr` and `len` is not within the buffer registered at `buf_index`:
+        BufferInvalid,
+        RingShuttingDown,
+        // The kernel believes our `self.fd` does not refer to an io_uring instance,
+        // or the opcode is valid but not supported by this kernel (more likely):
+        OpcodeNotSupported,
+        // The thread submitting the work is invalid. This may occur if IORING_ENTER_GETEVENTS
+        // and IORING_SETUP_DEFER_TASKRUN is set, but the submitting thread is not the thread
+        // that initially created or enabled the io_uring associated with fd.
+        InvalidThread,
+        // The operation was interrupted by a delivery of a signal before it could complete.
+        // This can happen while waiting for events with IORING_ENTER_GETEVENTS:
+        SignalInterrupt,
+        Unexpected,
+    };
+};
+
+pub const Error = error{
+    SubmissionQueueFull,
+} || pool.Error;
+
+const log = std.log.scoped(.@"tardy/aio/io_uring");
+
+const JobBundle = struct {
+    job: Job,
+    statx: *linux.Statx = undefined,
+    timespec: *linux.kernel_timespec = undefined,
+};
+
+const std = @import("std");
+const assert = std.debug.assert;
+const linux = std.os.linux;
+const Io = std.Io;
+const mem = std.mem;
+const posix = std.posix;
+const builtin = @import("builtin");
+
+const Socket = @import("../../net/lib.zig").Socket;
+const tardy = @import("../../root.zig");
+const results = tardy.results;
+const pool = tardy.core.pool;
+const cross = tardy.cross;
+const fs = tardy.fs;
+const AsyncIO = tardy.AsyncIO;
+const Job = @import("../job.zig").Job;
+const syscall = @import("syscall.zig");

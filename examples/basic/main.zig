@@ -3,7 +3,6 @@ const std = @import("std");
 const options = @import("options");
 const tardy = @import("tardy");
 const Runtime = tardy.Runtime;
-const Task = tardy.Task;
 const Timer = tardy.Timer;
 const AsyncIO = tardy.AsyncIO;
 

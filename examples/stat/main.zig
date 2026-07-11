@@ -3,12 +3,8 @@ const Io = std.Io;
 
 const options = @import("options");
 const tardy = @import("tardy");
-const Dir = tardy.Dir;
-const File = tardy.File;
+const Dir = tardy.fs.Dir;
 const Runtime = tardy.Runtime;
-const Stat = tardy.Stat;
-const StatResult = tardy.StatResult;
-const Task = tardy.Task;
 const AsyncIO = tardy.AsyncIO;
 
 const backend: AsyncIO.Kind = .init(options.async_backend);

@@ -179,25 +179,25 @@ pub const Features = struct {
 pub const Submission = union(Op) {
     timer: Io.Duration,
     open: struct {
-        path: Path,
+        path: fs.Path,
         flags: OpenFlags,
     },
     delete: struct {
-        path: Path,
+        path: fs.Path,
         is_dir: bool,
     },
     mkdir: struct {
-        path: Path,
+        path: fs.Path,
         mode: isize,
     },
-    stat: File.Handle,
+    stat: fs.File.Handle,
     read: struct {
-        fd: File.Handle,
+        fd: fs.File.Handle,
         buffer: []u8,
         offset: ?usize,
     },
     write: struct {
-        fd: File.Handle,
+        fd: fs.File.Handle,
         buffer: []const u8,
         offset: ?usize,
     },
@@ -281,9 +281,8 @@ const epoll = @import("aio/apis/epoll.zig");
 const io_uring = @import("aio/apis/io_uring.zig");
 const kqueue = @import("aio/apis/kqueue.zig");
 const poll = @import("aio/apis/poll.zig");
-const File = @import("fs/file.zig").File;
-const Path = @import("fs/lib.zig").Path;
 const Socket = @import("net/socket.zig").Socket;
 const tardy = @import("root.zig");
 const results = tardy.results;
 const core = tardy.core;
+const fs = tardy.fs;

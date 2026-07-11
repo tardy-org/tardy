@@ -1,30 +1,3 @@
-const std = @import("std");
-const assert = std.debug.assert;
-const posix = std.posix;
-const mem = std.mem;
-const Io = std.Io;
-const linux = std.os.linux;
-
-const Socket = @import("../../net/lib.zig").Socket;
-const tardy = @import("../../root.zig");
-const results = tardy.results;
-const pool = tardy.core.pool;
-const AsyncIO = tardy.AsyncIO;
-const Job = @import("../job.zig").Job;
-const syscall = @import("syscall.zig");
-
-const log = std.log.scoped(.@"tardy/aio/epoll");
-
-pub const Errors = struct {
-    pub const Timer = syscall.TimerFdCreateError || syscall.TimerFdSetError || Error;
-    pub const Send = Error;
-    pub const Recv = Error;
-    pub const Accept = Error;
-    pub const Connect = syscall.ConnectError || Error;
-    pub const QueueJob = Timer || Send || Recv || Accept || Connect;
-};
-pub const Error = syscall.EpollCtlError || pool.Error;
-
 pub const AsyncEpoll = struct {
     epoll_fd: posix.fd_t,
     wake_event_fd: posix.fd_t,
@@ -474,3 +447,30 @@ pub const AsyncEpoll = struct {
         };
     }
 };
+
+const log = std.log.scoped(.@"tardy/aio/epoll");
+
+pub const Errors = struct {
+    pub const Timer = syscall.TimerFdCreateError || syscall.TimerFdSetError || Error;
+    pub const Send = Error;
+    pub const Recv = Error;
+    pub const Accept = Error;
+    pub const Connect = syscall.ConnectError || Error;
+    pub const QueueJob = Timer || Send || Recv || Accept || Connect;
+};
+pub const Error = syscall.EpollCtlError || pool.Error;
+
+const std = @import("std");
+const assert = std.debug.assert;
+const posix = std.posix;
+const mem = std.mem;
+const Io = std.Io;
+const linux = std.os.linux;
+
+const Socket = @import("../../net/lib.zig").Socket;
+const tardy = @import("../../root.zig");
+const results = tardy.results;
+const pool = tardy.core.pool;
+const AsyncIO = tardy.AsyncIO;
+const Job = @import("../job.zig").Job;
+const syscall = @import("syscall.zig");

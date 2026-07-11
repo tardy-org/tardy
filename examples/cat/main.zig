@@ -3,8 +3,9 @@ const Io = std.Io;
 
 const options = @import("options");
 const tardy = @import("tardy");
-const Dir = tardy.Dir;
-const File = tardy.File;
+const fs = tardy.fs;
+const Dir = fs.Dir;
+const File = fs.File;
 const Runtime = tardy.Runtime;
 const AsyncIO = tardy.AsyncIO;
 
