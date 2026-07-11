@@ -13,7 +13,7 @@ const Task = tardy.Task;
 const WriteResult = tardy.WriteResult;
 const AsyncIO = tardy.AsyncIO;
 
-const backend: AsyncIO.Kind = .init(options.async_option);
+const backend: AsyncIO.Kind = .init(options.async_backend);
 const Tardy = tardy.Tardy(backend);
 
 pub const std_options: std.Options = .{ .log_level = .debug };

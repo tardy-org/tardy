@@ -166,7 +166,7 @@ fn build_example_module(
     const example_options = b.addOptions();
     example_options.addOption(
         AsyncKind,
-        "async_option",
+        "async_backend",
         options.async_backend,
     );
     example_mod.addOptions("options", example_options);
@@ -303,7 +303,7 @@ fn build_test_e2e(
     const test_options = b.addOptions();
     test_options.addOption(
         AsyncKind,
-        "async_option",
+        "async_backend",
         options.async_backend,
     );
 

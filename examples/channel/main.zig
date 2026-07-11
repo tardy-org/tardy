@@ -8,7 +8,7 @@ const Task = tardy.Task;
 const Timer = tardy.Timer;
 const AsyncIO = tardy.AsyncIO;
 
-const backend: AsyncIO.Kind = .init(options.async_option);
+const backend: AsyncIO.Kind = .init(options.async_backend);
 const Tardy = tardy.Tardy(backend);
 
 const log = std.log.scoped(.@"tardy/example/channel");
