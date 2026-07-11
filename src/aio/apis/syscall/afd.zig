@@ -5,8 +5,6 @@
 const std = @import("std");
 const windows = std.os.windows;
 const ws2_32 = windows.ws2_32;
-const tardy = @import("../../../lib.zig");
-const Socket = tardy.Socket;
 const Io = std.Io;
 const mem = std.mem;
 const Threaded = Io.Threaded;
@@ -14,6 +12,9 @@ const net = std.Io.net;
 const IpAddress = net.IpAddress;
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
+
+const tardy = @import("../../../root.zig");
+const Socket = tardy.Socket;
 
 pub const max_iovecs_len = 8;
 

@@ -6,7 +6,7 @@ const Allocator = mem.Allocator;
 
 pub const Error = error{Full} || Allocator.Error;
 
-pub const PoolKind = enum {
+pub const Kind = enum {
     /// This keeps the Pool at a static size, never growing.
     static,
     /// This allows the Pool to grow but never shrink.
@@ -15,8 +15,6 @@ pub const PoolKind = enum {
 
 pub fn Pool(comptime T: type) type {
     return struct {
-        pub const Kind = PoolKind;
-
         pub const Iterator = struct {
             items: []T,
             iter: std.DynamicBitSetUnmanaged.Iterator(.{
@@ -44,10 +42,10 @@ pub fn Pool(comptime T: type) type {
         // Buffer for the Pool.
         items: []T,
         dirty: std.DynamicBitSetUnmanaged,
-        kind: PoolKind,
+        kind: Kind,
 
         /// Initalizes our items buffer as undefined.
-        pub fn init(allocator: mem.Allocator, size: usize, kind: PoolKind) !Self {
+        pub fn init(allocator: mem.Allocator, size: usize, kind: Kind) !Self {
             return .{
                 .allocator = allocator,
                 .items = try allocator.alloc(T, size),

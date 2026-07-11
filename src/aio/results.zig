@@ -1,10 +1,10 @@
 const std = @import("std");
 
-const File = @import("../fs/lib.zig").File;
-const Dir = @import("../fs/lib.zig").Dir;
-const Stat = @import("../fs/lib.zig").Stat;
-const Timespec = @import("../lib.zig").Timespec;
-const Socket = @import("../net/lib.zig").Socket;
+const tardy = @import("../root.zig");
+const File = tardy.File;
+const Dir = tardy.Dir;
+const Stat = tardy.Stat;
+const Socket = tardy.Socket;
 
 pub fn Resulted(comptime T: type, comptime E: type) type {
     return union(enum) {

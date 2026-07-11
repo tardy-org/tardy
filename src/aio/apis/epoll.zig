@@ -4,30 +4,18 @@ const posix = std.posix;
 const mem = std.mem;
 const Io = std.Io;
 const linux = std.os.linux;
-const syscall = @import("syscall.zig");
 
-const pool = @import("../../core/pool.zig");
-const Pool = @import("../../core/pool.zig").Pool;
-const Queue = @import("../../core/queue.zig").Queue;
-const File = @import("../../fs/file.zig").File;
 const Cross = @import("../../cross/lib.zig");
+const File = @import("../../fs/file.zig").File;
 const Stat = @import("../../fs/lib.zig").Stat;
 const Path = @import("../../fs/lib.zig").Path;
 const Socket = @import("../../net/lib.zig").Socket;
-const Completion = @import("../completion.zig").Completion;
-const Result = @import("../completion.zig").Result;
-const AcceptResult = @import("../completion.zig").AcceptResult;
-const AcceptError = @import("../completion.zig").AcceptError;
-const ConnectResult = @import("../completion.zig").ConnectResult;
-const ConnectError = @import("../completion.zig").ConnectError;
-const RecvResult = @import("../completion.zig").RecvResult;
-const RecvError = @import("../completion.zig").RecvError;
-const SendResult = @import("../completion.zig").SendResult;
-const SendError = @import("../completion.zig").SendError;
-const Job = @import("../job.zig").Job;
-const tardy = @import("../../lib.zig");
-
+const tardy = @import("../../root.zig");
+const results = tardy.results;
+const pool = tardy.core.pool;
 const AsyncIO = tardy.AsyncIO;
+const Job = @import("../job.zig").Job;
+const syscall = @import("syscall.zig");
 
 const log = std.log.scoped(.@"tardy/aio/epoll");
 
@@ -46,7 +34,7 @@ pub const AsyncEpoll = struct {
     wake_event_fd: posix.fd_t,
     events: []linux.epoll_event,
 
-    jobs: Pool(Job),
+    jobs: pool.Pool(Job),
 
     pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !AsyncEpoll {
         const size = options.size_tasks_initial + 1;
@@ -60,7 +48,7 @@ pub const AsyncEpoll = struct {
         const events = try allocator.alloc(linux.epoll_event, options.size_aio_reap_max);
         errdefer allocator.free(events);
 
-        var jobs: Pool(Job) = try .init(allocator, size, options.pooling);
+        var jobs: pool.Pool(Job) = try .init(allocator, size, options.pooling);
         errdefer jobs.deinit();
 
         // Queue the wake task.
@@ -300,7 +288,11 @@ pub const AsyncEpoll = struct {
 
     pub fn submit(_: *anyopaque) !void {}
 
-    pub fn reap(runner: *anyopaque, completions: []Completion, wait: bool) ![]Completion {
+    pub fn reap(
+        runner: *anyopaque,
+        completions: []results.Completion,
+        wait: bool,
+    ) ![]results.Completion {
         const epoll: *AsyncEpoll = @ptrCast(@alignCast(runner));
         var reaped: usize = 0;
 
@@ -319,7 +311,7 @@ pub const AsyncEpoll = struct {
                 defer if (job_complete) epoll.jobs.release(job_index);
                 const job = epoll.jobs.get_ptr(job_index);
 
-                const result: Result = blk: {
+                const result: results.Result = blk: {
                     switch (job.type) {
                         .wake => {
                             // this keeps it in the job queue and we pretty
@@ -352,7 +344,7 @@ pub const AsyncEpoll = struct {
                         .accept => |*inner| {
                             assert(event.events & linux.EPOLL.IN != 0);
 
-                            const result: AcceptResult = result: {
+                            const result: results.AcceptResult = result: {
                                 const handle = syscall.accept(
                                     inner.socket,
                                     &inner.addr,
@@ -363,7 +355,7 @@ pub const AsyncEpoll = struct {
                                             job_complete = false;
                                             continue;
                                         },
-                                        else => AcceptError.Unexpected,
+                                        else => results.AcceptError.Unexpected,
                                     };
 
                                     break :result .{ .err = err };
@@ -381,9 +373,11 @@ pub const AsyncEpoll = struct {
                         .connect => {
                             assert(event.events & linux.EPOLL.OUT != 0);
 
-                            const result: ConnectResult = result: {
+                            const result: results.ConnectResult = result: {
                                 if (event.events & linux.EPOLL.ERR != 0) {
-                                    break :result .{ .err = ConnectError.Unexpected };
+                                    break :result .{
+                                        .err = results.ConnectError.Unexpected,
+                                    };
                                 } else {
                                     break :result .actual;
                                 }
@@ -394,7 +388,7 @@ pub const AsyncEpoll = struct {
                         .recv => |inner| {
                             assert(event.events & linux.EPOLL.IN != 0);
 
-                            const result: RecvResult = result: {
+                            const result: results.RecvResult = result: {
                                 const length = syscall.recv(
                                     inner.socket,
                                     inner.buffer,
@@ -411,7 +405,7 @@ pub const AsyncEpoll = struct {
                                     break :result .{ .err = err };
                                 };
 
-                                if (length == 0) break :result .{ .err = RecvError.Closed };
+                                if (length == 0) break :result .{ .err = results.RecvError.Closed };
                                 break :result .{ .actual = length };
                             };
 
@@ -420,7 +414,7 @@ pub const AsyncEpoll = struct {
                         .send => |inner| {
                             assert(event.events & linux.EPOLL.OUT != 0);
 
-                            const result: SendResult = result: {
+                            const result: results.SendResult = result: {
                                 const length = syscall.send(
                                     inner.socket,
                                     inner.buffer,

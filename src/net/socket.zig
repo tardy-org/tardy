@@ -6,16 +6,10 @@ const posix = std.posix;
 const mem = std.mem;
 const builtin = @import("builtin");
 
-const AcceptResult = @import("../aio/completion.zig").AcceptResult;
-const AcceptError = @import("../aio/completion.zig").AcceptError;
-const ConnectResult = @import("../aio/completion.zig").ConnectResult;
-const ConnectError = @import("../aio/completion.zig").ConnectError;
-const RecvResult = @import("../aio/completion.zig").RecvResult;
-const RecvError = @import("../aio/completion.zig").RecvError;
-const SendResult = @import("../aio/completion.zig").SendResult;
-const SendError = @import("../aio/completion.zig").SendError;
-const Frame = @import("../frame/lib.zig").Frame;
-const Runtime = @import("../runtime/lib.zig").Runtime;
+const tardy = @import("../root.zig");
+const results = tardy.results;
+const Frame = tardy.Frame;
+const Runtime = tardy.Runtime;
 const syscall = @import("../aio/apis/syscall.zig");
 
 pub const Socket = struct {
@@ -352,6 +346,7 @@ pub const Socket = struct {
         } else {
             var addr: Socket.Address = .wildcard;
 
+            const AcceptError = results.AcceptError;
             const socket: posix.socket_t = blk: while (true) {
                 break :blk syscall.accept(
                     self.handle,
@@ -402,7 +397,7 @@ pub const Socket = struct {
                         Frame.yield();
                         continue;
                     },
-                    else => ConnectError.Unexpected,
+                    else => results.ConnectError.Unexpected,
                 };
             }
         }
@@ -427,11 +422,11 @@ pub const Socket = struct {
                         Frame.yield();
                         continue;
                     },
-                    else => RecvError.Unexpected,
+                    else => results.RecvError.Unexpected,
                 };
             };
 
-            if (count == 0) return RecvError.Closed;
+            if (count == 0) return results.RecvError.Closed;
             return count;
         }
     }
@@ -465,15 +460,19 @@ pub const Socket = struct {
             return try task.result.send.unwrap();
         } else {
             const count: usize = blk: while (true) {
-                break :blk syscall.send(self.handle, buffer, 0) catch |e| return switch (e) {
+                break :blk syscall.send(
+                    self.handle,
+                    buffer,
+                    0,
+                ) catch |e| return switch (e) {
                     error.WouldBlock => {
                         Frame.yield();
                         continue;
                     },
                     error.ConnectionResetByPeer,
                     error.BrokenPipe,
-                    => SendError.Closed,
-                    else => SendError.Unexpected,
+                    => results.SendError.Closed,
+                    else => results.SendError.Unexpected,
                 };
             };
 
@@ -485,7 +484,10 @@ pub const Socket = struct {
         var length: usize = 0;
 
         while (length < buffer.len) {
-            const result = self.send(rt, buffer[length..]) catch |e| switch (e) {
+            const result = self.send(
+                rt,
+                buffer[length..],
+            ) catch |e| switch (e) {
                 error.Closed => return length,
                 else => |err| return err,
             };

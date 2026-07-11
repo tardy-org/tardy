@@ -47,7 +47,10 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                 try self.aios.append(self.allocator, io_inner);
                 var aio = io_inner.to_async();
 
-                const completions = try self.allocator.alloc(Completion, self.options.size_aio_reap_max);
+                const completions = try self.allocator.alloc(
+                    results.Completion,
+                    self.options.size_aio_reap_max,
+                );
                 errdefer self.allocator.free(completions);
 
                 aio.attach(completions);
@@ -197,7 +200,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
 const log = std.log.scoped(.tardy);
 
 // Results
-pub const TardyThreading = union(enum) {
+pub const Threading = union(enum) {
     single,
     multi: usize,
     all,
@@ -209,7 +212,7 @@ const Options = struct {
     /// Threading that Tardy runtime will use.
     ///
     /// Default = .auto
-    threading: TardyThreading = .auto,
+    threading: Threading = .auto,
     /// Pooling Style
     ///
     /// By default (`.grow`), this means the internal pools
@@ -220,7 +223,7 @@ const Options = struct {
     /// maximum number of tasks and aio jobs.
     ///
     /// Default = .grow
-    pooling: PoolKind = .grow,
+    pooling: core.pool.Kind = .grow,
     /// Number of initial Tasks.
     ///
     /// If our pooling is grow, this will be the upper-limit
@@ -242,25 +245,10 @@ const assert = std.debug.assert;
 const Atomic = std.atomic.Value;
 const builtin = @import("builtin");
 
-pub const AcceptResult = @import("aio/completion.zig").AcceptResult;
-pub const ConnectResult = @import("aio/completion.zig").ConnectResult;
-pub const RecvResult = @import("aio/completion.zig").RecvResult;
-pub const SendResult = @import("aio/completion.zig").SendResult;
-pub const OpenFileResult = @import("aio/completion.zig").OpenFileResult;
-pub const OpenDirResult = @import("aio/completion.zig").OpenDirResult;
-pub const ReadResult = @import("aio/completion.zig").ReadResult;
-pub const WriteResult = @import("aio/completion.zig").WriteResult;
-pub const StatResult = @import("aio/completion.zig").StatResult;
-pub const CreateDirResult = @import("aio/completion.zig").CreateDirResult;
-pub const DeleteResult = @import("aio/completion.zig").DeleteResult;
-pub const DeleteTreeResult = @import("aio/completion.zig").DeleteTreeResult;
-const Completion = @import("aio/completion.zig").Completion;
+pub const results = @import("aio/results.zig");
 pub const AsyncIO = @import("AsyncIO.zig");
 pub const Spsc = @import("channel/spsc.zig").Spsc;
-pub const Pool = @import("core/pool.zig").Pool;
-pub const PoolKind = @import("core/pool.zig").PoolKind;
-pub const Queue = @import("core/queue.zig").Queue;
-pub const ZeroCopy = @import("core/zero_copy.zig").ZeroCopy;
+pub const core = @import("core.zig");
 /// Cross-platform abstractions.
 /// For the `std.posix` interface types.
 pub const Cross = @import("cross/lib.zig");

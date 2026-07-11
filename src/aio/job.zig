@@ -3,9 +3,8 @@ const Io = std.Io;
 
 const Path = @import("../fs/lib.zig").Path;
 const File = @import("../fs/file.zig").File;
-const Timespec = @import("../lib.zig").Timespec;
 const Socket = @import("../net/lib.zig").Socket;
-const tardy = @import("../lib.zig");
+const tardy = @import("../root.zig");
 
 const AsyncIO = tardy.AsyncIO;
 

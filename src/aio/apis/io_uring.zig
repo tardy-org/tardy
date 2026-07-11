@@ -6,36 +6,14 @@ const Io = std.Io;
 const builtin = @import("builtin");
 const mem = std.mem;
 
-const pool = @import("../../core/pool.zig");
-const Pool = pool.Pool;
 const Cross = @import("../../cross/lib.zig");
 const Stat = @import("../../fs/lib.zig").Stat;
 const Path = @import("../../fs/lib.zig").Path;
 const Socket = @import("../../net/lib.zig").Socket;
-const Completion = @import("../completion.zig").Completion;
-const Result = @import("../completion.zig").Result;
-const InnerOpenResult = @import("../completion.zig").InnerOpenResult;
-const OpenError = @import("../completion.zig").OpenError;
-const AcceptResult = @import("../completion.zig").AcceptResult;
-const AcceptError = @import("../completion.zig").AcceptError;
-const ConnectResult = @import("../completion.zig").ConnectResult;
-const ConnectError = @import("../completion.zig").ConnectError;
-const RecvResult = @import("../completion.zig").RecvResult;
-const RecvError = @import("../completion.zig").RecvError;
-const SendResult = @import("../completion.zig").SendResult;
-const SendError = @import("../completion.zig").SendError;
-const MkdirResult = @import("../completion.zig").MkdirResult;
-const MkdirError = @import("../completion.zig").MkdirError;
-const DeleteResult = @import("../completion.zig").DeleteResult;
-const DeleteError = @import("../completion.zig").DeleteError;
-const ReadResult = @import("../completion.zig").ReadResult;
-const ReadError = @import("../completion.zig").ReadError;
-const WriteResult = @import("../completion.zig").WriteResult;
-const WriteError = @import("../completion.zig").WriteError;
-const StatResult = @import("../completion.zig").StatResult;
-const StatError = @import("../completion.zig").StatError;
 const Job = @import("../job.zig").Job;
-const tardy = @import("../../lib.zig");
+const tardy = @import("../../root.zig");
+const results = tardy.results;
+const pool = tardy.core.pool;
 
 const AsyncIO = tardy.AsyncIO;
 const syscall = @import("syscall.zig");
@@ -115,7 +93,7 @@ pub const AsyncIoUring = struct {
     // Currently, the batch size is predetermined.
     // You basically define how large you want your batches to be.
     cqes: []linux.io_uring_cqe,
-    jobs: Pool(JobBundle),
+    jobs: pool.Pool(JobBundle),
 
     const base_flags = blk: {
         var flags = 0;
@@ -194,7 +172,11 @@ pub const AsyncIoUring = struct {
         errdefer allocator.destroy(uring);
         errdefer uring.deinit();
 
-        var jobs: Pool(JobBundle) = try .init(allocator, size, options.pooling);
+        var jobs: pool.Pool(JobBundle) = try .init(
+            allocator,
+            size,
+            options.pooling,
+        );
         errdefer jobs.deinit();
 
         const index = jobs.borrow_assume_unset(0);
@@ -617,7 +599,11 @@ pub const AsyncIoUring = struct {
         };
     }
 
-    fn reap(runner: *anyopaque, completions: []Completion, wait: bool) Errors.Reap![]Completion {
+    fn reap(
+        runner: *anyopaque,
+        completions: []results.Completion,
+        wait: bool,
+    ) Errors.Reap![]results.Completion {
         const uring: *AsyncIoUring = @ptrCast(@alignCast(runner));
         // either wait for atleast 1 or just take whats there.
         const uring_nr: u32 = if (wait) 1 else 0;
@@ -636,7 +622,7 @@ pub const AsyncIoUring = struct {
             const job: *Job = &job_with_data.job;
             uring.jobs.release(job.index);
 
-            const result: Result = blk: {
+            const result: results.Result = blk: {
                 if (cqe.res < 0) {
                     log.debug("{d} - other status on SQE: {t}", .{
                         job.index,
@@ -667,7 +653,8 @@ pub const AsyncIoUring = struct {
                             .udp => unreachable,
                         };
 
-                        const result: AcceptResult = result: {
+                        const AcceptError = results.AcceptError;
+                        const result: results.AcceptResult = result: {
                             const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
                                 .AGAIN => .{ .err = AcceptError.WouldBlock },
@@ -685,9 +672,11 @@ pub const AsyncIoUring = struct {
                         break :blk .{ .accept = result };
                     },
                     .connect => {
-                        if (cqe.res >= 0) break :blk .{ .connect = .actual };
-
-                        const result: ConnectResult = result: {
+                        if (cqe.res >= 0) break :blk .{
+                            .connect = .actual,
+                        };
+                        const ConnectError = results.ConnectError;
+                        const result: results.ConnectResult = result: {
                             const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
                                 .ACCES, .PERM => .{ .err = ConnectError.AccessDenied },
@@ -712,10 +701,16 @@ pub const AsyncIoUring = struct {
                         break :blk .{ .connect = result };
                     },
                     .recv => {
-                        if (cqe.res > 0) break :blk .{ .recv = .{ .actual = @intCast(cqe.res) } };
+                        if (cqe.res > 0) break :blk .{
+                            .recv = .{
+                                .actual = @intCast(cqe.res),
+                            },
+                        };
+
+                        const RecvError = results.RecvError;
                         if (cqe.res == 0) break :blk .{ .recv = .{ .err = RecvError.Closed } };
 
-                        const result: RecvResult = result: {
+                        const result: results.RecvResult = result: {
                             const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
                                 .NOTSOCK, .INVAL, .FAULT, .BADF => unreachable,
@@ -733,7 +728,8 @@ pub const AsyncIoUring = struct {
                     .send => {
                         if (cqe.res >= 0) break :blk .{ .send = .{ .actual = @intCast(cqe.res) } };
 
-                        const result: SendResult = result: {
+                        const SendError = results.SendError;
+                        const result: results.SendResult = result: {
                             const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
                                 .OPNOTSUPP,
@@ -763,7 +759,8 @@ pub const AsyncIoUring = struct {
                     .mkdir => {
                         if (cqe.res == 0) break :blk .{ .mkdir = .{ .actual = {} } };
 
-                        const result: MkdirResult = result: {
+                        const MkdirError = results.MkdirError;
+                        const result: results.MkdirResult = result: {
                             const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
                                 .ACCES => .{ .err = MkdirError.AccessDenied },
@@ -790,7 +787,8 @@ pub const AsyncIoUring = struct {
                             },
                         };
 
-                        const result: InnerOpenResult = result: {
+                        const OpenError = results.OpenError;
+                        const result: results.InnerOpenResult = result: {
                             const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
                                 .ACCES, .PERM => .{ .err = OpenError.AccessDenied },
@@ -824,7 +822,8 @@ pub const AsyncIoUring = struct {
                     .delete => {
                         if (cqe.res == 0) break :blk .{ .delete = .{ .actual = {} } };
 
-                        const result: DeleteResult = result: {
+                        const DeleteError = results.DeleteError;
+                        const result: results.DeleteResult = result: {
                             const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
                                 // unlink
@@ -850,10 +849,19 @@ pub const AsyncIoUring = struct {
                         break :blk .{ .delete = result };
                     },
                     .read => {
-                        if (cqe.res > 0) break :blk .{ .read = .{ .actual = @intCast(cqe.res) } };
-                        if (cqe.res == 0) break :blk .{ .read = .{ .err = ReadError.EndOfFile } };
+                        if (cqe.res > 0) break :blk .{
+                            .read = .{
+                                .actual = @intCast(cqe.res),
+                            },
+                        };
+                        const ReadError = results.ReadError;
+                        if (cqe.res == 0) break :blk .{
+                            .read = .{
+                                .err = ReadError.EndOfFile,
+                            },
+                        };
 
-                        const result: ReadResult = result: {
+                        const result: results.ReadResult = result: {
                             const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
                                 .AGAIN => .{ .err = ReadError.WouldBlock },
@@ -871,7 +879,8 @@ pub const AsyncIoUring = struct {
                     .write => {
                         if (cqe.res > 0) break :blk .{ .write = .{ .actual = @intCast(cqe.res) } };
 
-                        const result: WriteResult = result: {
+                        const WriteError = results.WriteError;
+                        const result: results.WriteResult = result: {
                             const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
                                 .INVAL => unreachable,
@@ -912,7 +921,8 @@ pub const AsyncIoUring = struct {
                             break :blk .{ .stat = .{ .actual = stat } };
                         }
 
-                        const result: StatResult = result: {
+                        const StatError = results.StatError;
+                        const result: results.StatResult = result: {
                             const e: linux.E = @enumFromInt(-cqe.res);
                             break :result switch (e) {
                                 .ACCES => .{ .err = StatError.AccessDenied },

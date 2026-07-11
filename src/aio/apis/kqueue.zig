@@ -3,25 +3,13 @@ const assert = std.debug.assert;
 const Io = std.Io;
 const posix = std.posix;
 const Atomic = std.atomic.Value;
-const pool = @import("../../core/pool.zig");
 
-const Pool = @import("../../core/pool.zig").Pool;
-const Timespec = @import("../../lib.zig").Timespec;
 const Socket = @import("../../net/lib.zig").Socket;
-const Completion = @import("../completion.zig").Completion;
-const Result = @import("../completion.zig").Result;
-const AcceptResult = @import("../completion.zig").AcceptResult;
-const AcceptError = @import("../completion.zig").AcceptError;
-const ConnectResult = @import("../completion.zig").ConnectResult;
-const ConnectError = @import("../completion.zig").ConnectError;
-const RecvResult = @import("../completion.zig").RecvResult;
-const RecvError = @import("../completion.zig").RecvError;
-const SendResult = @import("../completion.zig").SendResult;
-const SendError = @import("../completion.zig").SendError;
-const Job = @import("../job.zig").Job;
-const tardy = @import("../../lib.zig");
-
+const tardy = @import("../../root.zig");
+const results = tardy.results;
+const pool = tardy.core.pool;
 const AsyncIO = tardy.AsyncIO;
+const Job = @import("../job.zig").Job;
 const syscall = @import("syscall.zig");
 
 const log = std.log.scoped(.@"tardy/aio/kqueue");
@@ -43,16 +31,26 @@ pub const AsyncKqueue = struct {
     change_count: usize = 0,
     events: []posix.Kevent,
 
-    jobs: Pool(Job),
+    jobs: pool.Pool(Job),
 
     pub fn init(allocator: std.mem.Allocator, options: AsyncIO.Options) !AsyncKqueue {
         const kqueue_fd = try syscall.kqueue();
         assert(kqueue_fd > -1);
         errdefer syscall.close(kqueue_fd);
 
-        const events = try allocator.alloc(posix.Kevent, options.size_aio_reap_max);
-        const changes = try allocator.alloc(posix.Kevent, options.size_aio_reap_max);
-        var jobs: Pool(Job) = try .init(allocator, options.size_tasks_initial + 1, options.pooling);
+        const events = try allocator.alloc(
+            posix.Kevent,
+            options.size_aio_reap_max,
+        );
+        const changes = try allocator.alloc(
+            posix.Kevent,
+            options.size_aio_reap_max,
+        );
+        var jobs: pool.Pool(Job) = try .init(
+            allocator,
+            options.size_tasks_initial + 1,
+            options.pooling,
+        );
 
         const index = jobs.borrow_assume_unset(0);
         const item = jobs.get_ptr(index);
@@ -71,7 +69,12 @@ pub const AsyncKqueue = struct {
             .udata = 0,
         };
 
-        _ = try syscall.kevent(kqueue_fd, &.{event}, &.{}, null);
+        _ = try syscall.kevent(
+            kqueue_fd,
+            &.{event},
+            &.{},
+            null,
+        );
 
         return .{
             .kqueue_fd = kqueue_fd,
@@ -323,7 +326,11 @@ pub const AsyncKqueue = struct {
         kqueue.change_count = 0;
     }
 
-    pub fn reap(runner: *anyopaque, completions: []Completion, wait: bool) ![]Completion {
+    pub fn reap(
+        runner: *anyopaque,
+        completions: []results.Completion,
+        wait: bool,
+    ) ![]results.Completion {
         const kqueue: *AsyncKqueue = @ptrCast(@alignCast(runner));
         var reaped: usize = 0;
 
@@ -352,7 +359,7 @@ pub const AsyncKqueue = struct {
 
                 const job = kqueue.jobs.get_ptr(job_index);
 
-                const result: Result = result: {
+                const result: results.Result = result: {
                     switch (job.type) {
                         .wake => {
                             assert(event.filter == posix.system.EVFILT.USER);
@@ -391,7 +398,8 @@ pub const AsyncKqueue = struct {
                         .connect => {
                             assert(event.filter == posix.system.EVFILT.WRITE);
 
-                            const result: ConnectResult = blk: {
+                            const ConnectError = results.ConnectError;
+                            const result: results.ConnectResult = blk: {
                                 if (event.flags & posix.system.EV.ERROR != 0) {
                                     const rc = event.data;
                                     const err = switch (posix.errno(rc)) {
@@ -439,7 +447,7 @@ pub const AsyncKqueue = struct {
                             break :result if (rc == 0)
                                 .{
                                     .recv = .{
-                                        .err = RecvError.Closed,
+                                        .err = results.RecvError.Closed,
                                     },
                                 }
                             else

@@ -6,19 +6,12 @@ const StdDir = Io.Dir;
 const builtin = @import("builtin");
 const syscall = @import("../aio/apis/syscall.zig");
 
-const Resulted = @import("../aio/completion.zig").Resulted;
-const OpenFileResult = @import("../aio/completion.zig").OpenFileResult;
-const OpenError = @import("../aio/completion.zig").OpenError;
-const StatResult = @import("../aio/completion.zig").StatResult;
-const StatError = @import("../aio/completion.zig").StatError;
-const ReadResult = @import("../aio/completion.zig").ReadResult;
-const ReadError = @import("../aio/completion.zig").ReadError;
-const WriteResult = @import("../aio/completion.zig").WriteResult;
-const WriteError = @import("../aio/completion.zig").WriteError;
-const AsyncIO = @import("../AsyncIO.zig");
+const tardy = @import("../root.zig");
+const results = tardy.results;
+const AsyncIO = tardy.AsyncIO;
 const Cross = @import("../cross/lib.zig");
-const Frame = @import("../frame/lib.zig").Frame;
-const Runtime = @import("../runtime/lib.zig").Runtime;
+const Frame = tardy.Frame;
+const Runtime = tardy.Runtime;
 const Path = @import("lib.zig").Path;
 const Stat = @import("lib.zig").Stat;
 
@@ -215,7 +208,7 @@ pub const File = struct {
             const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get(index);
 
-            const result: OpenFileResult = switch (task.result.open) {
+            const result: results.OpenFileResult = switch (task.result.open) {
                 .actual => |actual| .{ .actual = actual.file },
                 .err => |err| .{ .err = err },
             };
@@ -231,8 +224,14 @@ pub const File = struct {
             switch (path) {
                 .rel => |inner| {
                     const dir: StdDir = .{ .handle = inner.dir };
+
+                    const OpenError = results.OpenError;
                     const opened: StdFile = blk: while (true) {
-                        break :blk dir.createFile(rt.io, inner.path, std_flags) catch |e| return switch (e) {
+                        break :blk dir.createFile(
+                            rt.io,
+                            inner.path,
+                            std_flags,
+                        ) catch |e| return switch (e) {
                             error.WouldBlock => {
                                 Frame.yield();
                                 continue;
@@ -261,8 +260,13 @@ pub const File = struct {
                     return .{ .handle = opened.handle };
                 },
                 .abs => |inner| {
+                    const OpenError = results.OpenError;
                     const opened: StdFile = blk: while (true) {
-                        break :blk Io.Dir.createFileAbsolute(rt.io, inner, std_flags) catch |e| return switch (e) {
+                        break :blk Io.Dir.createFileAbsolute(
+                            rt.io,
+                            inner,
+                            std_flags,
+                        ) catch |e| return switch (e) {
                             error.WouldBlock => {
                                 Frame.yield();
                                 continue;
@@ -305,7 +309,7 @@ pub const File = struct {
 
             const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get(index);
-            const result: OpenFileResult = switch (task.result.open) {
+            const result: results.OpenFileResult = switch (task.result.open) {
                 .actual => |actual| .{ .actual = actual.file },
                 .err => |err| .{ .err = err },
             };
@@ -323,6 +327,8 @@ pub const File = struct {
             switch (path) {
                 .rel => |inner| {
                     const dir: StdDir = .{ .handle = inner.dir };
+
+                    const OpenError = results.OpenError;
                     const opened: StdFile = blk: while (true) {
                         break :blk dir.openFile(rt.io, inner.path, std_flags) catch |e| return switch (e) {
                             error.WouldBlock => {
@@ -353,6 +359,7 @@ pub const File = struct {
                     return .{ .handle = opened.handle };
                 },
                 .abs => |inner| {
+                    const OpenError = results.OpenError;
                     const opened: StdFile = blk: while (true) {
                         break :blk Io.Dir.openFileAbsolute(rt.io, inner, std_flags) catch |e| return switch (e) {
                             error.WouldBlock => {
@@ -401,10 +408,15 @@ pub const File = struct {
         } else {
             const std_file = self.to_std();
 
+            const ReadError = results.ReadError;
             const count = blk: {
                 if (offset) |o| {
                     while (true) {
-                        break :blk std_file.readPositionalAll(rt.io, buffer, o) catch |e| return switch (e) {
+                        break :blk std_file.readPositionalAll(
+                            rt.io,
+                            buffer,
+                            o,
+                        ) catch |e| return switch (e) {
                             error.WouldBlock => {
                                 Frame.yield();
                                 continue;
@@ -419,7 +431,10 @@ pub const File = struct {
                     }
                 } else {
                     while (true) {
-                        break :blk std_file.readStreaming(rt.io, &.{buffer}) catch |e| return switch (e) {
+                        break :blk std_file.readStreaming(
+                            rt.io,
+                            &.{buffer},
+                        ) catch |e| return switch (e) {
                             error.WouldBlock => {
                                 Frame.yield();
                                 continue;
@@ -457,7 +472,12 @@ pub const File = struct {
         return length;
     }
 
-    pub fn write(self: File, rt: *Runtime, buffer: []const u8, offset: ?usize) WriteError!usize {
+    pub fn write(
+        self: File,
+        rt: *Runtime,
+        buffer: []const u8,
+        offset: ?usize,
+    ) results.WriteError!usize {
         if (rt.aio.features.has_capability(.write)) {
             rt.scheduler.io_await(.{
                 .write = .{ .fd = self.handle, .buffer = buffer, .offset = offset },
@@ -469,6 +489,7 @@ pub const File = struct {
         } else {
             const std_file = self.to_std();
 
+            const WriteError = results.WriteError;
             // TODO: fix `error.Unseekable` when fd is a fifo
             // TODO: Proper and improved error handling (also why not error.*)
             if (offset) |o| {
@@ -510,13 +531,22 @@ pub const File = struct {
         }
     }
 
-    pub fn write_all(self: File, rt: *Runtime, buffer: []const u8, offset: ?usize) WriteError!usize {
+    pub fn write_all(
+        self: File,
+        rt: *Runtime,
+        buffer: []const u8,
+        offset: ?usize,
+    ) results.WriteError!usize {
         var length: usize = 0;
 
         while (length < buffer.len) {
             const real_offset: ?usize = if (offset) |o| o + length else null;
 
-            const result = self.write(rt, buffer[length..], real_offset) catch |e| switch (e) {
+            const result = self.write(
+                rt,
+                buffer[length..],
+                real_offset,
+            ) catch |e| switch (e) {
                 error.NoSpace => return length,
                 else => |err| return err,
             };
@@ -537,6 +567,7 @@ pub const File = struct {
         } else {
             const std_file = self.to_std();
 
+            const StatError = results.StatError;
             const file_stat = std_file.stat(rt.io) catch |e| {
                 return switch (e) {
                     error.AccessDenied => StatError.AccessDenied,

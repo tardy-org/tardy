@@ -1,7 +1,7 @@
 const std = @import("std");
 
-const Result = @import("../aio/completion.zig").Result;
-const Frame = @import("../frame/lib.zig").Frame;
+const tardy = @import("../root.zig");
+const results = tardy.results;
 
 pub const Task = struct {
     pub const State = union(enum) {
@@ -17,9 +17,9 @@ pub const Task = struct {
     // 1 byte
     state: State = .dead,
     // no idea on bytes.
-    result: Result = .none,
+    result: results.Result = .none,
     // 8 bytes
     index: usize,
     // 8 bytes
-    frame: *Frame,
+    frame: *tardy.Frame,
 };

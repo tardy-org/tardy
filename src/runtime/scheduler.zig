@@ -1,13 +1,12 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const AsyncIO = @import("../AsyncIO.zig");
-const AtomicDynamicBitSet = @import("../core/atomic_bitset.zig").AtomicDynamicBitSet;
-const Pool = @import("../core/pool.zig").Pool;
-const PoolKind = @import("../core/pool.zig").PoolKind;
-const Queue = @import("../core/queue.zig").Queue;
-const frame = @import("../frame/lib.zig");
-const Frame = frame.Frame;
+const tardy = @import("../root.zig");
+const pool = tardy.core.pool;
+const queue = tardy.core.queue;
+const atomic_bitset = tardy.core.atomic_bitset;
+const AsyncIO = tardy.AsyncIO;
+const Frame = tardy.Frame;
 const Runtime = @import("lib.zig").Runtime;
 const Task = @import("task.zig").Task;
 
@@ -18,19 +17,27 @@ const TaskWithJob = struct {
 
 pub const Scheduler = struct {
     allocator: std.mem.Allocator,
-    tasks: Pool(Task),
+    tasks: pool.Pool(Task),
     runnable: usize,
     released: std.ArrayList(usize),
-    triggers: AtomicDynamicBitSet,
+    triggers: atomic_bitset.AtomicDynamicBitSet,
 
-    pub fn init(allocator: std.mem.Allocator, size: usize, pooling: PoolKind) !Scheduler {
-        var tasks: Pool(Task) = try .init(allocator, size, pooling);
+    pub fn init(allocator: std.mem.Allocator, size: usize, pooling: pool.Kind) !Scheduler {
+        var tasks: pool.Pool(Task) = try .init(
+            allocator,
+            size,
+            pooling,
+        );
         errdefer tasks.deinit();
 
         var released: std.ArrayList(usize) = try .initCapacity(allocator, size);
         errdefer released.deinit(allocator);
 
-        const triggers: AtomicDynamicBitSet = try .init(allocator, size, false);
+        const triggers: atomic_bitset.AtomicDynamicBitSet = try .init(
+            allocator,
+            size,
+            false,
+        );
         errdefer triggers.deinit(allocator);
 
         return .{

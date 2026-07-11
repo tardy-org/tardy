@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) void {
 
     // create a public tardy module
     const tardy = b.addModule("tardy", .{
-        .root_source_file = b.path("src/lib.zig"),
+        .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = target.result.os.tag == .windows,

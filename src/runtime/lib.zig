@@ -1,19 +1,19 @@
 const std = @import("std");
 const debug = std.debug;
 
-const AsyncIO = @import("../AsyncIO.zig");
-const PoolKind = @import("../core/pool.zig").PoolKind;
-
-const Scheduler = @import("./scheduler.zig").Scheduler;
-const Frame = @import("../frame/lib.zig").Frame;
+const tardy = @import("../root.zig");
+const Frame = tardy.Frame;
+const AsyncIO = tardy.AsyncIO;
+const pool = tardy.core.pool;
 const Storage = @import("storage.zig").Storage;
+const Scheduler = @import("scheduler.zig").Scheduler;
 const Task = @import("task.zig").Task;
 
 const log = std.log.scoped(.@"tardy/runtime");
 
 const RuntimeOptions = struct {
     id: usize,
-    pooling: PoolKind,
+    pooling: pool.Kind,
     size_tasks_initial: usize,
     size_aio_reap_max: usize,
 };

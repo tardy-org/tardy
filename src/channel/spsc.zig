@@ -1,9 +1,10 @@
 const std = @import("std");
 const Atomic = std.atomic.Value;
 
+const tardy = @import("../root.zig");
 const SpscAtomicRing = @import("../core/atomic_ring.zig").SpscAtomicRing;
 const Ring = @import("../core/ring.zig").Ring;
-const Runtime = @import("../lib.zig").Runtime;
+const Runtime = tardy.Runtime;
 
 const log = std.log.scoped(.@"tardy/channels/spsc");
 

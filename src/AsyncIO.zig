@@ -4,7 +4,7 @@ vtable: VTable,
 features: Features = .{ .bitmask = 0 },
 
 attached: bool = false,
-completions: []Completion = undefined,
+completions: []results.Completion = undefined,
 mutex: Io.Mutex = .init,
 
 // List of Async features that this Async I/O backend has.
@@ -13,7 +13,7 @@ mutex: Io.Mutex = .init,
 /// This provides the completions that the backend will utilize when
 /// submitting and reaping. This MUST be called before any other
 /// methods on this AsyncIO instance.
-pub fn attach(self: *AsyncIO, completions: []Completion) void {
+pub fn attach(self: *AsyncIO, completions: []results.Completion) void {
     self.completions = completions;
     self.attached = true;
 }
@@ -39,7 +39,7 @@ pub fn wake(self: *AsyncIO, io: Io) !void {
     try self.vtable.wake(self.runner);
 }
 
-pub fn reap(self: *AsyncIO, wait: bool) ![]Completion {
+pub fn reap(self: *AsyncIO, wait: bool) ![]results.Completion {
     assert(self.attached);
     return try self.vtable.reap(self.runner, self.completions, wait);
 }
@@ -131,7 +131,7 @@ pub const Options = struct {
     /// inherit parameters from.
     parent_async: ?*const AsyncIO = null,
     // Pooling
-    pooling: PoolKind,
+    pooling: core.pool.Kind,
     size_tasks_initial: usize,
     /// Maximum number of completions reaped.
     size_aio_reap_max: usize,
@@ -259,7 +259,7 @@ const VTable = struct {
     queue_job: *const fn (*anyopaque, usize, Submission) QueueJobError!void,
     deinit: *const fn (*anyopaque, mem.Allocator) void,
     wake: *const fn (*anyopaque) anyerror!void,
-    reap: *const fn (*anyopaque, []Completion, bool) anyerror![]Completion,
+    reap: *const fn (*anyopaque, []results.Completion, bool) anyerror![]results.Completion,
     submit: *const fn (*anyopaque) anyerror!void,
 };
 
@@ -277,12 +277,13 @@ const Io = std.Io;
 const net = Io.net;
 const builtin = @import("builtin");
 
-const PoolKind = @import("core/pool.zig").PoolKind;
-const File = @import("fs/file.zig").File;
-const Path = @import("fs/lib.zig").Path;
-const Socket = @import("net/socket.zig").Socket;
 const epoll = @import("aio/apis/epoll.zig");
 const io_uring = @import("aio/apis/io_uring.zig");
 const kqueue = @import("aio/apis/kqueue.zig");
 const poll = @import("aio/apis/poll.zig");
-const Completion = @import("aio/completion.zig").Completion;
+const File = @import("fs/file.zig").File;
+const Path = @import("fs/lib.zig").Path;
+const Socket = @import("net/socket.zig").Socket;
+const tardy = @import("root.zig");
+const results = tardy.results;
+const core = tardy.core;

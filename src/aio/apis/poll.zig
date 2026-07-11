@@ -9,24 +9,15 @@ const syscall = @import("syscall.zig");
 const math = std.math;
 const mem = std.mem;
 
-const tardy = @import("../../lib.zig");
+const tardy = @import("../../root.zig");
 const File = @import("../../fs/file.zig").File;
 const Pool = @import("../../core/pool.zig").Pool;
 const Cross = @import("../../cross/lib.zig");
 const Stat = @import("../../fs/lib.zig").Stat;
 const Socket = @import("../../net/lib.zig").Socket;
-const Completion = @import("../completion.zig").Completion;
-const Result = @import("../completion.zig").Result;
-const AcceptResult = @import("../completion.zig").AcceptResult;
-const AcceptError = @import("../completion.zig").AcceptError;
-const ConnectResult = @import("../completion.zig").ConnectResult;
-const ConnectError = @import("../completion.zig").ConnectError;
-const RecvResult = @import("../completion.zig").RecvResult;
-const RecvError = @import("../completion.zig").RecvError;
-const SendResult = @import("../completion.zig").SendResult;
-const SendError = @import("../completion.zig").SendError;
 const Job = @import("../job.zig").Job;
 const AsyncIO = tardy.AsyncIO;
+const results = tardy.results;
 
 const log = std.log.scoped(.@"tardy/aio/poll");
 
@@ -308,7 +299,11 @@ pub const AsyncPoll = struct {
 
     pub fn submit(_: *anyopaque) !void {}
 
-    pub fn reap(runner: *anyopaque, completions: []Completion, wait: bool) ![]Completion {
+    pub fn reap(
+        runner: *anyopaque,
+        completions: []results.Completion,
+        wait: bool,
+    ) ![]results.Completion {
         const poll: *AsyncPoll = @ptrCast(@alignCast(runner));
         var reaped: usize = 0;
 
@@ -357,7 +352,7 @@ pub const AsyncPoll = struct {
                     ready -= 1;
                 };
 
-                const result: Result = result: {
+                const result: results.Result = result: {
                     switch (job.type) {
                         .wake => {
                             debug.assert(pfd.revents & syscall.POLL.IN != 0 or pfd.revents & syscall.POLL.RDNORM != 0);
@@ -370,6 +365,7 @@ pub const AsyncPoll = struct {
                         .accept => |*inner| {
                             debug.assert(pfd.revents & syscall.POLL.IN != 0 or pfd.revents & syscall.POLL.RDNORM != 0);
 
+                            const AcceptError = results.AcceptError;
                             const socket = syscall.accept(
                                 inner.socket,
                                 &inner.addr,
@@ -406,18 +402,29 @@ pub const AsyncPoll = struct {
                             debug.assert(pfd.revents & syscall.POLL.OUT != 0);
 
                             if (pfd.revents & syscall.POLL.ERR != 0) {
-                                break :result .{ .connect = .{ .err = ConnectError.Unexpected } };
+                                break :result .{ .connect = .{
+                                    .err = results.ConnectError.Unexpected,
+                                } };
                             } else {
                                 break :result .{ .connect = .actual };
                             }
                         },
                         .recv => |inner| {
                             if (pfd.revents & syscall.POLL.HUP != 0) break :result .{
-                                .recv = .{ .err = RecvError.Closed },
+                                .recv = .{
+                                    .err = results.RecvError.Closed,
+                                },
                             };
 
-                            debug.assert(pfd.revents & syscall.POLL.IN != 0 or pfd.revents & syscall.POLL.RDNORM != 0);
-                            const count = syscall.recv(inner.socket, inner.buffer, 0) catch |e| {
+                            debug.assert(pfd.revents & syscall.POLL.IN != 0 or
+                                pfd.revents & syscall.POLL.RDNORM != 0);
+
+                            const RecvError = results.RecvError;
+                            const count = syscall.recv(
+                                inner.socket,
+                                inner.buffer,
+                                0,
+                            ) catch |e| {
                                 const err = switch (e) {
                                     error.WouldBlock => {
                                         log.debug("recv wouldblock - not removing", .{});
@@ -435,12 +442,19 @@ pub const AsyncPoll = struct {
                             break :result .{ .recv = .{ .actual = count } };
                         },
                         .send => |inner| {
+                            const SendError = results.SendError;
                             if (pfd.revents & syscall.POLL.HUP != 0) break :result .{
-                                .send = .{ .err = SendError.Closed },
+                                .send = .{
+                                    .err = SendError.Closed,
+                                },
                             };
 
                             debug.assert(pfd.revents & syscall.POLL.OUT != 0);
-                            const count = syscall.send(inner.socket, inner.buffer, 0) catch |e| {
+                            const count = syscall.send(
+                                inner.socket,
+                                inner.buffer,
+                                0,
+                            ) catch |e| {
                                 log.err("send failed with {}", .{e});
                                 const err = switch (e) {
                                     error.WouldBlock => {
@@ -454,10 +468,14 @@ pub const AsyncPoll = struct {
                                     else => SendError.Unexpected,
                                 };
 
-                                break :result .{ .send = .{ .err = err } };
+                                break :result .{ .send = .{
+                                    .err = err,
+                                } };
                             };
 
-                            break :result .{ .send = .{ .actual = count } };
+                            break :result .{ .send = .{
+                                .actual = count,
+                            } };
                         },
                         .timer,
                         .open,

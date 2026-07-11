@@ -22,7 +22,7 @@ pub const TimerFdGetError = UnexpectedError;
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 
-const tardy = @import("../../lib.zig");
+const tardy = @import("../../root.zig");
 const Socket = tardy.Socket;
 const afd = @import("syscall/afd.zig");
 pub const ws2 = @import("syscall/ws2.zig");

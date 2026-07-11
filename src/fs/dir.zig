@@ -4,22 +4,10 @@ const StdDir = Io.Dir;
 const builtin = @import("builtin");
 const Io = std.Io;
 
-const Resulted = @import("../aio/completion.zig").Resulted;
-const OpenFileResult = @import("../aio/completion.zig").OpenFileResult;
-const OpenDirResult = @import("../aio/completion.zig").OpenDirResult;
-const OpenError = @import("../aio/completion.zig").OpenError;
-const DeleteError = @import("../aio/completion.zig").DeleteError;
-const DeleteResult = @import("../aio/completion.zig").DeleteResult;
-const DeleteTreeResult = @import("../aio/completion.zig").DeleteTreeResult;
-const StatResult = @import("../aio/completion.zig").StatResult;
-const ReadResult = @import("../aio/completion.zig").ReadResult;
-const WriteResult = @import("../aio/completion.zig").WriteResult;
-const CreateDirResult = @import("../aio/completion.zig").CreateDirResult;
-const MkdirResult = @import("../aio/completion.zig").MkdirResult;
-const MkdirError = @import("../aio/completion.zig").MkdirError;
-const StatError = @import("../aio/completion.zig").StatError;
-const AsyncIO = @import("../AsyncIO.zig");
-const Runtime = @import("../runtime/lib.zig").Runtime;
+const tardy = @import("../root.zig");
+const results = tardy.results;
+const AsyncIO = tardy.AsyncIO;
+const Runtime = tardy.Runtime;
 const File = @import("lib.zig").File;
 const Path = @import("lib.zig").Path;
 const Stat = @import("lib.zig").Stat;
@@ -79,16 +67,18 @@ pub const Dir = struct {
             const index = rt.current_task.?;
             const task = rt.scheduler.tasks.get_ptr(index);
 
-            const result: OpenDirResult = switch (task.result.open) {
+            const result: results.OpenDirResult = switch (task.result.open) {
                 .actual => |actual| .{ .actual = actual.dir },
                 .err => |err| .{ .err = err },
             };
 
             return try result.unwrap();
         } else {
+            const OpenError = results.OpenError;
             switch (path) {
                 .rel => |inner| {
                     const dir: StdDir = .{ .handle = inner.dir };
+
                     const opened = dir.openDir(rt.io, inner.path, .{ .iterate = true }) catch |e| {
                         return switch (e) {
                             StdDir.OpenError.AccessDenied => OpenError.AccessDenied,
@@ -134,14 +124,14 @@ pub const Dir = struct {
                     const dir: StdDir = .{ .handle = p.dir };
                     dir.createDirPath(rt.io, p.path) catch |e| {
                         return switch (e) {
-                            else => MkdirError.Unexpected,
+                            else => results.MkdirError.Unexpected,
                         };
                     };
                 },
                 .abs => |p| {
                     Io.Dir.createDirAbsolute(rt.io, p, .default_dir) catch |e| {
                         return switch (e) {
-                            else => MkdirError.Unexpected,
+                            else => results.MkdirError.Unexpected,
                         };
                     };
                 },
@@ -205,9 +195,9 @@ pub const Dir = struct {
             const std_dir = self.to_std();
             const dir_stat = std_dir.stat() catch |e| {
                 return switch (e) {
-                    error.AccessDenied => StatError.AccessDenied,
-                    error.SystemResources => StatError.OutOfMemory,
-                    error.Unexpected => StatError.Unexpected,
+                    error.AccessDenied => results.StatError.AccessDenied,
+                    error.SystemResources => results.StatError.OutOfMemory,
+                    error.Unexpected => results.StatError.Unexpected,
                 };
             };
 
@@ -245,7 +235,7 @@ pub const Dir = struct {
         } else {
             const std_dir = self.to_std();
             return std_dir.deleteFile(rt.io, subpath) catch |e| switch (e) {
-                else => DeleteError.Unexpected,
+                else => results.DeleteError.Unexpected,
             };
         }
     }
@@ -264,7 +254,7 @@ pub const Dir = struct {
         } else {
             const std_dir = self.to_std();
             return std_dir.deleteDir(rt.io, subpath) catch |e| switch (e) {
-                else => DeleteError.Unexpected,
+                else => results.DeleteError.Unexpected,
             };
         }
     }
