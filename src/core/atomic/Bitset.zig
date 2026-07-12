@@ -8,11 +8,16 @@ lock: std.Io.RwLock,
 bit_length: usize,
 
 pub fn init(allocator: mem.Allocator, size: usize, default: bool) !Bitset {
-    const word_count = try std.math.divCeil(usize, size, @bitSizeOf(usize));
-    const words = try allocator.alloc(atomic.Value(usize), word_count);
+    const word_count = @divCeil(size, @bitSizeOf(usize));
+    const words = try allocator.alloc(
+        atomic.Value(usize),
+        word_count,
+    );
     errdefer allocator.free(words);
+
     const value: usize = if (default) std.math.maxInt(usize) else 0;
     for (words) |*word| word.* = .{ .raw = value };
+
     return .{
         .allocator = allocator,
         .words = words,
@@ -28,7 +33,13 @@ pub fn deinit(self: *Bitset, allocator: mem.Allocator, io: std.Io) void {
     allocator.free(self.words);
 }
 
-fn resize(self: *Bitset, allocator: mem.Allocator, io: std.Io, new_size: usize, default: bool) !void {
+fn resize(
+    self: *Bitset,
+    allocator: mem.Allocator,
+    io: std.Io,
+    new_size: usize,
+    default: bool,
+) !void {
     self.lock.lockUncancelable(io);
     defer self.lock.unlock(io);
 

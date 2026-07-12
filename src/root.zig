@@ -6,12 +6,12 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             break :inner *AioImpl;
         }),
         // TODO: maybe make this an arena
-        allocator: std.mem.Allocator,
+        allocator: mem.Allocator,
         io: std.Io,
         mutex: std.Io.Mutex = .init,
         options: Options,
 
-        pub fn init(allocator: std.mem.Allocator, io: std.Io, options: Options) !Self {
+        pub fn init(allocator: mem.Allocator, io: std.Io, options: Options) !Self {
             const aio_type: AsyncIO.Kind = switch (selected_aio) {
                 .auto => AsyncIO.native(),
                 else => selected_aio,
@@ -96,7 +96,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             });
             defer runtime.deinit();
 
-            assert(runtime_count > 0);
+            debug.assert(runtime_count > 0);
             log.info("thread count: {d}", .{runtime_count});
 
             var threads: std.ArrayList(std.Thread) = try .initCapacity(
@@ -241,7 +241,8 @@ const Options = struct {
 };
 
 const std = @import("std");
-const assert = std.debug.assert;
+const mem = std.mem;
+const debug = std.debug;
 const atomic = std.atomic;
 const builtin = @import("builtin");
 
