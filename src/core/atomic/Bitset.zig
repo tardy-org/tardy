@@ -8,14 +8,18 @@ lock: std.Io.RwLock,
 bit_length: usize,
 
 pub fn init(allocator: mem.Allocator, size: usize, default: bool) !Bitset {
-    const word_count = @divCeil(size, @bitSizeOf(usize));
+    const word_count = math.divCeil(
+        usize,
+        size,
+        @bitSizeOf(usize),
+    ) catch unreachable;
     const words = try allocator.alloc(
         atomic.Value(usize),
         word_count,
     );
     errdefer allocator.free(words);
 
-    const value: usize = if (default) std.math.maxInt(usize) else 0;
+    const value: usize = if (default) math.maxInt(usize) else 0;
     for (words) |*word| word.* = .{ .raw = value };
 
     return .{
@@ -43,10 +47,14 @@ fn resize(
     self.lock.lockUncancelable(io);
     defer self.lock.unlock(io);
 
-    const new_word_count = @divCeil(new_size, @bitSizeOf(usize));
+    const new_word_count = math.divCeil(
+        usize,
+        new_size,
+        @bitSizeOf(usize),
+    ) catch unreachable;
     debug.assert(new_word_count > self.words.len);
 
-    const value: usize = if (default) std.math.maxInt(usize) else 0;
+    const value: usize = if (default) math.maxInt(usize) else 0;
     const old_words = self.words;
     if (allocator.resize(self.words, new_word_count)) {
         for (self.words[old_words.len..]) |*word| word.* = .{
@@ -93,7 +101,7 @@ pub fn set(self: *Bitset, io: std.Io, index: usize) !void {
         try self.resize(
             self.allocator,
             io,
-            try std.math.ceilPowerOfTwo(usize, index),
+            try math.ceilPowerOfTwo(usize, index),
             false,
         );
     }
@@ -123,7 +131,7 @@ pub fn unset(self: *Bitset, io: std.Io, index: usize) void {
 
     const word = index / @bitSizeOf(usize);
     debug.assert(word < self.words.len);
-    var mask: usize = std.math.maxInt(usize);
+    var mask: usize = math.maxInt(usize);
     mask ^= @as(usize, 1) << @intCast(@mod(index, @bitSizeOf(usize)));
     _ = self.words[word].fetchAnd(mask, .release);
 }
@@ -137,5 +145,6 @@ pub fn unset_all(self: *Bitset, io: std.Io) void {
 
 const std = @import("std");
 const mem = std.mem;
+const math = std.math;
 const debug = std.debug;
 const atomic = std.atomic;
