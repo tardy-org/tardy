@@ -8,7 +8,7 @@ const builtin = @import("builtin");
 
 const tardy = @import("../root.zig");
 const results = tardy.results;
-const Frame = tardy.Frame;
+const Coroutine = tardy.Coroutine;
 const Runtime = tardy.Runtime;
 const syscall = @import("../aio/apis/syscall.zig");
 
@@ -354,7 +354,7 @@ pub const Socket = struct {
                     if (builtin.os.tag != .windows) posix.SOCK.NONBLOCK else 0,
                 ) catch |e| return switch (e) {
                     error.WouldBlock => {
-                        Frame.yield();
+                        Coroutine.yield();
                         continue;
                     },
                     error.ConnectionAborted,
@@ -394,7 +394,7 @@ pub const Socket = struct {
                     &self.addr,
                 ) catch |e| return switch (e) {
                     error.WouldBlock => {
-                        Frame.yield();
+                        Coroutine.yield();
                         continue;
                     },
                     else => results.ConnectError.Unexpected,
@@ -419,7 +419,7 @@ pub const Socket = struct {
             const count: usize = blk: while (true) {
                 break :blk syscall.recv(self.handle, buffer, 0) catch |e| return switch (e) {
                     error.WouldBlock => {
-                        Frame.yield();
+                        Coroutine.yield();
                         continue;
                     },
                     else => results.RecvError.Unexpected,
@@ -466,7 +466,7 @@ pub const Socket = struct {
                     0,
                 ) catch |e| return switch (e) {
                     error.WouldBlock => {
-                        Frame.yield();
+                        Coroutine.yield();
                         continue;
                     },
                     error.ConnectionResetByPeer,
