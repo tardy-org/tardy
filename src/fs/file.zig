@@ -455,7 +455,7 @@ pub fn stat(self: File, rt: *Runtime) !fs.Stat {
 
 // TODO: sendFile like api is a more appropriate for this
 pub fn stream_to(from: File, to_w: *Io.Writer, rt: *Runtime) !void {
-    std.debug.assert(to_w.buffer.len > 0);
+    debug.assert(to_w.buffer.len > 0);
 
     var file = from.reader(rt, &.{});
     const file_r = &file.interface;
@@ -585,12 +585,11 @@ pub const Reader = struct {
 const log = std.log.scoped(.@"tardy/fs/file");
 
 const std = @import("std");
-const assert = std.debug.assert;
+const debug = std.debug;
 const Io = std.Io;
 const StdFile = Io.File;
 const StdDir = Io.Dir;
 pub const Handle = Io.File.Handle;
-const builtin = @import("builtin");
 
 const tardy = @import("../root.zig");
 const results = tardy.results;

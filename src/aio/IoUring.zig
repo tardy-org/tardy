@@ -58,7 +58,7 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) (mem.Allocator.E
             const parent_uring: *IoUring = @ptrCast(
                 @alignCast(parent.runner),
             );
-            assert(parent_uring.inner.fd >= 0);
+            debug.assert(parent_uring.inner.fd >= 0);
 
             // Initialize using the WQ from the parent ring.
             const flags: u32 = base_flags | linux.IORING_SETUP_ATTACH_WQ;
@@ -961,7 +961,7 @@ const JobBundle = struct {
 };
 
 const std = @import("std");
-const assert = std.debug.assert;
+const debug = std.debug;
 const linux = std.os.linux;
 const math = std.math;
 const Io = std.Io;

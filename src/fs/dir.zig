@@ -279,10 +279,8 @@ pub fn delete_tree(self: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
 const log = std.log.scoped(.@"tardy/fs/dir");
 
 const std = @import("std");
-const assert = std.debug.assert;
 const Io = std.Io;
 const StdDir = Io.Dir;
-const builtin = @import("builtin");
 
 const tardy = @import("../root.zig");
 const results = tardy.results;

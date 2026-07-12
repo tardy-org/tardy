@@ -62,7 +62,7 @@ pub const FileChain = struct {
         path: fs.Path,
         buffer_size: usize,
     ) !FileChain {
-        assert(chain.len > 0);
+        debug.assert(chain.len > 0);
 
         const chain_dupe = try allocator.dupe(Step, chain);
         errdefer allocator.free(chain_dupe);
@@ -73,7 +73,7 @@ pub const FileChain = struct {
             .abs => |p| allocator.free(p),
         };
 
-        assert(validate_chain(chain));
+        debug.assert(validate_chain(chain));
 
         const buffer = try allocator.alloc(u8, buffer_size);
         errdefer allocator.free(buffer);
@@ -126,8 +126,8 @@ pub const FileChain = struct {
                         chain.buffer,
                         read_head,
                     );
-                    assert(length == @min(chain.buffer.len, write_head - read_head));
-                    for (chain.buffer[0..length]) |item| assert(item == 123);
+                    debug.assert(length == @min(chain.buffer.len, write_head - read_head));
+                    for (chain.buffer[0..length]) |item| debug.assert(item == 123);
                     read_head += length;
                 },
                 .write => {
@@ -140,7 +140,7 @@ pub const FileChain = struct {
                 },
                 .stat => {
                     const stat = try chain.file.?.stat(rt);
-                    assert(stat.size == write_head);
+                    debug.assert(stat.size == write_head);
                 },
                 .close => try chain.file.?.close(rt),
                 .delete => {
@@ -233,7 +233,7 @@ test "FileChain: Validate Random Chain" {
 const log = std.log.scoped(.@"tardy/e2e/first");
 
 const std = @import("std");
-const assert = std.debug.assert;
+const debug = std.debug;
 const testing = std.testing;
 
 const tardy = @import("tardy");

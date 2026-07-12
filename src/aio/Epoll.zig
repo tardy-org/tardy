@@ -9,7 +9,7 @@ jobs: pool.Pool(Job),
 pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Epoll {
     const size = options.size_tasks_initial + 1;
     const epoll_fd = try syscall.epoll_create1(0);
-    assert(epoll_fd > -1);
+    debug.assert(epoll_fd > -1);
     errdefer syscall.close(epoll_fd);
 
     const wake_event_fd: posix.fd_t = try syscall.eventfd(0, linux.EFD.CLOEXEC);
@@ -289,7 +289,7 @@ pub fn reap(
         const epoll_events = syscall.epoll_wait(epoll.epoll_fd, epoll.events[0..remaining], timeout);
         for (epoll.events[0..epoll_events]) |event| {
             const job_index: usize = @intCast(event.data.u64);
-            assert(epoll.jobs.dirty.isSet(job_index));
+            debug.assert(epoll.jobs.dirty.isSet(job_index));
 
             var job_complete = true;
             defer if (job_complete) epoll.jobs.release(job_index);
@@ -314,7 +314,7 @@ pub fn reap(
                     .timer => |inner| {
                         const timer_fd = inner.fd;
                         defer epoll.remove_fd(timer_fd) catch unreachable;
-                        assert(event.events & linux.EPOLL.IN != 0);
+                        debug.assert(event.events & linux.EPOLL.IN != 0);
 
                         var buffer: [8]u8 = undefined;
                         // Should NEVER fail.
@@ -326,7 +326,7 @@ pub fn reap(
                         break :blk .none;
                     },
                     .accept => |*inner| {
-                        assert(event.events & linux.EPOLL.IN != 0);
+                        debug.assert(event.events & linux.EPOLL.IN != 0);
 
                         const result: results.AcceptResult = result: {
                             const handle = syscall.accept(
@@ -355,7 +355,7 @@ pub fn reap(
                         break :blk .{ .accept = result };
                     },
                     .connect => {
-                        assert(event.events & linux.EPOLL.OUT != 0);
+                        debug.assert(event.events & linux.EPOLL.OUT != 0);
 
                         const result: results.ConnectResult = result: {
                             if (event.events & linux.EPOLL.ERR != 0) {
@@ -370,7 +370,7 @@ pub fn reap(
                         break :blk .{ .connect = result };
                     },
                     .recv => |inner| {
-                        assert(event.events & linux.EPOLL.IN != 0);
+                        debug.assert(event.events & linux.EPOLL.IN != 0);
 
                         const result: results.RecvResult = result: {
                             const length = syscall.recv(
@@ -396,7 +396,7 @@ pub fn reap(
                         break :blk .{ .recv = result };
                     },
                     .send => |inner| {
-                        assert(event.events & linux.EPOLL.OUT != 0);
+                        debug.assert(event.events & linux.EPOLL.OUT != 0);
 
                         const result: results.SendResult = result: {
                             const length = syscall.send(
@@ -475,7 +475,7 @@ pub const Errors = struct {
 pub const Error = syscall.EpollCtlError || pool.Error;
 
 const std = @import("std");
-const assert = std.debug.assert;
+const debug = std.debug;
 const posix = std.posix;
 const mem = std.mem;
 const Io = std.Io;
