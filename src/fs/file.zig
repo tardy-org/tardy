@@ -592,10 +592,10 @@ const StdDir = Io.Dir;
 pub const Handle = Io.File.Handle;
 const builtin = @import("builtin");
 
-const syscall = @import("../aio/apis/syscall.zig");
 const tardy = @import("../root.zig");
 const results = tardy.results;
 const AsyncIO = tardy.AsyncIO;
+const syscall = AsyncIO.syscall;
 const cross = tardy.cross;
 const Coroutine = tardy.Coroutine;
 const Runtime = tardy.Runtime;

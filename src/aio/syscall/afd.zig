@@ -13,8 +13,8 @@ const IpAddress = net.IpAddress;
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 
-const tardy = @import("../../../root.zig");
-const Socket = tardy.Socket;
+const tardy = @import("../../root.zig");
+const Socket = tardy.net.Socket;
 
 pub const max_iovecs_len = 8;
 

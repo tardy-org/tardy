@@ -21,7 +21,7 @@ pub const Job = struct {
 
 const TimerJob = union(enum) {
     none,
-    fd: Socket.Handle,
+    fd: net.Socket.Handle,
     ns: Io.Duration,
 };
 
@@ -54,32 +54,32 @@ const WriteJob = struct {
 };
 
 const AcceptJob = struct {
-    socket: Socket.Handle,
-    addr: Socket.Address,
-    kind: Socket.Kind,
+    socket: net.Socket.Handle,
+    addr: net.Socket.Address,
+    kind: net.Socket.Kind,
 };
 
 const ConnectJob = struct {
-    socket: Socket.Handle,
-    addr: Socket.Address,
+    socket: net.Socket.Handle,
+    addr: net.Socket.Address,
     // TODO: kind isn't needed anymore as we are using a union
-    kind: Socket.Kind,
+    kind: net.Socket.Kind,
 };
 
 const SendJob = struct {
-    socket: Socket.Handle,
+    socket: net.Socket.Handle,
     buffer: []const u8,
 };
 
 const RecvJob = struct {
-    socket: Socket.Handle,
+    socket: net.Socket.Handle,
     buffer: []u8,
 };
 
 const std = @import("std");
 const Io = std.Io;
 
-const Socket = @import("../net/lib.zig").Socket;
 const tardy = @import("../root.zig");
 const fs = tardy.fs;
+const net = tardy.net;
 const AsyncIO = tardy.AsyncIO;

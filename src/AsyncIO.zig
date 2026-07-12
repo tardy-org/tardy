@@ -1,4 +1,6 @@
 /// Async Io
+pub const AsyncIO = @This();
+
 runner: *anyopaque,
 vtable: VTable,
 features: Features = .{ .bitmask = 0 },
@@ -25,10 +27,10 @@ pub fn deinit(self: *AsyncIO, allocator: mem.Allocator, io: Io) void {
     self.vtable.deinit(self.runner, allocator);
 }
 
-pub fn queue_job(self: *AsyncIO, task: usize, job: Submission) QueueJobError!void {
+pub fn queue_job(self: *AsyncIO, task: usize, sub: Submission) QueueJobError!void {
     assert(self.attached);
-    log.debug("queuing up job={t} at index={d}", .{ job, task });
-    try self.vtable.queue_job(self.runner, task, job);
+    log.debug("queuing up job={t} at index={d}", .{ sub, task });
+    try self.vtable.queue_job(self.runner, task, sub);
 }
 
 pub fn wake(self: *AsyncIO, io: Io) !void {
@@ -90,10 +92,10 @@ pub const Kind = union(enum) {
 
     pub fn Impl(comptime aio: Kind) type {
         return comptime sw: switch (aio) {
-            .io_uring => @import("aio/apis/io_uring.zig").AsyncIoUring,
-            .epoll => @import("aio/apis/epoll.zig").AsyncEpoll,
-            .poll => @import("aio/apis/poll.zig").AsyncPoll,
-            .kqueue => @import("aio/apis/kqueue.zig").AsyncKqueue,
+            .io_uring => IoUring,
+            .epoll => Epoll,
+            .poll => Poll,
+            .kqueue => Kqueue,
             .custom => |inner| {
                 assert(std.meta.hasMethod(inner, "init"));
                 assert(std.meta.hasMethod(inner, "inner_deinit"));
@@ -201,22 +203,22 @@ pub const Submission = union(Op) {
         buffer: []const u8,
         offset: ?usize,
     },
-    close: Socket.Handle,
+    close: net.Socket.Handle,
     accept: struct {
-        socket: Socket.Handle,
-        kind: Socket.Kind,
+        socket: net.Socket.Handle,
+        kind: net.Socket.Kind,
     },
     connect: struct {
-        socket: Socket.Handle,
-        addr: Socket.Address,
-        kind: Socket.Kind,
+        socket: net.Socket.Handle,
+        addr: net.Socket.Address,
+        kind: net.Socket.Kind,
     },
     recv: struct {
-        socket: Socket.Handle,
+        socket: net.Socket.Handle,
         buffer: []u8,
     },
     send: struct {
-        socket: Socket.Handle,
+        socket: net.Socket.Handle,
         buffer: []const u8,
     },
 };
@@ -251,9 +253,9 @@ pub const OpenFlags = struct {
     directory: bool = false,
 };
 
-pub const QueueJobError = io_uring.Errors.QueueJob ||
-    poll.Errors.QueueJob || epoll.Errors.QueueJob ||
-    kqueue.Errors.QueueJob;
+pub const QueueJobError = IoUring.Errors.QueueJob ||
+    Poll.Errors.QueueJob || Epoll.Errors.QueueJob ||
+    Kqueue.Errors.QueueJob;
 
 const VTable = struct {
     queue_job: *const fn (*anyopaque, usize, Submission) QueueJobError!void,
@@ -263,10 +265,6 @@ const VTable = struct {
     submit: *const fn (*anyopaque) anyerror!void,
 };
 
-pub const AsyncIO = @This();
-
-// TODO: let `Socket` be a file
-
 const log = std.log.scoped(.@"tardy/aio");
 
 const std = @import("std");
@@ -274,15 +272,16 @@ const mem = std.mem;
 const assert = std.debug.assert;
 const Atomic = std.atomic.Value;
 const Io = std.Io;
-const net = Io.net;
 const builtin = @import("builtin");
 
-const epoll = @import("aio/apis/epoll.zig");
-const io_uring = @import("aio/apis/io_uring.zig");
-const kqueue = @import("aio/apis/kqueue.zig");
-const poll = @import("aio/apis/poll.zig");
-const Socket = @import("net/socket.zig").Socket;
+pub const Epoll = @import("aio/Epoll.zig");
+pub const IoUring = @import("aio/IoUring.zig");
+pub const job = @import("aio/job.zig");
+pub const Kqueue = @import("aio/Kqueue.zig");
+pub const Poll = @import("aio/Poll.zig");
+pub const syscall = @import("aio/syscall.zig");
 const tardy = @import("root.zig");
 const results = tardy.results;
 const core = tardy.core;
 const fs = tardy.fs;
+const net = tardy.net;

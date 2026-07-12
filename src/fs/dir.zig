@@ -284,9 +284,9 @@ const Io = std.Io;
 const StdDir = Io.Dir;
 const builtin = @import("builtin");
 
-const syscall = @import("../aio/apis/syscall.zig");
 const tardy = @import("../root.zig");
 const results = tardy.results;
 const AsyncIO = tardy.AsyncIO;
+const syscall = AsyncIO.syscall;
 const Runtime = tardy.Runtime;
 const fs = tardy.fs;

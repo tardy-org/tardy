@@ -2,7 +2,7 @@ const std = @import("std");
 
 const tardy = @import("../root.zig");
 const fs = tardy.fs;
-const Socket = tardy.Socket;
+const Socket = tardy.net.Socket;
 
 pub fn Resulted(comptime T: type, comptime E: type) type {
     return union(enum) {

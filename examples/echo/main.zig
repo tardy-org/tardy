@@ -3,7 +3,7 @@ const std = @import("std");
 const options = @import("options");
 const tardy = @import("tardy");
 const Runtime = tardy.Runtime;
-const Socket = tardy.Socket;
+const Socket = tardy.net.Socket;
 const AsyncIO = tardy.AsyncIO;
 
 const backend: AsyncIO.Kind = .init(options.async_backend);
