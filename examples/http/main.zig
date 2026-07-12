@@ -1,17 +1,14 @@
 const std = @import("std");
 
+const options = @import("options");
 const tardy = @import("tardy");
-const AcceptResult = tardy.AcceptResult;
-const Cross = tardy.Cross;
-const Pool = tardy.Pool;
-const RecvResult = tardy.RecvResult;
 const Runtime = tardy.Runtime;
-const SendResult = tardy.SendResult;
-const Socket = tardy.Socket;
-const Task = tardy.Task;
-const Timer = tardy.Timer;
+const Socket = tardy.net.Socket;
+const AsyncIO = tardy.AsyncIO;
 
-const Tardy = tardy.Tardy(.auto);
+const backend: AsyncIO.Kind = .init(options.async_backend);
+const Tardy = tardy.Tardy(backend);
+
 const log = std.log.scoped(.@"tardy/example/http");
 
 const HTTP_RESPONSE = "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 27\r\nContent-Type: text/plain\r\n\r\nThis is an HTTP benchmark\r\n";

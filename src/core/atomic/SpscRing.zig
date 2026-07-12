@@ -1,21 +1,17 @@
-const std = @import("std");
-const assert = std.debug.assert;
-const Atomic = std.atomic.Value;
-const testing = std.testing;
-
-pub fn SpscAtomicRing(comptime T: type) type {
+/// An Atomic Spsc Ring
+pub fn SpscRing(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        allocator: std.mem.Allocator,
+        allocator: mem.Allocator,
         items: []T,
 
-        write_index: Atomic(usize) align(std.atomic.cache_line),
-        read_index: Atomic(usize) align(std.atomic.cache_line),
+        write_index: atomic.Value(usize) align(atomic.cache_line),
+        read_index: atomic.Value(usize) align(atomic.cache_line),
 
-        pub fn init(allocator: std.mem.Allocator, size: usize) !Self {
-            assert(size >= 2);
-            assert(std.math.isPowerOfTwo(size));
+        pub fn init(allocator: mem.Allocator, size: usize) !Self {
+            debug.assert(size >= 2);
+            debug.assert(std.math.isPowerOfTwo(size));
 
             const items = try allocator.alloc(T, size);
             errdefer allocator.free(items);
@@ -50,9 +46,9 @@ pub fn SpscAtomicRing(comptime T: type) type {
     };
 }
 
-test "SpscAtomicRing: Fill and Empty" {
+test "SpscRing: Fill and Empty" {
     const size: u32 = 128;
-    var ring: SpscAtomicRing(usize) = try .init(testing.allocator, size);
+    var ring: SpscRing(usize) = try .init(testing.allocator, size);
     defer ring.deinit();
 
     try testing.expectError(error.RingEmpty, ring.pop());
@@ -61,3 +57,9 @@ test "SpscAtomicRing: Fill and Empty" {
     for (0..size - 1) |i| try testing.expectEqual(i, try ring.pop());
     try testing.expectError(error.RingEmpty, ring.pop());
 }
+
+const std = @import("std");
+const debug = std.debug;
+const atomic = std.atomic;
+const testing = std.testing;
+const mem = std.mem;

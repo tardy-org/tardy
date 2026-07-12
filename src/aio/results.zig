@@ -1,10 +1,8 @@
 const std = @import("std");
 
-const File = @import("../fs/lib.zig").File;
-const Dir = @import("../fs/lib.zig").Dir;
-const Stat = @import("../fs/lib.zig").Stat;
-const Timespec = @import("../lib.zig").Timespec;
-const Socket = @import("../net/lib.zig").Socket;
+const tardy = @import("../root.zig");
+const fs = tardy.fs;
+const Socket = tardy.net.Socket;
 
 pub fn Resulted(comptime T: type, comptime E: type) type {
     return union(enum) {
@@ -194,14 +192,14 @@ pub const SendResult = Resulted(usize, SendError);
 
 // This is ONLY used internally. This helps us avoid Result enum bloat
 // by encoding multiple possibilities within one Result.
-const OpenResultType = union(enum) { file: File, dir: Dir };
+const OpenResultType = union(enum) { file: fs.File, dir: fs.Dir };
 pub const InnerOpenResult = Resulted(OpenResultType, OpenError);
-pub const OpenFileResult = Resulted(File, OpenError);
-pub const OpenDirResult = Resulted(Dir, OpenError);
+pub const OpenFileResult = Resulted(fs.File, OpenError);
+pub const OpenDirResult = Resulted(fs.Dir, OpenError);
 
 pub const MkdirResult = Resulted(void, MkdirError);
 pub const CreateDirError = MkdirError || OpenError || error{InternalFailure};
-pub const CreateDirResult = Resulted(Dir, CreateDirError);
+pub const CreateDirResult = Resulted(fs.Dir, CreateDirError);
 
 pub const DeleteResult = Resulted(void, DeleteError);
 pub const DeleteTreeError = OpenError || DeleteError || error{InternalFailure};
@@ -210,7 +208,7 @@ pub const DeleteTreeResult = Resulted(void, DeleteTreeError);
 pub const ReadResult = Resulted(usize, ReadError);
 pub const WriteResult = Resulted(usize, WriteError);
 
-pub const StatResult = Resulted(Stat, StatError);
+pub const StatResult = Resulted(fs.Stat, StatError);
 
 pub const Result = union(enum) {
     none,

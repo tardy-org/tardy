@@ -1,22 +1,5 @@
-const std = @import("std");
-const assert = std.debug.assert;
-const testing = std.testing;
-const mem = std.mem;
-const Allocator = mem.Allocator;
-
-pub const Error = error{Full} || Allocator.Error;
-
-pub const PoolKind = enum {
-    /// This keeps the Pool at a static size, never growing.
-    static,
-    /// This allows the Pool to grow but never shrink.
-    grow,
-};
-
 pub fn Pool(comptime T: type) type {
     return struct {
-        pub const Kind = PoolKind;
-
         pub const Iterator = struct {
             items: []T,
             iter: std.DynamicBitSetUnmanaged.Iterator(.{
@@ -44,10 +27,10 @@ pub fn Pool(comptime T: type) type {
         // Buffer for the Pool.
         items: []T,
         dirty: std.DynamicBitSetUnmanaged,
-        kind: PoolKind,
+        kind: Kind,
 
         /// Initalizes our items buffer as undefined.
-        pub fn init(allocator: mem.Allocator, size: usize, kind: PoolKind) !Self {
+        pub fn init(allocator: mem.Allocator, size: usize, kind: Kind) !Self {
             return .{
                 .allocator = allocator,
                 .items = try allocator.alloc(T, size),
@@ -76,12 +59,12 @@ pub fn Pool(comptime T: type) type {
         }
 
         pub fn get(self: *const Self, index: usize) T {
-            assert(index < self.items.len);
+            debug.assert(index < self.items.len);
             return self.items[index];
         }
 
         pub fn get_ptr(self: *const Self, index: usize) *T {
-            assert(index < self.items.len);
+            debug.assert(index < self.items.len);
             return &self.items[index];
         }
 
@@ -101,7 +84,7 @@ pub fn Pool(comptime T: type) type {
         }
 
         fn grow(self: *Self) Error!void {
-            assert(self.kind == .grow);
+            debug.assert(self.kind == .grow);
 
             const old_slice = self.items;
             const new_size = std.math.ceilPowerOfTwoAssert(usize, self.items.len + 1);
@@ -119,8 +102,8 @@ pub fn Pool(comptime T: type) type {
             }
             try self.dirty.resize(self.allocator, new_size, false);
 
-            assert(self.items.len == new_size);
-            assert(self.dirty.bit_length == new_size);
+            debug.assert(self.items.len == new_size);
+            debug.assert(self.dirty.bit_length == new_size);
         }
 
         /// Linearly probes for an available slot in the pool.
@@ -170,7 +153,7 @@ pub fn Pool(comptime T: type) type {
         /// Asserts that it is an available slot.
         /// This will never grow the Pool.
         pub fn borrow_assume_unset(self: *Self, index: usize) usize {
-            assert(!self.dirty.isSet(index));
+            debug.assert(!self.dirty.isSet(index));
             self.dirty.set(index);
             return index;
         }
@@ -178,7 +161,7 @@ pub fn Pool(comptime T: type) type {
         /// Releases the item with the given index back to the Pool.
         /// Asserts that the given index was borrowed.
         pub fn release(self: *Self, index: usize) void {
-            assert(self.dirty.isSet(index));
+            debug.assert(self.dirty.isSet(index));
             self.dirty.unset(index);
         }
 
@@ -315,3 +298,18 @@ test "Pool Iterator" {
 
     try testing.expect(int_pool.empty());
 }
+
+pub const Error = error{Full} || Allocator.Error;
+
+pub const Kind = enum {
+    /// This keeps the Pool at a static size, never growing.
+    static,
+    /// This allows the Pool to grow but never shrink.
+    grow,
+};
+
+const std = @import("std");
+const debug = std.debug;
+const testing = std.testing;
+const mem = std.mem;
+const Allocator = mem.Allocator;

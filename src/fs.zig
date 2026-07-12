@@ -1,8 +1,8 @@
 const std = @import("std");
 const Io = std.Io;
 
-pub const Dir = @import("dir.zig").Dir;
-pub const File = @import("file.zig").File;
+pub const Dir = @import("fs/dir.zig");
+pub const File = @import("fs/file.zig");
 
 pub const Path = union(enum) {
     /// Relative to given Directory

@@ -5,15 +5,17 @@
 const std = @import("std");
 const windows = std.os.windows;
 const ws2_32 = windows.ws2_32;
-const tardy = @import("../../../lib.zig");
-const Socket = tardy.Socket;
 const Io = std.Io;
 const mem = std.mem;
+const math = std.math;
 const Threaded = Io.Threaded;
 const net = std.Io.net;
 const IpAddress = net.IpAddress;
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
+
+const tardy = @import("../../root.zig");
+const Socket = tardy.net.Socket;
 
 pub const max_iovecs_len = 8;
 
@@ -417,7 +419,7 @@ fn flagApc(userdata: ?*anyopaque, _: *windows.IO_STATUS_BLOCK, _: windows.ULONG)
 }
 
 pub fn waitForApcOrAlert() void {
-    const infinite_timeout: windows.LARGE_INTEGER = std.math.minInt(windows.LARGE_INTEGER);
+    const infinite_timeout: windows.LARGE_INTEGER = math.minInt(windows.LARGE_INTEGER);
     _ = windows.ntdll.NtDelayExecution(.TRUE, &infinite_timeout);
 }
 
@@ -566,7 +568,7 @@ fn addAfdBuf(
     },
 ) void {
     if (bytes.len == 0) return;
-    const cap = std.math.maxInt(u32);
+    const cap = math.maxInt(u32);
     var remaining = bytes;
     while (remaining.len > cap) {
         if (iovecs.len - len.* == 0) return;

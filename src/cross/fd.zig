@@ -2,7 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const os = builtin.os.tag;
 
-const syscall = @import("../aio/apis/syscall.zig");
+const tardy = @import("../root.zig");
+const syscall = tardy.AsyncIO.syscall;
 
 /// Invalid `fd_t`.
 pub const INVALID_FD = if (os == .windows) syscall.ws2.INVALID_SOCKET else -1;

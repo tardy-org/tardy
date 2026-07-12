@@ -1,32 +1,5 @@
-// vendored from https://github.com/ryuapp/zig-mirror/blob/dba1bf935390ddb0184a4dc72245454de6c06fd2/lib/std/posix.zig
-// https://github.com/ryuapp/zig-mirror/commit/9ac1386c10736bc249f3891f34f23424531917a5#diff-503dcf04ec9ce2a1818ec55644fa34ff5918e86bd38a565c0186b201c06dd540
-const std = @import("std");
-pub const UnexpectedError = std.Io.UnexpectedError;
-const posix = std.posix;
-const system = posix.system;
-const linux = std.os.linux;
-const windows = std.os.windows;
-const wasi = std.os.wasi;
-const Io = std.Io;
-const net = Io.net;
-const socket_t = net.Socket.Handle;
-const ws2_32 = windows.ws2_32;
-const IpAddress = net.IpAddress;
-const SOCK = system.SOCK;
-const F = system.F;
-const O = system.O;
-const math = std.math;
-const debug = std.debug;
-pub const ReadError = std.Io.File.Reader.Error;
-pub const TimerFdGetError = UnexpectedError;
-const builtin = @import("builtin");
-const native_os = builtin.os.tag;
-
-const tardy = @import("../../lib.zig");
-const Socket = tardy.Socket;
-const afd = @import("syscall/afd.zig");
-pub const ws2 = @import("syscall/ws2.zig");
-
+/// vendored from https://github.com/ryuapp/zig-mirror/blob/dba1bf935390ddb0184a4dc72245454de6c06fd2/lib/std/posix.zig
+/// https://github.com/ryuapp/zig-mirror/commit/9ac1386c10736bc249f3891f34f23424531917a5#diff-503dcf04ec9ce2a1818ec55644fa34ff5918e86bd38a565c0186b201c06dd540
 pub fn close(handle: posix.fd_t) void {
     if (native_os == .windows) return windows.CloseHandle(handle);
     switch (posix.errno(system.close(handle))) {
@@ -1069,7 +1042,7 @@ pub fn poll(fds: []pollfd, timeout: i32) PollError!usize {
     }
 
     while (true) {
-        const fds_count = std.math.cast(posix.nfds_t, fds.len) orelse return error.SystemResources;
+        const fds_count = math.cast(posix.nfds_t, fds.len) orelse return error.SystemResources;
         const rc = system.poll(fds.ptr, fds_count, timeout);
         switch (posix.errno(rc)) {
             .SUCCESS => return @intCast(rc),
@@ -1108,8 +1081,8 @@ pub fn read(fd: posix.fd_t, buf: []u8) (ReadError || net.Stream.Reader.Error)!us
     // Prevents EINVAL.
     const max_count = switch (native_os) {
         .linux => 0x7ffff000,
-        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => std.math.maxInt(i32),
-        else => std.math.maxInt(isize),
+        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => math.maxInt(i32),
+        else => math.maxInt(isize),
     };
     while (true) {
         const rc = system.read(fd, buf.ptr, @min(buf.len, max_count));
@@ -1470,3 +1443,30 @@ pub fn kevent(
         };
     }
 }
+
+const std = @import("std");
+pub const UnexpectedError = std.Io.UnexpectedError;
+const posix = std.posix;
+const system = posix.system;
+const linux = std.os.linux;
+const windows = std.os.windows;
+const wasi = std.os.wasi;
+const Io = std.Io;
+const net = Io.net;
+const socket_t = net.Socket.Handle;
+const ws2_32 = windows.ws2_32;
+const IpAddress = net.IpAddress;
+const SOCK = system.SOCK;
+const F = system.F;
+const O = system.O;
+const math = std.math;
+const debug = std.debug;
+pub const ReadError = std.Io.File.Reader.Error;
+pub const TimerFdGetError = UnexpectedError;
+const builtin = @import("builtin");
+const native_os = builtin.os.tag;
+
+const tardy = @import("../root.zig");
+const Socket = tardy.net.Socket;
+const afd = @import("syscall/afd.zig");
+pub const ws2 = @import("syscall/ws2.zig");

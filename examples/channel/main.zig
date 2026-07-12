@@ -1,12 +1,14 @@
 const std = @import("std");
 
+const options = @import("options");
 const tardy = @import("tardy");
 const Runtime = tardy.Runtime;
-const Spsc = tardy.Spsc;
-const Task = tardy.Task;
-const Timer = tardy.Timer;
+const Spsc = tardy.channel.Spsc;
+const Timer = Runtime.Timer;
+const AsyncIO = tardy.AsyncIO;
 
-const Tardy = tardy.Tardy(.auto);
+const backend: AsyncIO.Kind = .init(options.async_backend);
+const Tardy = tardy.Tardy(backend);
 
 const log = std.log.scoped(.@"tardy/example/channel");
 pub const std_options: std.Options = .{ .log_level = .debug };

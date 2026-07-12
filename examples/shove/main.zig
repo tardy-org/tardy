@@ -1,17 +1,15 @@
 const std = @import("std");
 const Io = std.Io;
 
+const options = @import("options");
 const tardy = @import("tardy");
-const Cross = tardy.Cross;
-const Dir = tardy.Dir;
-const File = tardy.File;
-const OpenFileResult = tardy.OpenFileResult;
-const ReadResult = tardy.ReadResult;
+const Dir = tardy.fs.Dir;
 const Runtime = tardy.Runtime;
-const Task = tardy.Task;
-const WriteResult = tardy.WriteResult;
+const AsyncIO = tardy.AsyncIO;
 
-const Tardy = tardy.Tardy(.auto);
+const backend: AsyncIO.Kind = .init(options.async_backend);
+const Tardy = tardy.Tardy(backend);
+
 pub const std_options: std.Options = .{ .log_level = .debug };
 
 const log = std.log.scoped(.@"tardy/example/shove");

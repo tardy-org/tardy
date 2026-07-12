@@ -1,36 +1,7 @@
-const std = @import("std");
-const assert = std.debug.assert;
-const builtin = @import("builtin");
-const mem = std.mem;
-const Io = std.Io;
-const is_unix = builtin.os.tag != .windows;
-
-const AsyncType = @import("tardy").AsyncType;
-const Dir = @import("tardy").Dir;
-const options = @import("options");
-const Runtime = @import("tardy").Runtime;
-const Task = @import("tardy").Task;
-const Timer = @import("tardy").Timer;
-
-const First = @import("first.zig");
-const Second = @import("second.zig");
-const SharedParams = @import("lib.zig").SharedParams;
-
-const log = std.log.scoped(.@"tardy/e2e");
-
-const backend: AsyncType = switch (options.async_option) {
-    .auto => .auto,
-    .kqueue => .kqueue,
-    .io_uring => .io_uring,
-    .epoll => .epoll,
-    .poll => .poll,
-    .custom => unreachable,
-};
-const Tardy = @import("tardy").Tardy(backend);
+const backend: AsyncIO.Kind = .init(options.async_backend);
+const Tardy = tardy.Tardy(backend);
 
 pub const std_options: std.Options = .{ .log_level = .debug };
-
-const max_stderr_output = 9 * 1024 * 1024;
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -55,7 +26,7 @@ pub fn main(init: std.process.Init) !void {
         if (length <= 1) @panic(not_passed_in);
         if (length >= maybe_seed_buffer.len) @panic("seed too long to be a u64");
 
-        assert(length < maybe_seed_buffer.len);
+        debug.assert(length < maybe_seed_buffer.len);
         @memcpy(maybe_seed_buffer[0..length], pre_new);
         maybe_seed_buffer[length] = 0;
         break :blk maybe_seed_buffer[0..length :0];
@@ -74,15 +45,17 @@ pub fn main(init: std.process.Init) !void {
         p.size_aio_reap_max = rand.intRangeAtMost(usize, 1, p.size_tasks_initial * 2);
         break :blk p;
     };
-    log.debug("{f}", .{std.json.fmt(shared, .{ .whitespace = .indent_1 })});
+    log.debug("{f}", .{std.json.fmt(shared, .{
+        .whitespace = .indent_1,
+    })});
 
-    var tardy: Tardy = try .init(gpa, io, .{
+    var td: Tardy = try .init(gpa, io, .{
         .threading = .{ .multi = 2 },
         .pooling = .grow,
         .size_tasks_initial = shared.size_tasks_initial,
         .size_aio_reap_max = shared.size_aio_reap_max,
     });
-    defer tardy.deinit();
+    defer td.deinit();
 
     const EntryParams = struct {
         runtime: ?*Runtime,
@@ -94,7 +67,7 @@ pub fn main(init: std.process.Init) !void {
         .shared = &shared,
     };
 
-    try tardy.entry(
+    try td.entry(
         &params,
         struct {
             fn start(rt: *Runtime, p: *EntryParams) !void {
@@ -132,3 +105,26 @@ fn timeout_task(rt: *Runtime, other: *const ?*Runtime) !void {
         if (o.running) @panic("e2e test failed! | timed out");
     } else @panic("e2e test failed | test runtime didn't start");
 }
+
+const is_unix = builtin.os.tag != .windows;
+const max_stderr_output = 9 * 1024 * 1024;
+
+const log = std.log.scoped(.@"tardy/e2e");
+
+const std = @import("std");
+const debug = std.debug;
+const mem = std.mem;
+const Io = std.Io;
+const builtin = @import("builtin");
+
+const options = @import("options");
+const tardy = @import("tardy");
+const AsyncIO = tardy.AsyncIO;
+const Dir = tardy.fs.Dir;
+const Runtime = tardy.Runtime;
+const Task = Runtime.Task;
+const Timer = Runtime.Timer;
+
+const First = @import("first.zig");
+const Second = @import("second.zig");
+const SharedParams = @import("lib.zig").SharedParams;

@@ -1,15 +1,20 @@
 const std = @import("std");
 const Io = std.Io;
 
+const options = @import("options");
 const tardy = @import("tardy");
-const Dir = tardy.Dir;
-const File = tardy.File;
+const fs = tardy.fs;
+const Dir = fs.Dir;
+const File = fs.File;
 const Runtime = tardy.Runtime;
+const AsyncIO = tardy.AsyncIO;
+
+const backend: AsyncIO.Kind = .init(options.async_backend);
+const Tardy = tardy.Tardy(backend);
 
 const log = std.log.scoped(.@"tardy/example/cat");
-pub const std_options: std.Options = .{ .log_level = .err };
+pub const std_options: std.Options = .{ .log_level = .info };
 
-const Tardy = tardy.Tardy(.auto);
 const EntryParams = struct { file_name: [:0]const u8 };
 
 fn main_frame(rt: *Runtime, p: *EntryParams) !void {

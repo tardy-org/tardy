@@ -1,12 +1,3 @@
-const std = @import("std");
-const Io = std.Io;
-
-const Path = @import("../fs/lib.zig").Path;
-const File = @import("../fs/file.zig").File;
-const Timespec = @import("../lib.zig").Timespec;
-const Socket = @import("../net/lib.zig").Socket;
-const AsyncOpenFlags = @import("lib.zig").AsyncOpenFlags;
-
 pub const Job = struct {
     type: union(enum) {
         wake,
@@ -14,10 +5,10 @@ pub const Job = struct {
         open: OpenJob,
         mkdir: MkdirJob,
         delete: DeleteJob,
-        stat: File.Handle,
+        stat: fs.File.Handle,
         read: ReadJob,
         write: WriteJob,
-        close: File.Handle,
+        close: fs.File.Handle,
         accept: AcceptJob,
         connect: ConnectJob,
         send: SendJob,
@@ -30,57 +21,65 @@ pub const Job = struct {
 
 const TimerJob = union(enum) {
     none,
-    fd: Socket.Handle,
+    fd: net.Socket.Handle,
     ns: Io.Duration,
 };
 
 const OpenJob = struct {
-    path: Path,
+    path: fs.Path,
     kind: enum { file, dir },
-    flags: AsyncOpenFlags,
+    flags: AsyncIO.OpenFlags,
 };
 
 const MkdirJob = struct {
-    path: Path,
+    path: fs.Path,
     mode: isize,
 };
 
 const DeleteJob = struct {
-    path: Path,
+    path: fs.Path,
     is_dir: bool,
 };
 
 const ReadJob = struct {
-    fd: File.Handle,
+    fd: fs.File.Handle,
     buffer: []u8,
     offset: ?usize,
 };
 
 const WriteJob = struct {
-    fd: File.Handle,
+    fd: fs.File.Handle,
     buffer: []const u8,
     offset: ?usize,
 };
 
 const AcceptJob = struct {
-    socket: Socket.Handle,
-    addr: Socket.Address,
-    kind: Socket.Kind,
+    socket: net.Socket.Handle,
+    addr: net.Socket.Address,
+    kind: net.Socket.Kind,
 };
 
 const ConnectJob = struct {
-    socket: Socket.Handle,
-    addr: Socket.Address,
+    socket: net.Socket.Handle,
+    addr: net.Socket.Address,
     // TODO: kind isn't needed anymore as we are using a union
-    kind: Socket.Kind,
+    kind: net.Socket.Kind,
 };
 
 const SendJob = struct {
-    socket: Socket.Handle,
+    socket: net.Socket.Handle,
     buffer: []const u8,
 };
 
 const RecvJob = struct {
-    socket: Socket.Handle,
+    socket: net.Socket.Handle,
     buffer: []u8,
 };
+
+const std = @import("std");
+const Io = std.Io;
+
+const tardy = @import("../root.zig");
+const fs = tardy.fs;
+const net = tardy.net;
+const AsyncIO = tardy.AsyncIO;

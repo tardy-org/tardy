@@ -2,7 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const os = builtin.os.tag;
 
-const syscall = @import("../aio/apis/syscall.zig");
+const tardy = @import("../root.zig");
+const syscall = tardy.AsyncIO.syscall;
 pub const INVALID_SOCKET = @import("fd.zig").INVALID_FD;
 
 /// Ensures that the `std.posix.socket_t` is valid.
