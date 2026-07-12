@@ -1,12 +1,8 @@
-const std = @import("std");
-const assert = std.debug.assert;
-const testing = std.testing;
-
 pub fn Ring(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        allocator: std.mem.Allocator,
+        allocator: mem.Allocator,
         items: []T,
         // This is where we will read off of.
         read_index: usize = 0,
@@ -15,8 +11,8 @@ pub fn Ring(comptime T: type) type {
         // Total count of elements.
         count: usize = 0,
 
-        pub fn init(allocator: std.mem.Allocator, size: usize) !Self {
-            assert(size >= 1);
+        pub fn init(allocator: mem.Allocator, size: usize) !Self {
+            debug.assert(size >= 1);
             const items = try allocator.alloc(T, size);
             return .{
                 .allocator = allocator,
@@ -44,7 +40,7 @@ pub fn Ring(comptime T: type) type {
         }
 
         pub fn push_assert(self: *Self, message: T) void {
-            assert(!self.full());
+            debug.assert(!self.full());
             self.items[self.write_index] = message;
             self.write_index = (self.write_index + 1) % self.items.len;
             self.count += 1;
@@ -59,7 +55,7 @@ pub fn Ring(comptime T: type) type {
         }
 
         pub fn pop_assert(self: *Self) T {
-            assert(!self.empty());
+            debug.assert(!self.empty());
             const message = self.items[self.read_index];
             self.read_index = (self.read_index + 1) % self.items.len;
             self.count -= 1;
@@ -91,3 +87,8 @@ test "Ring Send and Recv" {
         }
     }
 }
+
+const std = @import("std");
+const mem = std.mem;
+const debug = std.debug;
+const testing = std.testing;

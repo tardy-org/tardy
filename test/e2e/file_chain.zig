@@ -1,17 +1,5 @@
-const std = @import("std");
-const assert = std.debug.assert;
-const testing = std.testing;
-
-const DeleteResult = @import("tardy").DeleteResult;
-const Dir = @import("tardy").Dir;
-const File = @import("tardy").File;
-const OpenFileResult = @import("tardy").OpenFileResult;
-const Path = @import("tardy").Path;
-const ReadResult = @import("tardy").ReadResult;
-const Runtime = @import("tardy").Runtime;
-const WriteResult = @import("tardy").WriteResult;
-
 const log = std.log.scoped(.@"tardy/e2e/first");
+
 pub const FileChain = struct {
     const Step = enum {
         create,
@@ -23,8 +11,8 @@ pub const FileChain = struct {
         delete,
     };
 
-    file: ?File = null,
-    path: Path,
+    file: ?fs.File = null,
+    path: fs.Path,
     steps: []Step,
     index: usize = 0,
     buffer: []u8,
@@ -70,7 +58,12 @@ pub const FileChain = struct {
     }
 
     // Path is expected to remain valid.
-    pub fn init(allocator: std.mem.Allocator, chain: []const Step, path: Path, buffer_size: usize) !FileChain {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        chain: []const Step,
+        path: fs.Path,
+        buffer_size: usize,
+    ) !FileChain {
         assert(chain.len > 0);
 
         const chain_dupe = try allocator.dupe(Step, chain);
@@ -118,13 +111,13 @@ pub const FileChain = struct {
         while (chain.index < chain.steps.len) : (chain.index += 1) {
             switch (chain.steps[chain.index]) {
                 .create => {
-                    const file: File = try .create(rt, chain.path, .{
+                    const file: fs.File = try .create(rt, chain.path, .{
                         .mode = .read_write,
                     });
                     chain.file = file;
                 },
                 .open => {
-                    const file: File = try .open(rt, chain.path, .{
+                    const file: fs.File = try .open(rt, chain.path, .{
                         .mode = .read_write,
                     });
                     chain.file = file;
@@ -153,7 +146,7 @@ pub const FileChain = struct {
                 },
                 .close => try chain.file.?.close(rt),
                 .delete => {
-                    const dir = Dir{ .handle = chain.path.rel.dir };
+                    const dir: fs.Dir = .{ .handle = chain.path.rel.dir };
                     try dir.delete_file(rt, chain.path.rel.path);
                     counter.* -= 1;
                 },
@@ -162,7 +155,7 @@ pub const FileChain = struct {
 
         if (counter.* == 0) {
             log.debug("deleting the e2e tree...", .{});
-            try Dir.cwd().delete_tree(rt, seed_string);
+            try fs.Dir.cwd().delete_tree(rt, seed_string);
         }
     }
 };
@@ -238,3 +231,11 @@ test "FileChain: Validate Random Chain" {
     defer testing.allocator.free(chain);
     try testing.expect(FileChain.validate_chain(chain));
 }
+
+const std = @import("std");
+const assert = std.debug.assert;
+const testing = std.testing;
+
+const tardy = @import("tardy");
+const fs = tardy.fs;
+const Runtime = tardy.Runtime;

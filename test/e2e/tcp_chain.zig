@@ -1,16 +1,5 @@
-const std = @import("std");
-const assert = std.debug.assert;
-const testing = std.testing;
-
-const tardy = @import("tardy");
-const DeleteResult = tardy.DeleteResult;
-const OpenFileResult = tardy.OpenFileResult;
-const ReadResult = tardy.ReadResult;
-const Runtime = tardy.Runtime;
-const Socket = tardy.Socket;
-const WriteResult = tardy.WriteResult;
-
 const log = std.log.scoped(.@"tardy/e2e/tcp_chain");
+
 pub const TcpServerChain = struct {
     const Step = enum {
         accept,
@@ -19,8 +8,8 @@ pub const TcpServerChain = struct {
         close,
     };
 
-    allocator: std.mem.Allocator,
-    socket: ?Socket = null,
+    allocator: mem.Allocator,
+    socket: ?net.Socket = null,
     steps: []Step,
     index: usize = 0,
     buffer: []u8,
@@ -46,7 +35,7 @@ pub const TcpServerChain = struct {
         return true;
     }
 
-    pub fn generate_random_chain(allocator: std.mem.Allocator, seed: u64) ![]Step {
+    pub fn generate_random_chain(allocator: mem.Allocator, seed: u64) ![]Step {
         var prng: std.Random.DefaultPrng = .init(seed);
         const rand = prng.random();
 
@@ -65,7 +54,7 @@ pub const TcpServerChain = struct {
     }
 
     pub fn derive_client_chain(self: *const TcpServerChain) !TcpClientChain {
-        assert(self.steps.len > 0);
+        debug.assert(self.steps.len > 0);
 
         const client_steps = try self.allocator.alloc(TcpClientChain.Step, self.steps.len);
         errdefer self.allocator.free(client_steps);
@@ -90,12 +79,12 @@ pub const TcpServerChain = struct {
     }
 
     // Path is expected to remain valid.
-    pub fn init(allocator: std.mem.Allocator, chain: []const Step, buffer_size: usize) !TcpServerChain {
-        assert(chain.len > 0);
+    pub fn init(allocator: mem.Allocator, chain: []const Step, buffer_size: usize) !TcpServerChain {
+        debug.assert(chain.len > 0);
 
         const chain_dupe = try allocator.dupe(Step, chain);
         errdefer allocator.free(chain_dupe);
-        assert(validate_chain(chain));
+        debug.assert(validate_chain(chain));
 
         const buffer = try allocator.alloc(u8, buffer_size);
         errdefer allocator.free(buffer);
@@ -112,7 +101,12 @@ pub const TcpServerChain = struct {
         defer self.allocator.free(self.buffer);
     }
 
-    pub fn chain_frame(chain: *TcpServerChain, rt: *Runtime, counter: *usize, server_socket: Socket) !void {
+    pub fn chain_frame(
+        chain: *TcpServerChain,
+        rt: *Runtime,
+        counter: *usize,
+        server_socket: net.Socket,
+    ) !void {
         defer rt.allocator.destroy(chain);
         defer chain.deinit();
         errdefer unreachable;
@@ -131,7 +125,7 @@ pub const TcpServerChain = struct {
                         else => |err| return err,
                     };
 
-                    for (chain.buffer[0..length]) |item| assert(item == 123);
+                    for (chain.buffer[0..length]) |item| debug.assert(item == 123);
                 },
                 .send => {
                     for (chain.buffer[0..]) |*item| item.* = 123;
@@ -157,7 +151,7 @@ pub const TcpClientChain = struct {
         close,
     };
 
-    allocator: std.mem.Allocator,
+    allocator: mem.Allocator,
     steps: []Step,
     index: usize = 0,
     buffer: []u8,
@@ -172,7 +166,9 @@ pub const TcpClientChain = struct {
         defer chain.deinit();
         errdefer unreachable;
 
-        var socket: Socket = try .init(rt.io, .{ .tcp = .{ .host = "127.0.0.1", .port = port } });
+        var socket: net.Socket = try .init(rt.io, .{
+            .tcp = .{ .host = "127.0.0.1", .port = port },
+        });
 
         chain: while (chain.index < chain.steps.len) : (chain.index += 1) {
             const current_step = chain.steps[chain.index];
@@ -185,7 +181,7 @@ pub const TcpClientChain = struct {
                         else => |err| return err,
                     };
 
-                    for (chain.buffer[0..length]) |item| assert(item == 123);
+                    for (chain.buffer[0..length]) |item| debug.assert(item == 123);
                 },
                 .send => {
                     for (chain.buffer[0..]) |*item| item.* = 123;
@@ -219,9 +215,12 @@ test "TcpServerChain: Proper Chain" {
 test "TcpServerChain: Validate Random Chain" {
     // Actually generates and tests a random TcpServerChain :)
     var seed: u64 = undefined;
-    try std.posix.getrandom(std.mem.asBytes(&seed));
+    try std.posix.getrandom(mem.asBytes(&seed));
 
-    const chain = try TcpServerChain.generate_random_chain(testing.allocator, seed);
+    const chain = try TcpServerChain.generate_random_chain(
+        testing.allocator,
+        seed,
+    );
     defer testing.allocator.free(chain);
 
     errdefer {
@@ -233,3 +232,12 @@ test "TcpServerChain: Validate Random Chain" {
 
     try testing.expect(TcpServerChain.validate_chain(chain));
 }
+
+const std = @import("std");
+const mem = std.mem;
+const debug = std.debug;
+const testing = std.testing;
+
+const tardy = @import("tardy");
+const net = tardy.net;
+const Runtime = tardy.Runtime;

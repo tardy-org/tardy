@@ -4,7 +4,7 @@ const options = @import("options");
 const tardy = @import("tardy");
 const Runtime = tardy.Runtime;
 const Spsc = tardy.channel.spsc.Spsc;
-const Timer = tardy.Timer;
+const Timer = Runtime.Timer;
 const AsyncIO = tardy.AsyncIO;
 
 const backend: AsyncIO.Kind = .init(options.async_backend);

@@ -1,14 +1,12 @@
-const std = @import("std");
-
 pub fn Queue(comptime T: type) type {
     const List = std.DoublyLinkedList(T);
     const Node = List.Node;
 
     return struct {
-        allocator: std.mem.Allocator,
+        allocator: mem.Allocator,
         items: List,
 
-        pub fn init(allocator: std.mem.Allocator) Queue {
+        pub fn init(allocator: mem.Allocator) Queue {
             return .{ .allocator = allocator, .items = List{} };
         }
 
@@ -35,3 +33,6 @@ pub fn Queue(comptime T: type) type {
         }
     };
 }
+
+const std = @import("std");
+const mem = std.mem;

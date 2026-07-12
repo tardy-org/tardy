@@ -1,18 +1,3 @@
-const std = @import("std");
-const Atomic = std.atomic.Value;
-
-const tardy = @import("../root.zig");
-const atomic_ring = tardy.core.atomic_ring;
-const Runtime = tardy.Runtime;
-
-const log = std.log.scoped(.@"tardy/channels/spsc");
-
-const State = enum(u8) {
-    starting,
-    running,
-    closed,
-};
-
 pub fn Spsc(comptime T: type) type {
     return struct {
         const Self = @This();
@@ -34,7 +19,7 @@ pub fn Spsc(comptime T: type) type {
             rt: *Runtime,
 
             pub fn send(self: Producer, message: T) !void {
-                std.log.debug("producer sending...", .{});
+                log.debug("producer sending...", .{});
                 while (true) switch (self.inner.state.load(.acquire)) {
                     // Both ends must be open.
                     .starting => try self.rt.scheduler.trigger_await(),
@@ -102,17 +87,17 @@ pub fn Spsc(comptime T: type) type {
             }
         };
 
-        ring: atomic_ring.SpscAtomicRing(T),
+        ring: atomic.SpscRing(T),
 
-        producer_rt: Atomic(?*Runtime) align(std.atomic.cache_line),
-        producer_index: Atomic(usize) align(std.atomic.cache_line),
-        producer_open: Atomic(bool) align(std.atomic.cache_line),
+        producer_rt: std_atomic.Value(?*Runtime) align(std_atomic.cache_line),
+        producer_index: std_atomic.Value(usize) align(std_atomic.cache_line),
+        producer_open: std_atomic.Value(bool) align(std_atomic.cache_line),
 
-        consumer_rt: Atomic(?*Runtime) align(std.atomic.cache_line),
-        consumer_index: Atomic(usize) align(std.atomic.cache_line),
-        consumer_open: Atomic(bool) align(std.atomic.cache_line),
+        consumer_rt: std_atomic.Value(?*Runtime) align(std_atomic.cache_line),
+        consumer_index: std_atomic.Value(usize) align(std_atomic.cache_line),
+        consumer_open: std_atomic.Value(bool) align(std_atomic.cache_line),
 
-        state: std.atomic.Value(State) align(std.atomic.cache_line),
+        state: std.atomic.Value(State) align(std_atomic.cache_line),
 
         pub fn init(allocator: std.mem.Allocator, size: usize) !Self {
             return .{
@@ -173,3 +158,18 @@ pub fn Spsc(comptime T: type) type {
         }
     };
 }
+
+const log = std.log.scoped(.@"tardy/channel/spsc");
+
+const State = enum(u8) {
+    starting,
+    running,
+    closed,
+};
+
+const std = @import("std");
+const std_atomic = std.atomic;
+
+const tardy = @import("../root.zig");
+const atomic = tardy.core.atomic;
+const Runtime = tardy.Runtime;

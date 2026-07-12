@@ -1,6 +1,5 @@
-pub const atomic_bitset = @import("core/atomic_bitset.zig");
-pub const atomic_ring = @import("core/atomic_ring.zig");
+pub const atomic = @import("core/atomic.zig");
 pub const pool = @import("core/pool.zig");
-pub const queue = @import("core/queue.zig");
-pub const ring = @import("core/ring.zig");
-pub const zero_copy = @import("core/zero_copy.zig");
+pub const Queue = @import("core/Queue.zig").Queue;
+pub const Ring = @import("core/Ring.zig").Ring;
+pub const ZeroCopy = @import("core/ZeroCopy.zig").ZeroCopy;

@@ -1,13 +1,15 @@
 const std = @import("std");
 const testing = std.testing;
 
+const tardy = @import("root.zig");
+
 test "tardy unit tests" {
     // Core
-    testing.refAllDecls(@import("./core/atomic_ring.zig"));
-    testing.refAllDecls(@import("./core/pool.zig"));
-    testing.refAllDecls(@import("./core/ring.zig"));
-    testing.refAllDecls(@import("./core/zero_copy.zig"));
+    _ = tardy.core.atomic.SpscRing;
+    _ = tardy.core.pool;
+    _ = tardy.core.Ring;
+    _ = tardy.core.ZeroCopy;
 
     // Runtime
-    testing.refAllDecls(@import("./runtime/storage.zig"));
+    _ = tardy.Runtime.Storage;
 }

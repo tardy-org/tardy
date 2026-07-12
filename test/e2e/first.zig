@@ -1,13 +1,3 @@
-const std = @import("std");
-const builtin = @import("builtin");
-const tardy = @import("tardy");
-const Dir = tardy.Dir;
-const Runtime = tardy.Runtime;
-const is_unix = builtin.os.tag != .windows;
-
-const FileChain = @import("file_chain.zig").FileChain;
-const SharedParams = @import("lib.zig").SharedParams;
-
 const log = std.log.scoped(.@"tardy/e2e/first");
 
 threadlocal var file_chain_counter: usize = 0;
@@ -62,3 +52,15 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
         );
     }
 }
+
+const is_unix = builtin.os.tag != .windows;
+
+const std = @import("std");
+const builtin = @import("builtin");
+
+const tardy = @import("tardy");
+const Dir = tardy.fs.Dir;
+const Runtime = tardy.Runtime;
+
+const FileChain = @import("file_chain.zig").FileChain;
+const SharedParams = @import("lib.zig").SharedParams;

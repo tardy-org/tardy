@@ -1,18 +1,3 @@
-const std = @import("std");
-const assert = std.debug.assert;
-const testing = std.testing;
-const mem = std.mem;
-const Allocator = mem.Allocator;
-
-pub const Error = error{Full} || Allocator.Error;
-
-pub const Kind = enum {
-    /// This keeps the Pool at a static size, never growing.
-    static,
-    /// This allows the Pool to grow but never shrink.
-    grow,
-};
-
 pub fn Pool(comptime T: type) type {
     return struct {
         pub const Iterator = struct {
@@ -313,3 +298,18 @@ test "Pool Iterator" {
 
     try testing.expect(int_pool.empty());
 }
+
+pub const Error = error{Full} || Allocator.Error;
+
+pub const Kind = enum {
+    /// This keeps the Pool at a static size, never growing.
+    static,
+    /// This allows the Pool to grow but never shrink.
+    grow,
+};
+
+const std = @import("std");
+const assert = std.debug.assert;
+const testing = std.testing;
+const mem = std.mem;
+const Allocator = mem.Allocator;
