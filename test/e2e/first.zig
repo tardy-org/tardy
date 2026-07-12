@@ -1,5 +1,3 @@
-const log = std.log.scoped(.@"tardy/e2e/first");
-
 threadlocal var file_chain_counter: usize = 0;
 
 pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
@@ -54,6 +52,8 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
 }
 
 const is_unix = builtin.os.tag != .windows;
+
+const log = std.log.scoped(.@"tardy/e2e/first");
 
 const std = @import("std");
 const builtin = @import("builtin");

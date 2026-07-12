@@ -1,5 +1,3 @@
-const log = std.log.scoped(.@"tardy/e2e/first");
-
 pub const FileChain = struct {
     const Step = enum {
         create,
@@ -231,6 +229,8 @@ test "FileChain: Validate Random Chain" {
     defer testing.allocator.free(chain);
     try testing.expect(FileChain.validate_chain(chain));
 }
+
+const log = std.log.scoped(.@"tardy/e2e/first");
 
 const std = @import("std");
 const assert = std.debug.assert;

@@ -1,5 +1,3 @@
-const log = std.log.scoped(.@"tardy/e2e/tcp_chain");
-
 pub const TcpServerChain = struct {
     const Step = enum {
         accept,
@@ -232,6 +230,8 @@ test "TcpServerChain: Validate Random Chain" {
 
     try testing.expect(TcpServerChain.validate_chain(chain));
 }
+
+const log = std.log.scoped(.@"tardy/e2e/tcp_chain");
 
 const std = @import("std");
 const mem = std.mem;

@@ -1,7 +1,6 @@
 const backend: AsyncIO.Kind = .init(options.async_backend);
 const Tardy = tardy.Tardy(backend);
 
-const log = std.log.scoped(.@"tardy/e2e");
 pub const std_options: std.Options = .{ .log_level = .debug };
 
 pub fn main(init: std.process.Init) !void {
@@ -109,6 +108,8 @@ fn timeout_task(rt: *Runtime, other: *const ?*Runtime) !void {
 
 const is_unix = builtin.os.tag != .windows;
 const max_stderr_output = 9 * 1024 * 1024;
+
+const log = std.log.scoped(.@"tardy/e2e");
 
 const std = @import("std");
 const debug = std.debug;

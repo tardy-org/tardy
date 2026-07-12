@@ -1042,7 +1042,7 @@ pub fn poll(fds: []pollfd, timeout: i32) PollError!usize {
     }
 
     while (true) {
-        const fds_count = std.math.cast(posix.nfds_t, fds.len) orelse return error.SystemResources;
+        const fds_count = math.cast(posix.nfds_t, fds.len) orelse return error.SystemResources;
         const rc = system.poll(fds.ptr, fds_count, timeout);
         switch (posix.errno(rc)) {
             .SUCCESS => return @intCast(rc),
@@ -1081,8 +1081,8 @@ pub fn read(fd: posix.fd_t, buf: []u8) (ReadError || net.Stream.Reader.Error)!us
     // Prevents EINVAL.
     const max_count = switch (native_os) {
         .linux => 0x7ffff000,
-        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => std.math.maxInt(i32),
-        else => std.math.maxInt(isize),
+        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => math.maxInt(i32),
+        else => math.maxInt(isize),
     };
     while (true) {
         const rc = system.read(fd, buf.ptr, @min(buf.len, max_count));

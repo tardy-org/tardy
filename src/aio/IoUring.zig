@@ -34,7 +34,8 @@ const base_flags = blk: {
     break :blk flags;
 };
 
-pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) (mem.Allocator.Error || Errors.Init)!IoUring {
+pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) (mem.Allocator.Error ||
+    Errors.Init)!IoUring {
     // Extra job for the wake event_fd.
     const size = options.size_tasks_initial + 1;
 
@@ -49,7 +50,7 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) (mem.Allocator.E
     const submit_size: u16 = @min(
         // 4096 is the max uring submit size.
         4096,
-        std.math.ceilPowerOfTwo(u16, @intCast(options.size_aio_reap_max)) catch 4096,
+        math.ceilPowerOfTwo(u16, @intCast(options.size_aio_reap_max)) catch 4096,
     );
 
     const uring = blk: {
@@ -101,9 +102,17 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) (mem.Allocator.E
         .type = .wake,
         .task = undefined,
     };
-    _ = try uring.read(index, wake_event_fd, .{ .buffer = wake_event_buffer }, 0);
+    _ = try uring.read(
+        index,
+        wake_event_fd,
+        .{ .buffer = wake_event_buffer },
+        0,
+    );
 
-    const cqes = try allocator.alloc(linux.io_uring_cqe, options.size_aio_reap_max);
+    const cqes = try allocator.alloc(
+        linux.io_uring_cqe,
+        options.size_aio_reap_max,
+    );
     errdefer allocator.free(cqes);
 
     return .{
@@ -954,6 +963,7 @@ const JobBundle = struct {
 const std = @import("std");
 const assert = std.debug.assert;
 const linux = std.os.linux;
+const math = std.math;
 const Io = std.Io;
 const mem = std.mem;
 const posix = std.posix;

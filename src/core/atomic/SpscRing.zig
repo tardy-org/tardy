@@ -46,7 +46,7 @@ pub fn SpscRing(comptime T: type) type {
     };
 }
 
-test "SpscAtomicRing: Fill and Empty" {
+test "SpscRing: Fill and Empty" {
     const size: u32 = 128;
     var ring: SpscRing(usize) = try .init(testing.allocator, size);
     defer ring.deinit();

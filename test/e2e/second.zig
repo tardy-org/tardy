@@ -1,5 +1,3 @@
-const log = std.log.scoped(.@"tardy/e2e/second");
-
 threadlocal var tcp_client_chain_count: usize = 1;
 threadlocal var tcp_server_chain_count: usize = 1;
 
@@ -48,6 +46,8 @@ pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
         .@"32KiB",
     );
 }
+
+const log = std.log.scoped(.@"tardy/e2e/second");
 
 const std = @import("std");
 const debug = std.debug;

@@ -28,7 +28,7 @@ pub fn deinit(self: *AsyncIO, allocator: mem.Allocator, io: Io) void {
 }
 
 pub fn queue_job(self: *AsyncIO, task: usize, sub: Submission) QueueJobError!void {
-    assert(self.attached);
+    debug.assert(self.attached);
     log.debug("queuing up job={t} at index={d}", .{ sub, task });
     try self.vtable.queue_job(self.runner, task, sub);
 }
@@ -37,17 +37,17 @@ pub fn wake(self: *AsyncIO, io: Io) !void {
     self.mutex.lockUncancelable(io);
     defer self.mutex.unlock(io);
 
-    assert(self.attached);
+    debug.assert(self.attached);
     try self.vtable.wake(self.runner);
 }
 
 pub fn reap(self: *AsyncIO, wait: bool) ![]results.Completion {
-    assert(self.attached);
+    debug.assert(self.attached);
     return try self.vtable.reap(self.runner, self.completions, wait);
 }
 
 pub fn submit(self: *AsyncIO) !void {
-    assert(self.attached);
+    debug.assert(self.attached);
     try self.vtable.submit(self.runner);
 }
 
@@ -97,10 +97,10 @@ pub const Kind = union(enum) {
             .poll => Poll,
             .kqueue => Kqueue,
             .custom => |inner| {
-                assert(std.meta.hasMethod(inner, "init"));
-                assert(std.meta.hasMethod(inner, "inner_deinit"));
-                assert(std.meta.hasMethod(inner, "queue_job"));
-                assert(std.meta.hasMethod(inner, "to_async"));
+                debug.assert(std.meta.hasMethod(inner, "init"));
+                debug.assert(std.meta.hasMethod(inner, "inner_deinit"));
+                debug.assert(std.meta.hasMethod(inner, "queue_job"));
+                debug.assert(std.meta.hasMethod(inner, "to_async"));
                 return inner;
             },
             .auto => continue :sw native(),
@@ -269,8 +269,7 @@ const log = std.log.scoped(.@"tardy/aio");
 
 const std = @import("std");
 const mem = std.mem;
-const assert = std.debug.assert;
-const Atomic = std.atomic.Value;
+const debug = std.debug;
 const Io = std.Io;
 const builtin = @import("builtin");
 
