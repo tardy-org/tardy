@@ -14,8 +14,6 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Poll {
     // 0 is read, 1 is write.
     const pipe: [2]fs.File.Handle = blk: {
         if (comptime native_os == .windows) {
-            syscall.ws2.wsaStartup(2, 2) catch unreachable;
-
             const server_socket = try syscall.socket(
                 posix.AF.INET,
                 posix.SOCK.STREAM,
@@ -104,8 +102,6 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Poll {
 }
 
 pub fn inner_deinit(self: *Poll, allocator: mem.Allocator) void {
-    defer if (comptime native_os == .windows) syscall.ws2.wsaCleanup() catch unreachable;
-
     self.fd_list.deinit(allocator);
     self.fd_job_map.deinit();
     self.timers.deinit(allocator);

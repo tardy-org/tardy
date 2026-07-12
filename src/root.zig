@@ -12,6 +12,8 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
         options: Options,
 
         pub fn init(allocator: mem.Allocator, io: std.Io, options: Options) !Self {
+            if (comptime builtin.os.tag == .windows)
+                AsyncIO.syscall.ws2.wsaStartup(2, 2) catch unreachable;
             const aio_type: AsyncIO.Kind = switch (selected_aio) {
                 .auto => AsyncIO.native(),
                 else => selected_aio,
@@ -28,6 +30,9 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
         }
 
         pub fn deinit(self: *Self) void {
+            defer if (comptime builtin.os.tag == .windows)
+                AsyncIO.syscall.ws2.wsaCleanup() catch unreachable;
+
             for (self.aios.items) |aio| self.allocator.destroy(aio);
             self.aios.deinit(self.allocator);
         }
