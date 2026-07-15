@@ -75,8 +75,9 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
         ///
         /// The provided func needs to have a signature of (*Runtime, anytype) !void;
         ///
-        /// The provided allocator is meant to just initialize any structures that will exist throughout the lifetime
-        /// of the runtime. It happens in an arena and is cleaned up after the runtime terminates.
+        /// The provided allocator is meant to just initialize any structures that will
+        /// exist throughout the lifetime of the runtime. It happens in an arena and is
+        /// cleaned up after the runtime terminates.
         pub fn entry(
             self: *Self,
             entry_params: anytype,
@@ -117,7 +118,10 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             var spawn_id: atomic.Value(usize) = .init(1);
 
             for (0..spawning_count) |_| {
-                const current_index = spawn_id.fetchAdd(1, .monotonic);
+                const current_index = spawn_id.fetchAdd(
+                    1,
+                    .monotonic,
+                );
                 const handle: std.Thread = try .spawn(.{}, struct {
                     fn thread_init(
                         tardy: *Self,
@@ -128,13 +132,19 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                         total_count: usize,
                         current_id: usize,
                     ) void {
-                        var thread_rt = tardy.spawn_runtime(current_id, .{
-                            .parent_async = parent,
-                            .pooling = options.pooling,
-                            .size_tasks_initial = options.size_tasks_initial,
-                            .size_aio_reap_max = options.size_aio_reap_max,
-                        }) catch |e| {
-                            log.err("failed to spawn runtime {d}: {t}", .{ current_id, e });
+                        var thread_rt = tardy.spawn_runtime(
+                            current_id,
+                            .{
+                                .parent_async = parent,
+                                .pooling = options.pooling,
+                                .size_tasks_initial = options.size_tasks_initial,
+                                .size_aio_reap_max = options.size_aio_reap_max,
+                            },
+                        ) catch |e| {
+                            log.err(
+                                "failed to spawn runtime {d}: {t}",
+                                .{ current_id, e },
+                            );
                             return;
                         };
                         defer thread_rt.deinit();
@@ -142,18 +152,31 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                         _ = count.fetchAdd(1, .acquire);
                         while (count.load(.acquire) < total_count) {}
 
-                        @call(.auto, entry_func, .{ &thread_rt, entry_parameters }) catch |e| {
-                            log.err("{d} - entry error={t}", .{ thread_rt.id, e });
+                        @call(.auto, entry_func, .{
+                            &thread_rt,
+                            entry_parameters,
+                        }) catch |e| {
+                            log.err(
+                                "{d} - entry error={t}",
+                                .{ thread_rt.id, e },
+                            );
                             thread_rt.stop();
                         };
 
-                        thread_rt.run() catch |e| log.err("{d} - runtime error={t}", .{ thread_rt.id, e });
+                        thread_rt.run() catch |e| log.err(
+                            "{d} - runtime error={t}",
+                            .{ thread_rt.id, e },
+                        );
 
                         // wait for the rest to stop before cleaning ourselves up.
-                        // this is because the runtime is allocate on our stack and others might be checking
-                        // our running status or attempting to wake us.
+                        // this is because the runtime is allocate on our stack and
+                        // others might be checking our running status or attempting to
+                        // wake us.
                         _ = count.fetchSub(1, .acquire);
-                        while (count.load(.acquire) > 0) tardy.io.sleep(.fromSeconds(1), .awake) catch unreachable;
+                        while (count.load(.acquire) > 0) tardy.io.sleep(
+                            .fromSeconds(1),
+                            .awake,
+                        ) catch unreachable;
                     }
                 }.thread_init, .{
                     self,
@@ -187,14 +210,14 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
         pub fn entry_in_new_thread(
             self: *Self,
             entry_params: anytype,
-            comptime entry_func: *const fn (
-                *Runtime,
-                @TypeOf(entry_params),
-            ) anyerror!void,
+            comptime entry_func: *const fn (*Runtime, @TypeOf(entry_params)) anyerror!void,
         ) !void {
             const handle: std.Thread = try .spawn(.{}, struct {
-                fn entry_in_new_thread(tardy: *Self, ip: @TypeOf(entry_params)) void {
-                    tardy.entry(ip, entry_func) catch unreachable;
+                fn entry_in_new_thread(tardy: *Self, parms: @TypeOf(entry_params)) void {
+                    tardy.entry(
+                        parms,
+                        entry_func,
+                    ) catch unreachable;
                 }
             }.entry_in_new_thread, .{ self, entry_params });
             handle.detach();
