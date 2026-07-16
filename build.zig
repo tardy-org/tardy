@@ -1,9 +1,3 @@
-const std = @import("std");
-const debug = std.debug;
-const builtin = @import("builtin");
-
-const log = std.log.scoped(.@"build.zig");
-
 pub fn build(b: *std.Build) void {
     comptime checkVersion();
 
@@ -342,14 +336,18 @@ fn checkVersion() void {
     const current_version = builtin.zig_version;
     // Compare versions while allowing different pre/patch metadata.
     const order = current_version.order(supported_version);
-    if (order == .lt) {
-        const message = std.fmt.comptimePrint(
-            \\The used Zig version ({s}) is not yet supported by tardy.
-            \\
-            \\Update your zig toolchain to {s}"
-            \\
-        , .{ builtin.zig_version_string, minimum_zig_version });
-        @compileError(message);
+    switch (order) {
+        .lt => {
+            const message = std.fmt.comptimePrint(
+                \\Your Zig version ({0s}) is less than the
+                \\minimum supported by Tardy ({1s}).
+                \\
+                \\Update your Zig toolchain to `{1s}`
+                \\
+            , .{ builtin.zig_version_string, minimum_zig_version });
+            @compileError(message);
+        },
+        else => {},
     }
 }
 
@@ -390,3 +388,9 @@ pub const AsyncKind = enum {
     kqueue,
     poll,
 };
+
+const log = std.log.scoped(.@"build.zig");
+
+const std = @import("std");
+const debug = std.debug;
+const builtin = @import("builtin");
