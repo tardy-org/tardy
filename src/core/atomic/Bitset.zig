@@ -8,10 +8,7 @@ lock: std.Io.RwLock,
 bit_length: usize,
 
 pub fn init(allocator: mem.Allocator, size: usize, default: bool) !Bitset {
-    const word_count = @divCeil(
-        size,
-        @bitSizeOf(usize),
-    ) catch unreachable;
+    const word_count = @divCeil(size, @bitSizeOf(usize));
     const words = try allocator.alloc(
         atomic.Value(usize),
         word_count,
@@ -46,10 +43,7 @@ fn resize(
     self.lock.lockUncancelable(io);
     defer self.lock.unlock(io);
 
-    const new_word_count = @divCeil(
-        new_size,
-        @bitSizeOf(usize),
-    ) catch unreachable;
+    const new_word_count = @divCeil(new_size, @bitSizeOf(usize));
     debug.assert(new_word_count > self.words.len);
 
     const value: usize = if (default) math.maxInt(usize) else 0;
