@@ -1,9 +1,8 @@
+// https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2014/n4024.pdf
 pub const Coroutine = @This();
 
 threadlocal var active_frame: ?*Coroutine = null;
-const raw_alignment = Hardware.alignment.toByteUnits();
 
-// https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2014/n4024.pdf
 const Status = enum(u8) {
     in_progress,
     done,
@@ -16,7 +15,7 @@ caller_sp: *align(raw_alignment) anyopaque,
 current_sp: *align(raw_alignment) anyopaque,
 /// Stack Info
 stack_mem: []align(raw_alignment) u8,
-/// Is the Frame done?
+/// Is the Coroutine Frame done?
 status: Status = .in_progress,
 
 pub const Stack = enum(usize) {
@@ -88,11 +87,11 @@ pub fn init(
     args: anytype,
     stack_size: ?Stack,
 ) *Coroutine {
-    // Allocate Fiber/Frame Stack with abi alignment
-    const stack: []align(raw_alignment) u8 = allocator.alignedAlloc(u8, Hardware.alignment, size: {
+    // Allocate Frame Stack with ABI alignment
+    const stack: []align(raw_alignment) u8 = allocator.alignedAlloc(u8, Frame.alignment, size: {
         const size = if (stack_size) |stack| stack.Usize() else Stack.auto.Usize();
         // stack_size should be aligned to `Hardware.alignment`
-        debug.assert(Hardware.alignment.check(size));
+        debug.assert(Frame.alignment.check(size));
         break :size size;
     }) catch @panic("OOM");
 
@@ -100,7 +99,7 @@ pub fn init(
     const stack_top = @intFromPtr(stack.ptr + stack.len);
 
     // space for the frame pointer
-    const frame_ptr = Hardware.alignment.backward(
+    const frame_ptr = Frame.alignment.backward(
         stack_top - @sizeOf(Coroutine),
     );
     debug.assert(frame_ptr > stack_base);
@@ -109,7 +108,7 @@ pub fn init(
 
     const Args = @TypeOf(args);
     // space for the args pointer
-    const args_ptr = Hardware.alignment.backward(
+    const args_ptr = Frame.alignment.backward(
         frame_ptr - @sizeOf(Args),
     );
     debug.assert(args_ptr > stack_base);
@@ -118,23 +117,23 @@ pub fn init(
     arg_ptr.* = args;
 
     // setup space for the `Hardware.stack_count` of callee-saved registers
-    const register_ptr = Hardware.alignment.backward(
-        args_ptr - (@sizeOf(usize) * Hardware.stack_count),
+    const register_ptr = Frame.alignment.backward(
+        args_ptr - (@sizeOf(usize) * Frame.stack_count),
     );
     debug.assert(register_ptr > stack_base);
 
     // address space for the callee-saved registers
-    const register_entries: []Frame = @as([*]Frame, @ptrFromInt(
+    const register_entries: []RegisterFn = @as([*]RegisterFn, @ptrFromInt(
         register_ptr,
-    ))[0..Hardware.stack_count];
+    ))[0..Frame.stack_count];
 
     // A frame pointer of 0x0 denotes the root of the stack for the DWARF unwinder
     // so it knows where to stop unwinding.
-    register_entries[Hardware.frame_ptr] = @ptrFromInt(0x0);
+    register_entries[Frame.frame_ptr] = @ptrFromInt(0x0);
 
     // return address/instruction pointer we jump to for the execution of fiber's
     // entry point function after returning from `tardy_swap_frame`
-    register_entries[Hardware.entry] = EntryFn(coroutine_fn, args);
+    register_entries[Frame.entry] = EntryFn(coroutine_fn, args);
 
     frame.* = .{
         .caller_sp = undefined,
@@ -149,134 +148,36 @@ pub fn deinit(self: *Coroutine, allocator: mem.Allocator) void {
     allocator.free(self.stack_mem);
 }
 
-/// This runs/continues a Frame.
+/// This runs/continues a Coroutine Frame.
 pub fn proceed(frame: *Coroutine) void {
     const old_frame = active_frame;
     debug.assert(old_frame != frame);
     active_frame = frame;
     defer active_frame = old_frame;
 
-    Hardware.tardy_swap_frame(&frame.caller_sp, &frame.current_sp);
+    Frame.swap_frame(
+        &frame.caller_sp,
+        &frame.current_sp,
+    );
 }
 
 /// This yields/pauses a Frame.
 pub fn yield() void {
     const current = active_frame.?;
-    Hardware.tardy_swap_frame(&current.current_sp, &current.caller_sp);
+    Frame.swap_frame(
+        &current.current_sp,
+        &current.caller_sp,
+    );
 }
 
-const Hardware = switch (builtin.cpu.arch) {
-    .x86_64 => switch (builtin.os.tag) {
-        .windows => x64Windows,
-        else => x64SysV,
-    },
-    .aarch64 => aarch64General,
-    else => @compileError("Architecture not currently supported!"),
-};
-
-const x64SysV = struct {
-    /// [0] %r15 pushq %r15 - Lowest Address (where %rsp points)
-    /// [1] %r14 pushq %r14
-    /// [2] %r13 pushq %r13
-    /// [3] %r12 pushq %r12
-    /// [4] %rbp pushq %rbp - Frame Pointer
-    /// [5] %rbx pushq %rbx
-    /// [6] RIP call (implicit) - Entry Function / Return Address
-    pub const stack_count = 7;
-    /// %rbp
-    pub const frame_ptr = 4;
-    /// Entry Function at Return Address (RIP)
-    pub const entry = 6;
-    pub const alignment: mem.Alignment = .@"16";
-
-    extern fn tardy_swap_frame(
-        noalias **align(raw_alignment) anyopaque,
-        noalias **align(raw_alignment) anyopaque,
-    ) callconv(.c) void;
-
-    comptime {
-        asm (@embedFile("coroutine/asm/x86_64_sysv.asm"));
-    }
-};
-
-const x64Windows = struct {
-    /// [0] to [19] %xmm6 to %xmm15 - Takes up 20 indices (160 bytes total)
-    /// [20] %r15 - First GPR popped (lowest address of pushed GPRs)
-    /// [21] %r14
-    /// [22] %r13
-    /// [23] %r12
-    /// [24] %rsi
-    /// [25] %rdi
-    /// [26] %rbp - Frame Pointer
-    /// [27] %rbx
-    /// [28] %gs:0x08 - Stack Base (Top of Stack)
-    /// [29] %gs:0x10 - Stack Limit (Bottom of Stack)
-    /// [30] RIP - Entry Function / Return Addres
-    pub const stack_count = 31;
-    /// %rbp
-    pub const frame_ptr = 26;
-    /// Return Address (RIP)
-    pub const entry = 30;
-    pub const alignment: mem.Alignment = .@"16";
-
-    extern fn tardy_swap_frame(
-        noalias **align(raw_alignment) anyopaque,
-        noalias **align(raw_alignment) anyopaque,
-    ) callconv(.c) void;
-
-    comptime {
-        asm (@embedFile("coroutine/asm/x86_64_win.asm"));
-    }
-};
-
-const aarch64General = struct {
-    /// [0] fp (x29)  - Lowest Address / Frame Pointer
-    /// [1] lr (x30) - Entry Function / Return Address
-    /// [2] d8
-    /// [3] d9
-    /// [4] d10
-    /// [5] d11
-    /// [6] d12
-    /// [7] d13
-    /// [8] d14
-    /// [9] d15
-    /// [10] x19
-    /// [11] x20
-    /// [12] x21
-    /// [13] x22
-    /// [14] x23
-    /// [15] x24
-    /// [16] x25
-    /// [17] x26
-    /// [18] x27
-    /// [19] x28 - Highest Address
-    pub const stack_count = 20;
-    /// Frame Pointer (FP)
-    pub const frame_ptr = 0;
-    /// Entry Function at Link Register (LR)
-    pub const entry = 1;
-    pub const alignment: mem.Alignment = .@"16";
-
-    extern fn tardy_swap_frame(
-        noalias **align(raw_alignment) anyopaque,
-        noalias **align(raw_alignment) anyopaque,
-    ) callconv(.c) void;
-
-    comptime {
-        // TODO: move assembly into `tardy_swap_frame` definition
-        // TODO: allowzero for sp and check if 0x0 so I can skip part of the asm dance
-        asm (@embedFile("coroutine/asm/aarch64_gen.asm"));
-    }
-};
-
-const Frame = *allowzero const fn () callconv(.c) noreturn;
-fn EntryFn(comptime coroutine_fn: anytype, args: anytype) Frame {
+const RegisterFn = *allowzero const fn () callconv(.c) noreturn;
+fn EntryFn(comptime coroutine_fn: anytype, args: anytype) RegisterFn {
     const Args = @TypeOf(args);
     const Fn = struct {
         fn inner() callconv(.c) noreturn {
             const frame_ptr: *Coroutine = active_frame.?;
 
-            const args_addr = Hardware.alignment.backward(
+            const args_addr = Frame.alignment.backward(
                 @intFromPtr(frame_ptr) - @sizeOf(Args),
             );
             const args_ptr: *Args = @ptrFromInt(args_addr);
@@ -311,3 +212,7 @@ const std = @import("std");
 const mem = std.mem;
 const debug = std.debug;
 const builtin = @import("builtin");
+
+const context_switch = @import("coroutine/context_switch.zig");
+const raw_alignment = context_switch.raw_alignment;
+const Frame = context_switch.Frame;
