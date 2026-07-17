@@ -25,8 +25,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = target.result.os.tag == .windows,
-        .error_tracing = true,
+        // currently not supported on aarch64
+        .error_tracing = target.result.cpu.arch != .aarch64,
         .pic = true,
     });
 
@@ -151,8 +151,6 @@ fn build_example_module(
         ),
         .target = options.target,
         .optimize = options.optimize,
-        // need libc for windows sockets
-        .link_libc = options.target.result.os.tag == .windows,
     });
 
     example_mod.addImport("tardy", options.tardy_mod);
@@ -182,12 +180,16 @@ fn build_example_exe(
 
     const example_mod = build_example_module(b, options);
 
+    // windows: errors with `unknow size: 0xx(%%rsp)` without llvm
+    // aarch64: use_new_linker panics and codegen deadlocks without llvm
+    const use_llvm = (options.target.result.os.tag == .windows) or
+        (options.target.result.cpu.arch == .aarch64);
     const example_exe = b.addExecutable(.{
         .name = @tagName(options.example),
         .root_module = example_mod,
-        // without llvm leads to error: undefined symbol: tardy_swap_frame
-        .use_llvm = true,
+        .use_llvm = use_llvm,
     });
+    example_exe.use_new_linker = !use_llvm;
 
     const install_artifact = b.addInstallArtifact(
         example_exe,
@@ -289,8 +291,6 @@ fn build_test_e2e(
                 .module = options.tardy_mod,
             },
         },
-        // need libc for windows sockets
-        .link_libc = options.target.result.os.tag == .windows,
     });
 
     // add needed options
@@ -303,13 +303,16 @@ fn build_test_e2e(
 
     e2e_mod.addOptions("options", test_options);
 
-    // create executable
+    // windows: errors with `unknow size: 0xx(%%rsp)` without llvm
+    // aarch64: use_new_linker panics and codegen deadlocks without llvm
+    const use_llvm = (options.target.result.os.tag == .windows) or
+        (options.target.result.cpu.arch == .aarch64);
     const exe = b.addExecutable(.{
         .name = "e2e",
         .root_module = e2e_mod,
-        // without llvm leads to error: undefined symbol: tardy_swap_frame
-        .use_llvm = true,
+        .use_llvm = use_llvm,
     });
+    exe.use_new_linker = !use_llvm;
 
     // build/install e2e test
     const install_artifact = b.addInstallArtifact(exe, .{});
