@@ -29,7 +29,7 @@ const x64SysV = struct {
     pub const entry = 6;
     pub const alignment: mem.Alignment = .@"16";
 
-    fn swap_frame(
+    pub fn swap_frame(
         noalias paused_sp: **align(raw_alignment) anyopaque,
         noalias next_executing_sp: **align(raw_alignment) anyopaque,
     ) void {
@@ -104,7 +104,7 @@ const x64Windows = struct {
     pub const entry = 30;
     pub const alignment: mem.Alignment = .@"16";
 
-    fn swap_frame(
+    pub fn swap_frame(
         noalias paused_sp: **align(raw_alignment) anyopaque,
         noalias next_executing_sp: **align(raw_alignment) anyopaque,
     ) void {
@@ -233,7 +233,7 @@ const aarch64General = struct {
     pub const entry = 1;
     pub const alignment: mem.Alignment = .@"16";
 
-    fn swap_frame(
+    pub fn swap_frame(
         noalias paused_sp: **align(raw_alignment) anyopaque,
         noalias next_executing_sp: **align(raw_alignment) anyopaque,
     ) void {
