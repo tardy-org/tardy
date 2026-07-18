@@ -739,31 +739,6 @@ pub const SendToError = SendMsgError || error{
 };
 
 /// Transmit a message to another socket.
-///
-/// The `sendto` call may be used only when the socket is in a connected state (so that the intended
-/// recipient  is  known). The  following call
-///
-///     send(sockfd, buf, len, flags);
-///
-/// is equivalent to
-///
-///     sendto(sockfd, buf, len, flags, NULL, 0);
-///
-/// If  sendto()  is used on a connection-mode (`SOCK.STREAM`, `SOCK.SEQPACKET`) socket, the arguments
-/// `dest_addr` and `addrlen` are asserted to be `null` and `0` respectively, and asserted
-/// that the socket was actually connected.
-/// Otherwise, the address of the target is given by `dest_addr` with `addrlen` specifying  its  size.
-///
-/// If the message is too long to pass atomically through the underlying protocol,
-/// `SendError.MessageOversize` is returned, and the message is not transmitted.
-///
-/// There is no  indication  of  failure  to  deliver.
-///
-/// When the message does not fit into the send buffer of  the  socket,  `sendto`  normally  blocks,
-/// unless  the socket has been placed in nonblocking I/O mode.  In nonblocking mode it would fail
-/// with `SendError.WouldBlock`.  The `select` call may be used  to  determine when it is
-/// possible to send more data.
-// TODO: sendto Windows impl
 pub fn sendto(
     /// The file descriptor of the sending socket.
     sockfd: socket_t,
@@ -773,8 +748,39 @@ pub fn sendto(
     dest_addr: ?*const posix.sockaddr,
     addrlen: posix.socklen_t,
 ) SendToError!usize {
-    // TODO: explore a windows native approach
-    // if (native_os == .windows) @compileError("sendto unsupported on windows");
+    if (native_os == .windows) {
+        switch (ws2.sendto(
+            sockfd,
+            buf.ptr,
+            buf.len,
+            flags,
+            dest_addr,
+            addrlen,
+        )) {
+            ws2.SOCKET_ERROR => switch (ws2.WSAGetLastError()) {
+                .EACCES => return error.AccessDenied,
+                .ECONNRESET => return error.ConnectionResetByPeer,
+                .ENOBUFS => return error.SystemResources,
+                .ENETRESET => return error.ConnectionResetByPeer,
+                .ENETUNREACH => return error.NetworkUnreachable,
+                .EWOULDBLOCK => return error.WouldBlock,
+                .EHOSTUNREACH => return error.NetworkUnreachable,
+                .ENOTCONN => return error.SocketUnconnected,
+                .ENETDOWN => return error.NetworkDown,
+                .EAFNOSUPPORT => return error.AddressFamilyUnsupported,
+                .EINVAL => return error.UnreachableAddress,
+                .EMSGSIZE => return error.MessageOversize,
+                .ENOTSOCK => unreachable,
+                .EADDRNOTAVAIL => unreachable,
+                .EDESTADDRREQ => unreachable,
+                .EFAULT => unreachable,
+                .ESHUTDOWN => unreachable,
+                .NOTINITIALISED => unreachable,
+                else => |err| return ws2.unexpectedWSAError(err),
+            },
+            else => |rc| return @intCast(rc),
+        }
+    }
     while (true) {
         const rc = system.sendto(
             sockfd,

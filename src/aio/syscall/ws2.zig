@@ -109,6 +109,45 @@ pub fn recvfrom(
     }
 }
 
+pub extern "ws2_32" fn WSASendTo(
+    s: windows.HANDLE,
+    lpBuffers: [*]WSABUF,
+    dwBufferCount: u32,
+    lpNumberOfBytesSent: ?*u32,
+    dwFlags: u32,
+    lpTo: ?*const ws2_32.sockaddr,
+    iToLen: i32,
+    lpOverlapped: ?*OVERLAPPED,
+    lpCompletionRounte: ?LPWSAOVERLAPPED_COMPLETION_ROUTINE,
+) callconv(.winapi) i32;
+
+pub fn sendto(
+    s: windows.HANDLE,
+    buf: [*]const u8,
+    len: usize,
+    flags: u32,
+    to: ?*const ws2_32.sockaddr,
+    to_len: ws2_32.socklen_t,
+) i32 {
+    var buffer: WSABUF = .{ .len = @truncate(len), .buf = @constCast(buf) };
+    var bytes_send: windows.DWORD = undefined;
+    if (WSASendTo(
+        s,
+        @ptrCast(&buffer),
+        1,
+        &bytes_send,
+        flags,
+        to,
+        @intCast(to_len),
+        null,
+        null,
+    ) == SOCKET_ERROR) {
+        return SOCKET_ERROR;
+    } else {
+        return @intCast(bytes_send);
+    }
+}
+
 extern "kernel32" fn WriteFile(
     in_hFile: windows.HANDLE,
     in_lpBuffer: [*]const u8,
