@@ -42,23 +42,13 @@ exe_mod.addImport("tardy", tardy);
 ```
 
 ## Building and Running Examples
-- NOTE: by default build/install step uses `-Dexample=none` , meaning it wont build any examples
-
-- List available examples
-```sh
-zig build --help
-```
-
 - Build/run a specific example
-```sh
-zig build -Dexample=[nameOfExample]
-```
-```sh
-zig build run -Dexample=[nameOfExample]
+```elvish
+zig [build/build run] -Dasync=[async_backend] -Dexample[example_name]
 ```
 
 - Build all examples
-```sh
+```elvish
 zig build -Dexample=all
 ```
 
@@ -68,18 +58,15 @@ A basic multi-threaded TCP echo server.
 ```zig
 const std = @import("std");
 
+const options = @import("options");
 const tardy = @import("tardy");
-const AcceptResult = tardy.AcceptResult;
-const Cross = tardy.Cross;
-const Pool = tardy.Pool;
-const RecvResult = tardy.RecvResult;
 const Runtime = tardy.Runtime;
-const SendResult = tardy.SendResult;
-const Socket = tardy.Socket;
-const Task = tardy.Task;
-const Timer = tardy.Timer;
+const Socket = tardy.net.Socket;
+const AsyncIO = tardy.AsyncIO;
 
-const Tardy = tardy.Tardy(.auto);
+const backend: AsyncIO.Kind = .init(options.async_backend);
+const Tardy = tardy.Tardy(backend);
+
 const log = std.log.scoped(.@"tardy/example/echo");
 
 fn echo_frame(rt: *Runtime, server: *const Socket) !void {
@@ -100,7 +87,7 @@ fn echo_frame(rt: *Runtime, server: *const Socket) !void {
     );
 
     // spawn off a new frame.
-    try rt.spawn(.{ rt, server }, echo_frame, 1024 * 16);
+    try rt.spawn(echo_frame, .{ rt, server }, .@"16KiB");
 
     var buffer: [501]u8 = undefined;
     while (true) {
@@ -124,7 +111,10 @@ pub fn main(init: std.process.Init) !void {
     const host = "0.0.0.0";
     const port = 9862;
 
-    const server: Socket = try .init(init.io, .{ .tcp = .{ .host = host, .port = port } });
+    const server: Socket = try .init(
+        init.io,
+        .{ .tcp = .{ .host = host, .port = port } },
+    );
     try server.bind();
     try server.listen(501);
 
@@ -142,7 +132,7 @@ pub fn main(init: std.process.Init) !void {
         &server,
         struct {
             fn start(rt: *Runtime, tcp_server: *const Socket) !void {
-                try rt.spawn(.{ rt, tcp_server }, echo_frame, 1024 * 16);
+                try rt.spawn(echo_frame, .{ rt, tcp_server }, .@"32KiB");
             }
         }.start,
     );
