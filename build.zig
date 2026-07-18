@@ -38,7 +38,7 @@ pub fn build(b: *std.Build) void {
     };
 
     // build and run examples
-    // usage: zig [build/build run] -Dexample[example_name]
+    // usage: zig [build/build run] -Dasync=[async_backend] -Dexample[example_name]
     build_examples(b, .{
         .run = build_steps.run,
         .install = b.getInstallStep(),
