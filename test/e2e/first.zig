@@ -1,6 +1,6 @@
 threadlocal var file_chain_counter: usize = 0;
 
-pub fn start_frame(rt: *Runtime, shared_params: *const SharedParams) !void {
+pub fn start_frame(rt: *Runtime, shared_params: *const e2e.Params) !void {
     errdefer unreachable;
 
     const new_dir = try Dir.cwd().create_dir(rt, shared_params.seed_string);
@@ -62,5 +62,5 @@ const tardy = @import("tardy");
 const Dir = tardy.fs.Dir;
 const Runtime = tardy.Runtime;
 
-const FileChain = @import("file_chain.zig").FileChain;
-const SharedParams = @import("lib.zig").SharedParams;
+const FileChain = @import("FileChain.zig");
+const e2e = @import("e2e.zig");

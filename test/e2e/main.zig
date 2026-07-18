@@ -36,8 +36,8 @@ pub fn main(init: std.process.Init) !void {
     var prng: std.Random.DefaultPrng = .init(seed);
     const rand = prng.random();
 
-    const shared: SharedParams = blk: {
-        var p: SharedParams = undefined;
+    const shared: e2e.Params = blk: {
+        var p: e2e.Params = undefined;
         p.seed_string = seed_string;
         p.seed = seed;
 
@@ -59,7 +59,7 @@ pub fn main(init: std.process.Init) !void {
 
     const EntryParams = struct {
         runtime: ?*Runtime,
-        shared: *const SharedParams,
+        shared: *const e2e.Params,
     };
 
     var params: EntryParams = .{
@@ -75,11 +75,11 @@ pub fn main(init: std.process.Init) !void {
                     0 => {
                         p.runtime = rt;
                         try rt.spawn(
-                            First.start_frame,
+                            first.start_frame,
                             .{ rt, p.shared },
                             if (is_unix) .KiB(28) else .MiB(2),
                         );
-                        try rt.spawn(Second.start_frame, .{ rt, p.shared }, .@"32KiB");
+                        try rt.spawn(second.start_frame, .{ rt, p.shared }, .@"32KiB");
                     },
                     1 => try rt.spawn(timeout_task, .{ rt, &p.runtime }, .@"32KiB"),
                     else => unreachable,
@@ -125,6 +125,6 @@ const Runtime = tardy.Runtime;
 const Task = Runtime.Task;
 const Timer = Runtime.Timer;
 
-const First = @import("first.zig");
-const Second = @import("second.zig");
-const SharedParams = @import("lib.zig").SharedParams;
+const e2e = @import("e2e.zig");
+const first = @import("first.zig");
+const second = @import("second.zig");

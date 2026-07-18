@@ -1,16 +1,36 @@
-pub const TcpServerChain = struct {
-    const Step = enum {
-        accept,
-        recv,
-        send,
-        close,
-    };
-
+pub const Server = struct {
     allocator: mem.Allocator,
     socket: ?net.Socket = null,
     steps: []Step,
     index: usize = 0,
     buffer: []u8,
+
+    // Path is expected to remain valid.
+    pub fn init(
+        allocator: mem.Allocator,
+        chain: []const Step,
+        buffer_size: usize,
+    ) !Server {
+        debug.assert(chain.len > 0);
+
+        const chain_dupe = try allocator.dupe(Step, chain);
+        errdefer allocator.free(chain_dupe);
+        debug.assert(validate_chain(chain));
+
+        const buffer = try allocator.alloc(u8, buffer_size);
+        errdefer allocator.free(buffer);
+
+        return .{
+            .allocator = allocator,
+            .steps = chain_dupe,
+            .buffer = buffer,
+        };
+    }
+
+    pub fn deinit(self: *const Server) void {
+        defer self.allocator.free(self.steps);
+        defer self.allocator.free(self.buffer);
+    }
 
     pub fn next_steps(current: Step) []const Step {
         switch (current) {
@@ -44,17 +64,24 @@ pub const TcpServerChain = struct {
         while (true) {
             const potentials = next_steps(list.last().?.*);
             if (potentials.len == 0) break;
-            const potential = rand.intRangeLessThan(usize, 0, potentials.len);
+            const potential = rand.intRangeLessThan(
+                usize,
+                0,
+                potentials.len,
+            );
             try list.append(allocator, potentials[potential]);
         }
 
         return try list.toOwnedSlice(allocator);
     }
 
-    pub fn derive_client_chain(self: *const TcpServerChain) !TcpClientChain {
+    pub fn derive_client_chain(self: *const Server) !Client {
         debug.assert(self.steps.len > 0);
 
-        const client_steps = try self.allocator.alloc(TcpClientChain.Step, self.steps.len);
+        const client_steps = try self.allocator.alloc(
+            Client.Step,
+            self.steps.len,
+        );
         errdefer self.allocator.free(client_steps);
 
         for (self.steps, 0..) |step, i| {
@@ -76,31 +103,8 @@ pub const TcpServerChain = struct {
         };
     }
 
-    // Path is expected to remain valid.
-    pub fn init(allocator: mem.Allocator, chain: []const Step, buffer_size: usize) !TcpServerChain {
-        debug.assert(chain.len > 0);
-
-        const chain_dupe = try allocator.dupe(Step, chain);
-        errdefer allocator.free(chain_dupe);
-        debug.assert(validate_chain(chain));
-
-        const buffer = try allocator.alloc(u8, buffer_size);
-        errdefer allocator.free(buffer);
-
-        return .{
-            .allocator = allocator,
-            .steps = chain_dupe,
-            .buffer = buffer,
-        };
-    }
-
-    pub fn deinit(self: *const TcpServerChain) void {
-        defer self.allocator.free(self.steps);
-        defer self.allocator.free(self.buffer);
-    }
-
     pub fn chain_frame(
-        chain: *TcpServerChain,
+        chain: *Server,
         rt: *Runtime,
         counter: *usize,
         server_socket: net.Socket,
@@ -111,17 +115,18 @@ pub const TcpServerChain = struct {
 
         chain: while (chain.index < chain.steps.len) : (chain.index += 1) {
             const current_step = chain.steps[chain.index];
-            log.debug("server chain step: {t}", .{current_step});
+            log.debug("chain step: {t}", .{current_step});
             switch (current_step) {
                 .accept => {
                     const socket = try server_socket.accept(rt);
                     chain.socket = socket;
                 },
                 .recv => {
-                    const length = chain.socket.?.recv(rt, chain.buffer) catch |e| switch (e) {
-                        error.Closed => break :chain,
-                        else => |err| return err,
-                    };
+                    const length = chain.socket.?.recv(rt, chain.buffer) catch |e|
+                        switch (e) {
+                            error.Closed => break :chain,
+                            else => |err| return err,
+                        };
 
                     for (chain.buffer[0..length]) |item| debug.assert(item == 123);
                 },
@@ -139,27 +144,29 @@ pub const TcpServerChain = struct {
             server_socket.close_blocking();
         }
     }
-};
 
-pub const TcpClientChain = struct {
     const Step = enum {
-        connect,
+        accept,
         recv,
         send,
         close,
     };
 
+    const log = std.log.scoped(.@"tardy/e2e/tcp_chain/Server");
+};
+
+pub const Client = struct {
     allocator: mem.Allocator,
     steps: []Step,
     index: usize = 0,
     buffer: []u8,
 
-    pub fn deinit(self: *const TcpClientChain) void {
+    pub fn deinit(self: *const Client) void {
         defer self.allocator.free(self.steps);
         defer self.allocator.free(self.buffer);
     }
 
-    pub fn chain_frame(chain: *TcpClientChain, rt: *Runtime, counter: *usize, port: u16) !void {
+    pub fn chain_frame(chain: *Client, rt: *Runtime, counter: *usize, port: u16) !void {
         defer rt.allocator.destroy(chain);
         defer chain.deinit();
         errdefer unreachable;
@@ -170,7 +177,7 @@ pub const TcpClientChain = struct {
 
         chain: while (chain.index < chain.steps.len) : (chain.index += 1) {
             const current_step = chain.steps[chain.index];
-            log.debug("client chain step: {t}", .{current_step});
+            log.debug("chain step: {t}", .{current_step});
             switch (current_step) {
                 .connect => try socket.connect(rt),
                 .recv => {
@@ -186,7 +193,7 @@ pub const TcpClientChain = struct {
                     _ = try socket.send_all(rt, chain.buffer);
                 },
                 .close => {
-                    log.debug("closing client socket", .{});
+                    log.debug("closing socket", .{});
                     socket.close_blocking();
                 },
             }
@@ -194,28 +201,37 @@ pub const TcpClientChain = struct {
         counter.* -= 1;
 
         if (counter.* == 0) {
-            log.debug("tcp client chain done!", .{});
+            log.debug("tcp chain done!", .{});
         }
     }
+
+    const Step = enum {
+        connect,
+        recv,
+        send,
+        close,
+    };
+
+    const log = std.log.scoped(.@"tardy/e2e/tcp_chain/Client");
 };
 
-test "TcpServerChain: Proper Chain" {
-    const chain: []const TcpServerChain.Step = &.{
+test "tcp_chain.Server: Proper Chain" {
+    const chain: []const Server.Step = &.{
         .accept,
         .recv,
         .send,
         .close,
     };
 
-    try testing.expect(TcpServerChain.validate_chain(chain));
+    try testing.expect(Server.validate_chain(chain));
 }
 
-test "TcpServerChain: Validate Random Chain" {
+test "tcp_chain.Server: Validate Random Chain" {
     // Actually generates and tests a random TcpServerChain :)
     var seed: u64 = undefined;
     try std.posix.getrandom(mem.asBytes(&seed));
 
-    const chain = try TcpServerChain.generate_random_chain(
+    const chain = try Server.generate_random_chain(
         testing.allocator,
         seed,
     );
@@ -228,10 +244,8 @@ test "TcpServerChain: Validate Random Chain" {
         }
     }
 
-    try testing.expect(TcpServerChain.validate_chain(chain));
+    try testing.expect(Server.validate_chain(chain));
 }
-
-const log = std.log.scoped(.@"tardy/e2e/tcp_chain");
 
 const std = @import("std");
 const mem = std.mem;
