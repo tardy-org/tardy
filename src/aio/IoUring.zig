@@ -952,7 +952,7 @@ pub const Error = error{
     SubmissionQueueFull,
 } || pool.Error;
 
-const log = std.log.scoped(.@"tardy/aio/io_uring");
+const log = std.log.scoped(.@"tardy/aio/IoUring");
 
 const JobBundle = struct {
     job: Job,

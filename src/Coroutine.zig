@@ -206,7 +206,7 @@ fn EntryFn(comptime coroutine_fn: anytype, args: anytype) RegisterFn {
 
 const is_unix = builtin.os.tag != .windows;
 
-const log = std.log.scoped(.@"tardy/frame");
+const log = std.log.scoped(.@"tardy/Coroutine");
 
 const std = @import("std");
 const mem = std.mem;

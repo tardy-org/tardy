@@ -472,7 +472,7 @@ pub fn to_async(self: *Poll) AsyncIO {
     };
 }
 
-const log = std.log.scoped(.@"tardy/aio/poll");
+const log = std.log.scoped(.@"tardy/aio/Poll");
 
 pub const Errors = struct {
     pub const Connect = syscall.ConnectError || Error;

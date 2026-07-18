@@ -763,6 +763,7 @@ pub const SendToError = SendMsgError || error{
 /// unless  the socket has been placed in nonblocking I/O mode.  In nonblocking mode it would fail
 /// with `SendError.WouldBlock`.  The `select` call may be used  to  determine when it is
 /// possible to send more data.
+// TODO: sendto Windows impl
 pub fn sendto(
     /// The file descriptor of the sending socket.
     sockfd: socket_t,

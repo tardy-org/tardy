@@ -462,7 +462,7 @@ pub fn to_async(self: *Epoll) AsyncIO {
     };
 }
 
-const log = std.log.scoped(.@"tardy/aio/epoll");
+const log = std.log.scoped(.@"tardy/aio/Epoll");
 
 pub const Errors = struct {
     pub const Timer = syscall.TimerFdCreateError || syscall.TimerFdSetError || Error;

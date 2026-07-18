@@ -494,7 +494,7 @@ pub fn to_async(self: *Kqueue) AsyncIO {
     };
 }
 
-const log = std.log.scoped(.@"tardy/aio/kqueue");
+const log = std.log.scoped(.@"tardy/aio/Kqueue");
 
 pub const Errors = struct {
     pub const Connect = syscall.ConnectError || Error;

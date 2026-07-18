@@ -190,7 +190,7 @@ pub fn run(rt: *Runtime) !void {
     }
 }
 
-const log = std.log.scoped(.@"tardy/runtime");
+const log = std.log.scoped(.@"tardy/Runtime");
 
 const RuntimeOptions = struct {
     id: usize,

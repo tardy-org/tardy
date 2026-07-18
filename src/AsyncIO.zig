@@ -265,7 +265,7 @@ const VTable = struct {
     submit: *const fn (*anyopaque) anyerror!void,
 };
 
-const log = std.log.scoped(.@"tardy/aio");
+const log = std.log.scoped(.@"tardy/AsyncIO");
 
 const std = @import("std");
 const mem = std.mem;
