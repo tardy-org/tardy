@@ -32,14 +32,20 @@ pub const Stack = enum(usize) {
     @"2MiB" = 2 * unit * unit,
     @"4MiB" = 4 * unit * unit,
     /// linux OS thread default
-    max = 8 * unit * unit,
+    max = max_thread_stack * unit * unit,
     _,
+
+    /// Bytes
+    const unit = 1024;
+    /// 8 MiB
+    const max_thread_stack = 8;
 
     /// 64KB: Generally resonable number, for simple callbacks, no recursion,
     /// small locals, minor compute work, shallow call stacks.
-    pub const std: Stack = .@"64KiB";
+    pub const mean: Stack = if (is_unix) .@"64KiB" else .KiB(512 + unit);
+
     /// 1MB: deep call chains, JSON parsers, recursive algorithms
-    pub const large: Stack = .@"1MiB";
+    pub const large: Stack = if (is_unix) .@"1MiB" else .MiB(3);
 
     /// This is a best effort guess and will be updated
     /// consistently to match most real world usage
@@ -50,20 +56,18 @@ pub const Stack = enum(usize) {
         .ReleaseSmall => if (is_unix) .@"8KiB" else .@"126KiB",
     };
 
-    const unit = 1024;
-
     fn Usize(size: Stack) usize {
         debug.assert(@intFromEnum(size) <= @intFromEnum(Stack.max));
         return @intFromEnum(size);
     }
 
     pub fn MiB(size: usize) Stack {
-        debug.assert(size < unit);
+        debug.assert(size < max_thread_stack);
         return @enumFromInt(size * unit * unit);
     }
 
     pub fn KiB(size: usize) Stack {
-        debug.assert(size < unit);
+        debug.assert(size < max_thread_stack * unit);
         return @enumFromInt(size * unit);
     }
 };
