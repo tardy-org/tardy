@@ -584,12 +584,12 @@ fn addAfdBuf(
 }
 
 const default_fn_align = switch (builtin.mode) {
-    .Debug, .ReleaseSafe, .ReleaseFast => switch (builtin.cpu.arch) {
+    .debug, .safe, .fast => switch (builtin.cpu.arch) {
         .arm, .thumb => 4,
         .aarch64, .x86, .x86_64 => 16,
         else => |arch| @compileError("Unsupported architecture: " ++ @tagName(arch)),
     },
-    .ReleaseSmall => 1,
+    .small => 1,
 };
 
 pub const apc_align = @max(default_fn_align, 2);

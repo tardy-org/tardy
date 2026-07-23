@@ -159,14 +159,14 @@ pub const Features = struct {
 
     pub fn init(features: []const Op) Features {
         var mask: u16 = 0;
-        for (features) |op| mask |= @intFromEnum(op);
+        for (features) |op| mask |= @backingInt(op);
         return .{ .bitmask = mask };
     }
 
     pub fn all() Features {
         const mask: u16 = comptime blk: {
             var value: u16 = 0;
-            for (std.meta.tags(Op)) |op| value |= @intFromEnum(op);
+            for (std.meta.tags(Op)) |op| value |= @backingInt(op);
             break :blk value;
         };
 
@@ -174,7 +174,7 @@ pub const Features = struct {
     }
 
     pub fn has_capability(self: Features, op: Op) bool {
-        return (self.bitmask & @intFromEnum(op)) != 0;
+        return (self.bitmask & @backingInt(op)) != 0;
     }
 };
 

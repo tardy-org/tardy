@@ -95,7 +95,7 @@ fn build_examples(
 
             inline for (@typeInfo(Example).@"enum".field_values) |value| {
                 // convert captured field value to field enum
-                const field: Example = @enumFromInt(value);
+                const field: Example = @fromBackingInt(@intCast(value));
 
                 // skip .none and .all for building step
                 if (field == .none or field == .all) continue;
@@ -219,15 +219,26 @@ fn build_static_lib(
     },
     options: BuildOptions,
 ) void {
-    const static_lib = b.addLibrary(.{
+    const tardy_lib = b.addLibrary(.{
         .linkage = .static,
         .name = "tardy",
         .root_module = options.tardy_mod,
     });
 
+    const check_tardy = b.addLibrary(.{
+        .linkage = .static,
+        .name = "tardy",
+        .root_module = options.tardy_mod,
+    });
+    const check_step = b.step(
+        "check",
+        "check compile errors in tardy",
+    );
+    check_step.dependOn(&check_tardy.step);
+
     // depend on static step
     const install_artifact = b.addInstallArtifact(
-        static_lib,
+        tardy_lib,
         .{},
     );
     steps.static.dependOn(&install_artifact.step);
@@ -359,7 +370,7 @@ const ExampleOptions = struct {
     tardy_mod: *std.Build.Module,
     example: Example,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     skip_run_step_steup: bool,
 };
 
@@ -367,7 +378,7 @@ const BuildOptions = struct {
     async_backend: AsyncKind,
     tardy_mod: *std.Build.Module,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
 };
 
 const Example = enum {

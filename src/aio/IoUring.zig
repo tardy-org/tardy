@@ -555,7 +555,7 @@ fn reap(
             if (cqe.res < 0) {
                 log.debug("{d} - other status on SQE: {t}", .{
                     job.index,
-                    @as(linux.E, @enumFromInt(-cqe.res)),
+                    @as(linux.E, @fromBackingInt(@intCast(-cqe.res))),
                 });
             }
             switch (job.type) {
@@ -584,7 +584,7 @@ fn reap(
 
                     const AcceptError = results.AcceptError;
                     const result: results.AcceptResult = result: {
-                        const e: linux.E = @enumFromInt(-cqe.res);
+                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
                             .AGAIN => .{ .err = AcceptError.WouldBlock },
                             .BADF => .{ .err = AcceptError.InvalidFd },
@@ -606,7 +606,7 @@ fn reap(
                     };
                     const ConnectError = results.ConnectError;
                     const result: results.ConnectResult = result: {
-                        const e: linux.E = @enumFromInt(-cqe.res);
+                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
                             .ACCES, .PERM => .{ .err = ConnectError.AccessDenied },
                             .ADDRINUSE => .{ .err = ConnectError.AddressInUse },
@@ -640,7 +640,7 @@ fn reap(
                     if (cqe.res == 0) break :blk .{ .recv = .{ .err = RecvError.Closed } };
 
                     const result: results.RecvResult = result: {
-                        const e: linux.E = @enumFromInt(-cqe.res);
+                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
                             .NOTSOCK, .INVAL, .FAULT, .BADF => unreachable,
                             .AGAIN => .{ .err = RecvError.WouldBlock },
@@ -659,7 +659,7 @@ fn reap(
 
                     const SendError = results.SendError;
                     const result: results.SendResult = result: {
-                        const e: linux.E = @enumFromInt(-cqe.res);
+                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
                             .OPNOTSUPP,
                             .FAULT,
@@ -690,7 +690,7 @@ fn reap(
 
                     const MkdirError = results.MkdirError;
                     const result: results.MkdirResult = result: {
-                        const e: linux.E = @enumFromInt(-cqe.res);
+                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
                             .ACCES => .{ .err = MkdirError.AccessDenied },
                             .EXIST => .{ .err = MkdirError.AlreadyExists },
@@ -718,7 +718,7 @@ fn reap(
 
                     const OpenError = results.OpenError;
                     const result: results.InnerOpenResult = result: {
-                        const e: linux.E = @enumFromInt(-cqe.res);
+                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
                             .ACCES, .PERM => .{ .err = OpenError.AccessDenied },
                             .BADF => .{ .err = OpenError.InvalidFd },
@@ -753,7 +753,7 @@ fn reap(
 
                     const DeleteError = results.DeleteError;
                     const result: results.DeleteResult = result: {
-                        const e: linux.E = @enumFromInt(-cqe.res);
+                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
                             // unlink
                             .ACCES => .{ .err = DeleteError.AccessDenied },
@@ -791,7 +791,7 @@ fn reap(
                     };
 
                     const result: results.ReadResult = result: {
-                        const e: linux.E = @enumFromInt(-cqe.res);
+                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
                             .AGAIN => .{ .err = ReadError.WouldBlock },
                             .BADF => .{ .err = ReadError.InvalidFd },
@@ -810,7 +810,7 @@ fn reap(
 
                     const WriteError = results.WriteError;
                     const result: results.WriteResult = result: {
-                        const e: linux.E = @enumFromInt(-cqe.res);
+                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
                             .INVAL => unreachable,
                             .AGAIN => .{ .err = WriteError.WouldBlock },
@@ -852,7 +852,7 @@ fn reap(
 
                     const StatError = results.StatError;
                     const result: results.StatResult = result: {
-                        const e: linux.E = @enumFromInt(-cqe.res);
+                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
                             .ACCES => .{ .err = StatError.AccessDenied },
                             .BADF => .{ .err = StatError.InvalidFd },

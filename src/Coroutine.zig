@@ -50,30 +50,30 @@ pub const Stack = enum(usize) {
     /// This is a best effort guess and will be updated
     /// consistently to match most real world usage
     pub const auto: Stack = switch (builtin.mode) {
-        .Debug => if (is_unix) .@"256KiB" else .@"2MiB",
-        .ReleaseSafe => if (is_unix) .@"128KiB" else .@"1MiB",
-        .ReleaseFast => if (is_unix) .@"32KiB" else .@"256KiB",
-        .ReleaseSmall => if (is_unix) .@"8KiB" else .@"126KiB",
+        .debug => if (is_unix) .@"256KiB" else .@"2MiB",
+        .safe => if (is_unix) .@"128KiB" else .@"1MiB",
+        .fast => if (is_unix) .@"32KiB" else .@"256KiB",
+        .small => if (is_unix) .@"8KiB" else .@"126KiB",
     };
 
     fn Usize(size: Stack) usize {
-        debug.assert(@intFromEnum(size) <= @intFromEnum(Stack.max));
-        return @intFromEnum(size);
+        debug.assert(@backingInt(size) <= @backingInt(Stack.max));
+        return @backingInt(size);
     }
 
     pub fn MiB(size: usize) Stack {
         debug.assert(size < max_thread_stack);
-        return @enumFromInt(size * unit * unit);
+        return @fromBackingInt(@intCast(size * unit * unit));
     }
 
     pub fn KiB(size: usize) Stack {
         debug.assert(size < max_thread_stack * unit);
-        return @enumFromInt(size * unit);
+        return @fromBackingInt(@intCast(size * unit));
     }
 };
 
 fn stackUsed(frame: *Coroutine) usize {
-    if (builtin.mode != .Debug) @compileError("only available in Debug mode");
+    if (builtin.mode != .debug) @compileError("only available in Debug mode");
     // Debug mode fills freed/unused memory with 0xAA
     const canary_byte: u8 = 0xAA;
     // Stack grows downward — scan from bottom for the first non-0xAA byte
@@ -193,7 +193,7 @@ fn EntryFn(comptime coroutine_fn: anytype, args: anytype) RegisterFn {
                 unreachable;
             };
 
-            if (builtin.mode == .Debug) {
+            if (builtin.mode == .debug) {
                 log.debug("Coroutine \nfn: `* const {any}`\nUsed {Bi} / {Bi} bytes of stack", .{
                     @TypeOf(coroutine_fn), frame_ptr.stackUsed(), frame_ptr.stack_mem.len,
                 });

@@ -353,7 +353,7 @@ const OVERLAPPED = extern struct {
 };
 
 fn GetLastError() windows.Win32Error {
-    return @enumFromInt(teb().LastErrorValue);
+    return @fromBackingInt(teb().LastErrorValue);
 }
 
 fn teb() *TEB {
