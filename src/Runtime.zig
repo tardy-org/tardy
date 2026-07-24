@@ -14,7 +14,12 @@ running: bool,
 // The currently running Task's index.
 current_task: ?usize = null,
 
-pub fn init(allocator: mem.Allocator, io: std.Io, aio: AsyncIO, options: RuntimeOptions) !Runtime {
+pub fn init(
+    allocator: mem.Allocator,
+    io: std.Io,
+    aio: AsyncIO,
+    options: Options,
+) !Runtime {
     const scheduler: Scheduler = try .init(
         allocator,
         options.size_tasks_initial,
@@ -192,7 +197,7 @@ pub fn run(rt: *Runtime) !void {
 
 const log = std.log.scoped(.@"tardy/Runtime");
 
-const RuntimeOptions = struct {
+const Options = struct {
     id: usize,
     pooling: pool.Kind,
     size_tasks_initial: usize,

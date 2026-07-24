@@ -43,14 +43,14 @@ pub fn deinit(sched: *Scheduler, io: std.Io) void {
     sched.triggers.deinit(sched.allocator, io);
 }
 
-pub fn set_runnable(self: *Scheduler, index: usize) !void {
+pub fn set_runnable(self: *Scheduler, index: usize) void {
     const task = self.tasks.get_ptr(index);
     debug.assert(task.state != .runnable);
     task.state = .runnable;
     self.runnable += 1;
 }
 
-pub fn trigger_await(self: *Scheduler) !void {
+pub fn trigger_await(self: *Scheduler) void {
     const rt: *Runtime = @fieldParentPtr("scheduler", self);
     const index = rt.current_task.?;
     const task = self.tasks.get_ptr(index);
@@ -98,7 +98,7 @@ pub fn spawn(
         }
     };
 
-    const frame_ptr: *Coroutine = .init(
+    const frame: *Coroutine = .init(
         self.allocator,
         coroutine_fn,
         args,
@@ -107,12 +107,12 @@ pub fn spawn(
 
     const item: Task = .{
         .index = index,
-        .frame = frame_ptr,
+        .frame = frame,
         .state = .dead,
     };
     const item_ptr = self.tasks.get_ptr(index);
     item_ptr.* = item;
-    try self.set_runnable(index);
+    self.set_runnable(index);
 }
 
 pub fn release(self: *Scheduler, index: usize) !void {

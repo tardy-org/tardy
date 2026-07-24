@@ -22,7 +22,7 @@ pub fn Spsc(comptime T: type) type {
                 log.debug("producer sending...", .{});
                 while (true) switch (self.inner.state.load(.acquire)) {
                     // Both ends must be open.
-                    .starting => try self.rt.scheduler.trigger_await(),
+                    .starting => self.rt.scheduler.trigger_await(),
                     // Channel was cleaned up.
                     .closed => return error.Closed,
                     .running => {
@@ -34,7 +34,7 @@ pub fn Spsc(comptime T: type) type {
                                     .release,
                                 );
                                 try self.inner.trigger_consumer();
-                                try self.rt.scheduler.trigger_await();
+                                self.rt.scheduler.trigger_await();
                                 continue;
                             },
                         };
@@ -58,7 +58,7 @@ pub fn Spsc(comptime T: type) type {
                 log.debug("consumer recving...", .{});
                 while (true) switch (self.inner.state.load(.acquire)) {
                     // Both ends must be open.
-                    .starting => try self.rt.scheduler.trigger_await(),
+                    .starting => self.rt.scheduler.trigger_await(),
                     // Channel was cleaned up.
                     .closed => return error.Closed,
                     .running => {
@@ -71,7 +71,7 @@ pub fn Spsc(comptime T: type) type {
                                     .release,
                                 );
                                 try self.inner.trigger_producer();
-                                try self.rt.scheduler.trigger_await();
+                                self.rt.scheduler.trigger_await();
                                 continue;
                             },
                         };
