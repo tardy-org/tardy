@@ -1,15 +1,5 @@
-const std = @import("std");
-
-const options = @import("options");
-const tardy = @import("tardy");
-const Runtime = tardy.Runtime;
-const Timer = Runtime.Timer;
-const AsyncIO = tardy.AsyncIO;
-
 const backend: AsyncIO.Kind = .init(options.async_backend);
 const Tardy = tardy.Tardy(backend);
-
-const log = std.log.scoped(.@"tardy/example/basic");
 
 fn log_frame(rt: *Runtime) !void {
     var count: usize = 0;
@@ -39,3 +29,13 @@ pub fn main(init: std.process.Init) !void {
         }.init_fn,
     );
 }
+
+const log = std.log.scoped(.@"tardy/example/basic");
+
+const std = @import("std");
+
+const options = @import("options");
+const tardy = @import("tardy");
+const Runtime = tardy.Runtime;
+const Timer = Runtime.Timer;
+const AsyncIO = tardy.AsyncIO;

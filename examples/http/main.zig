@@ -34,7 +34,7 @@ fn main_frame(rt: *Runtime, server: *const Socket) !void {
             return;
         };
 
-        if (std.mem.indexOf(u8, buffer[0..recv_length], "\r\n\r\n")) |_| {
+        if (std.mem.find(u8, buffer[0..recv_length], "\r\n\r\n")) |_| {
             _ = socket.send_all(rt, HTTP_RESPONSE[0..]) catch |e| {
                 log.err("Failed to send on socket | {}", .{e});
                 return;
@@ -48,7 +48,9 @@ pub fn main(init: std.process.Init) !void {
     const host = "0.0.0.0";
     const port = 9862;
 
-    const server: Socket = try .init(init.io, .{ .tcp = .{ .host = host, .port = port } });
+    const server: Socket = try .init(init.io, .{
+        .tcp = .{ .host = host, .port = port },
+    });
     try server.bind();
     try server.listen(1024);
 
