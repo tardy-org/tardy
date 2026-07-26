@@ -152,7 +152,7 @@ pub fn run(rt: *Runtime) !void {
                     });
 
                     rt.scheduler.triggers.unset(rt.io, index);
-                    try rt.scheduler.set_runnable(index);
+                    rt.scheduler.set_runnable(index);
                 },
                 .wait_for_io => continue,
                 .dead => unreachable,
@@ -185,7 +185,7 @@ pub fn run(rt: *Runtime) !void {
             const task = rt.scheduler.tasks.get_ptr(index);
             debug.assert(task.state == .wait_for_io);
             task.result = completion.result;
-            try rt.scheduler.set_runnable(index);
+            rt.scheduler.set_runnable(index);
         }
 
         if (rt.scheduler.runnable == 0 and !force_woken) {
