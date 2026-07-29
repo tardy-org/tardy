@@ -18,7 +18,7 @@ stack_mem: []align(raw_alignment) u8,
 /// Is the Coroutine Frame done?
 status: Status = .in_progress,
 
-pub const Stack = enum(usize) {
+pub const Stack = enum(u32) {
     @"2KiB" = 2 * unit,
     @"4KiB" = 4 * unit,
     @"8KiB" = 8 * unit,
