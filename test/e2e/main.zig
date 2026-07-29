@@ -15,16 +15,24 @@ pub fn main(init: std.process.Init) !void {
     var maybe_seed_buffer: [21]u8 = undefined;
     const seed_string = args.next() orelse blk: {
         var stdin_r = Io.File.stdin().reader(io, &.{});
-        const bytes = try stdin_r.interface.allocRemaining(gpa, .limited(max_stderr_output));
+        const bytes = try stdin_r.interface.allocRemaining(
+            gpa,
+            .limited(max_stderr_output),
+        );
         defer gpa.free(bytes);
 
-        var iter = mem.splitScalar(u8, bytes, '\n');
+        var iter = mem.splitScalar(
+            u8,
+            bytes,
+            '\n',
+        );
         const not_passed_in = "seed not passed in: ./e2e [seed]";
         const pre_new = iter.next() orelse @panic(not_passed_in);
         const length = pre_new.len;
 
         if (length <= 1) @panic(not_passed_in);
-        if (length >= maybe_seed_buffer.len) @panic("seed too long to be a u64");
+        if (length >= maybe_seed_buffer.len)
+            @panic("seed too long to be a u64");
 
         debug.assert(length < maybe_seed_buffer.len);
         @memcpy(maybe_seed_buffer[0..length], pre_new);
@@ -32,7 +40,9 @@ pub fn main(init: std.process.Init) !void {
         break :blk maybe_seed_buffer[0..length :0];
     };
 
-    const seed = std.fmt.parseUnsigned(u64, seed_string, 10) catch @panic("seed passed in is not u64");
+    const seed = std.fmt.parseUnsigned(u64, seed_string, 10) catch
+        @panic("seed passed in is not u64");
+
     var prng: std.Random.DefaultPrng = .init(seed);
     const rand = prng.random();
 
@@ -58,7 +68,7 @@ pub fn main(init: std.process.Init) !void {
     defer td.deinit();
 
     const EntryParams = struct {
-        runtime: ?*Runtime,
+        runtime: ?*tardy.Runtime,
         shared: *const e2e.Params,
     };
 
@@ -70,7 +80,7 @@ pub fn main(init: std.process.Init) !void {
     try td.entry(
         &params,
         struct {
-            fn start(rt: *Runtime, p: *EntryParams) !void {
+            fn start(rt: *tardy.Runtime, p: *EntryParams) !void {
                 switch (rt.id) {
                     0 => {
                         p.runtime = rt;
@@ -79,9 +89,17 @@ pub fn main(init: std.process.Init) !void {
                             .{ rt, p.shared },
                             if (is_unix) .KiB(28) else .MiB(2),
                         );
-                        try rt.spawn(second.start_frame, .{ rt, p.shared }, .@"32KiB");
+                        try rt.spawn(
+                            second.start_frame,
+                            .{ rt, p.shared },
+                            .@"32KiB",
+                        );
                     },
-                    1 => try rt.spawn(timeout_task, .{ rt, &p.runtime }, .@"32KiB"),
+                    1 => try rt.spawn(
+                        timeout_task,
+                        .{ rt, &p.runtime },
+                        .@"32KiB",
+                    ),
                     else => unreachable,
                 }
             }
@@ -91,12 +109,15 @@ pub fn main(init: std.process.Init) !void {
     log.info("seed={d} passed", .{seed});
 }
 
-fn timeout_task(rt: *Runtime, other: *const ?*Runtime) !void {
-    const TIMEOUT_LENGTH_S = std.time.s_per_min;
+fn timeout_task(rt: *tardy.Runtime, other: *const ?*tardy.Runtime) !void {
+    const timeout_length_s = std.time.s_per_min;
 
     // Checks every second to see if the other Runtime is done.
-    for (0..TIMEOUT_LENGTH_S) |_| {
-        try Timer.delay(rt, .{ .nanoseconds = 1 * std.time.ns_per_s });
+    for (0..timeout_length_s) |_| {
+        try Timer.delay(
+            rt,
+            .{ .nanoseconds = 1 * std.time.ns_per_s },
+        );
         if (other.*) |o| if (!o.running) break;
     }
 
@@ -120,10 +141,7 @@ const builtin = @import("builtin");
 const options = @import("options");
 const tardy = @import("tardy");
 const AsyncIO = tardy.AsyncIO;
-const Dir = tardy.fs.Dir;
-const Runtime = tardy.Runtime;
-const Task = Runtime.Task;
-const Timer = Runtime.Timer;
+const Timer = tardy.Runtime.Timer;
 
 const e2e = @import("e2e.zig");
 const first = @import("first.zig");
