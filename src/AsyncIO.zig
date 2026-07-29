@@ -27,10 +27,15 @@ pub fn deinit(self: *AsyncIO, allocator: mem.Allocator, io: Io) void {
     self.vtable.deinit(self.runner, allocator);
 }
 
-pub fn queue_job(self: *AsyncIO, task: usize, sub: Submission) QueueJobError!void {
+pub fn queue_job(
+    self: *AsyncIO,
+    allocator: mem.Allocator,
+    task: usize,
+    sub: Submission,
+) QueueJobError!void {
     debug.assert(self.attached);
     log.debug("queuing up job={t} at index={d}", .{ sub, task });
-    try self.vtable.queue_job(self.runner, task, sub);
+    try self.vtable.queue_job(self.runner, allocator, task, sub);
 }
 
 pub fn wake(self: *AsyncIO, io: Io) !void {
@@ -41,9 +46,9 @@ pub fn wake(self: *AsyncIO, io: Io) !void {
     try self.vtable.wake(self.runner);
 }
 
-pub fn reap(self: *AsyncIO, wait: bool) ![]results.Completion {
+pub fn reap(self: *AsyncIO, allocator: mem.Allocator, wait: bool) ![]results.Completion {
     debug.assert(self.attached);
-    return try self.vtable.reap(self.runner, self.completions, wait);
+    return try self.vtable.reap(self.runner, allocator, self.completions, wait);
 }
 
 pub fn submit(self: *AsyncIO) !void {
@@ -258,10 +263,20 @@ pub const QueueJobError = IoUring.Errors.QueueJob ||
     Kqueue.Errors.QueueJob;
 
 const VTable = struct {
-    queue_job: *const fn (*anyopaque, usize, Submission) QueueJobError!void,
+    queue_job: *const fn (
+        *anyopaque,
+        mem.Allocator,
+        usize,
+        Submission,
+    ) QueueJobError!void,
     deinit: *const fn (*anyopaque, mem.Allocator) void,
     wake: *const fn (*anyopaque) anyerror!void,
-    reap: *const fn (*anyopaque, []results.Completion, bool) anyerror![]results.Completion,
+    reap: *const fn (
+        *anyopaque,
+        mem.Allocator,
+        []results.Completion,
+        bool,
+    ) anyerror![]results.Completion,
     submit: *const fn (*anyopaque) anyerror!void,
 };
 
