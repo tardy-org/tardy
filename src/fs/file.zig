@@ -49,7 +49,9 @@ pub fn std_err() File {
 
 pub fn close(self: File, rt: *Runtime) !void {
     if (rt.aio.features.has_capability(.close))
-        try rt.scheduler.io_await(.{ .close = self.handle })
+        try rt.scheduler.io_await(rt.allocator, .{
+            .close = self.handle,
+        })
     else
         syscall.close(self.handle);
 }
@@ -69,7 +71,9 @@ pub fn create(rt: *Runtime, path: fs.Path, flags: CreateFlags) !File {
     };
 
     if (rt.aio.features.has_capability(.open)) {
-        try rt.scheduler.io_await(.{ .open = .{ .path = path, .flags = aio_flags } });
+        try rt.scheduler.io_await(rt.allocator, .{
+            .open = .{ .path = path, .flags = aio_flags },
+        });
 
         const index = rt.current_task.?;
         const task = rt.scheduler.tasks.get(index);
@@ -171,7 +175,9 @@ pub fn open(rt: *Runtime, path: fs.Path, flags: OpenFlags) !File {
             .directory = false,
         };
 
-        try rt.scheduler.io_await(.{ .open = .{ .path = path, .flags = aio_flags } });
+        try rt.scheduler.io_await(rt.allocator, .{
+            .open = .{ .path = path, .flags = aio_flags },
+        });
 
         const index = rt.current_task.?;
         const task = rt.scheduler.tasks.get(index);
@@ -260,7 +266,7 @@ pub fn open(rt: *Runtime, path: fs.Path, flags: OpenFlags) !File {
 
 pub fn read(self: File, rt: *Runtime, buffer: []u8, offset: ?usize) !usize {
     if (rt.aio.features.has_capability(.read)) {
-        try rt.scheduler.io_await(.{
+        try rt.scheduler.io_await(rt.allocator, .{
             .read = .{
                 .fd = self.handle,
                 .buffer = buffer,
@@ -345,8 +351,12 @@ pub fn write(
     offset: ?usize,
 ) results.WriteError!usize {
     if (rt.aio.features.has_capability(.write)) {
-        rt.scheduler.io_await(.{
-            .write = .{ .fd = self.handle, .buffer = buffer, .offset = offset },
+        rt.scheduler.io_await(rt.allocator, .{
+            .write = .{
+                .fd = self.handle,
+                .buffer = buffer,
+                .offset = offset,
+            },
         }) catch unreachable;
 
         const index = rt.current_task.?;
@@ -425,7 +435,9 @@ pub fn write_all(
 
 pub fn stat(self: File, rt: *Runtime) !fs.Stat {
     if (rt.aio.features.has_capability(.stat)) {
-        try rt.scheduler.io_await(.{ .stat = self.handle });
+        try rt.scheduler.io_await(rt.allocator, .{
+            .stat = self.handle,
+        });
 
         const index = rt.current_task.?;
         const task = rt.scheduler.tasks.get(index);

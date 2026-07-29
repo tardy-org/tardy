@@ -305,7 +305,9 @@ pub fn listen(self: Socket, backlog: usize) !void {
 // TODO: rethink the aio to io approach
 pub fn close(self: Socket, rt: *Runtime) !void {
     if (rt.aio.features.has_capability(.close))
-        try rt.scheduler.io_await(.{ .close = self.handle })
+        try rt.scheduler.io_await(rt.allocator, .{
+            .close = self.handle,
+        })
     else
         syscall.close(self.handle);
 }
@@ -319,7 +321,7 @@ pub fn close_blocking(self: Socket) void {
 pub fn accept(self: Socket, rt: *Runtime) !Socket {
     debug.assert(self.kind.listenable());
     if (rt.aio.features.has_capability(.accept)) {
-        try rt.scheduler.io_await(.{
+        try rt.scheduler.io_await(rt.allocator, .{
             .accept = .{
                 .socket = self.handle,
                 .kind = self.kind,
@@ -362,7 +364,7 @@ pub fn accept(self: Socket, rt: *Runtime) !Socket {
 
 pub fn connect(self: Socket, rt: *Runtime) !void {
     if (rt.aio.features.has_capability(.connect)) {
-        try rt.scheduler.io_await(.{
+        try rt.scheduler.io_await(rt.allocator, .{
             .connect = .{
                 .socket = self.handle,
                 .addr = self.addr,
@@ -391,7 +393,7 @@ pub fn connect(self: Socket, rt: *Runtime) !void {
 
 pub fn recv(self: Socket, rt: *Runtime, buffer: []u8) !usize {
     if (rt.aio.features.has_capability(.recv)) {
-        try rt.scheduler.io_await(.{
+        try rt.scheduler.io_await(rt.allocator, .{
             .recv = .{
                 .socket = self.handle,
                 .buffer = buffer,
@@ -434,7 +436,7 @@ pub fn recv_all(self: Socket, rt: *Runtime, buffer: []u8) !usize {
 
 pub fn send(self: Socket, rt: *Runtime, buffer: []const u8) !usize {
     if (rt.aio.features.has_capability(.send)) {
-        try rt.scheduler.io_await(.{
+        try rt.scheduler.io_await(rt.allocator, .{
             .send = .{
                 .socket = self.handle,
                 .buffer = buffer,
