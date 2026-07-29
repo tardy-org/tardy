@@ -1,6 +1,5 @@
 pub const IoUring = @This();
 
-allocator: mem.Allocator,
 inner: *linux.IoUring,
 wake_event_fd: posix.fd_t,
 wake_event_buffer: []u8,
@@ -34,8 +33,10 @@ const base_flags = blk: {
     break :blk flags;
 };
 
-pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) (mem.Allocator.Error ||
-    Errors.Init)!IoUring {
+pub fn init(
+    allocator: mem.Allocator,
+    options: AsyncIO.Options,
+) (mem.Allocator.Error || Errors.Init)!IoUring {
     // Extra job for the wake event_fd.
     const size = options.size_tasks_initial + 1;
 
@@ -93,7 +94,7 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) (mem.Allocator.E
         size,
         options.pooling,
     );
-    errdefer jobs.deinit();
+    errdefer jobs.deinit(allocator);
 
     const index = jobs.borrow_assume_unset(0);
     const item = jobs.get_ptr(index);
@@ -117,7 +118,6 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) (mem.Allocator.E
 
     return .{
         .inner = uring,
-        .allocator = allocator,
         .wake_event_fd = wake_event_fd,
         .wake_event_buffer = wake_event_buffer,
         .jobs = jobs,
@@ -125,13 +125,13 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) (mem.Allocator.E
     };
 }
 
-pub fn inner_deinit(self: *IoUring, allocator: mem.Allocator) void {
-    syscall.close(self.wake_event_fd);
-    self.inner.deinit();
-    self.jobs.deinit();
-    allocator.free(self.wake_event_buffer);
-    allocator.free(self.cqes);
-    allocator.destroy(self.inner);
+pub fn inner_deinit(io_uring: *IoUring, allocator: mem.Allocator) void {
+    syscall.close(io_uring.wake_event_fd);
+    io_uring.inner.deinit();
+    io_uring.jobs.deinit(allocator);
+    allocator.free(io_uring.wake_event_buffer);
+    allocator.free(io_uring.cqes);
+    allocator.destroy(io_uring.inner);
 }
 
 fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
@@ -141,37 +141,115 @@ fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
 
 fn queue_job(
     runner: *anyopaque,
+    allocator: mem.Allocator,
     task: usize,
     job: AsyncIO.Submission,
 ) Errors.QueueJob!void {
     const uring: *IoUring = @ptrCast(@alignCast(runner));
     (switch (job) {
-        .timer => |inner| queue_timer(uring, task, inner),
-        .open => |inner| queue_open(uring, task, inner.path, inner.flags),
-        .delete => |inner| queue_delete(uring, task, inner.path, inner.is_dir),
-        .mkdir => |inner| queue_mkdir(uring, task, inner.path, inner.mode),
-        .stat => |inner| queue_stat(uring, task, inner),
-        .read => |inner| queue_read(uring, task, inner.fd, inner.buffer, inner.offset),
-        .write => |inner| queue_write(uring, task, inner.fd, inner.buffer, inner.offset),
-        .close => |inner| queue_close(uring, task, inner),
-        .accept => |inner| queue_accept(uring, task, inner.socket, inner.kind),
-        .connect => |inner| queue_connect(uring, task, inner.socket, inner.addr, inner.kind),
-        .recv => |inner| queue_recv(uring, task, inner.socket, inner.buffer),
-        .send => |inner| queue_send(uring, task, inner.socket, inner.buffer),
+        .timer => |inner| queue_timer(
+            uring,
+            allocator,
+            task,
+            inner,
+        ),
+        .open => |inner| queue_open(
+            uring,
+            allocator,
+            task,
+            inner.path,
+            inner.flags,
+        ),
+        .delete => |inner| queue_delete(
+            uring,
+            allocator,
+            task,
+            inner.path,
+            inner.is_dir,
+        ),
+        .mkdir => |inner| queue_mkdir(
+            uring,
+            allocator,
+            task,
+            inner.path,
+            inner.mode,
+        ),
+        .stat => |inner| queue_stat(
+            uring,
+            allocator,
+            task,
+            inner,
+        ),
+        .read => |inner| queue_read(
+            uring,
+            allocator,
+            task,
+            inner.fd,
+            inner.buffer,
+            inner.offset,
+        ),
+        .write => |inner| queue_write(
+            uring,
+            allocator,
+            task,
+            inner.fd,
+            inner.buffer,
+            inner.offset,
+        ),
+        .close => |inner| queue_close(
+            uring,
+            allocator,
+            task,
+            inner,
+        ),
+        .accept => |inner| queue_accept(
+            uring,
+            allocator,
+            task,
+            inner.socket,
+            inner.kind,
+        ),
+        .connect => |inner| queue_connect(
+            uring,
+            allocator,
+            task,
+            inner.socket,
+            inner.addr,
+            inner.kind,
+        ),
+        .recv => |inner| queue_recv(
+            uring,
+            allocator,
+            task,
+            inner.socket,
+            inner.buffer,
+        ),
+        .send => |inner| queue_send(
+            uring,
+            allocator,
+            task,
+            inner.socket,
+            inner.buffer,
+        ),
     }) catch |e| switch (e) {
         error.SubmissionQueueFull => {
             try submit(runner);
-            try queue_job(runner, task, job);
+            try queue_job(runner, allocator, task, job);
         },
         else => |err| return err,
     };
 }
 
-fn queue_timer(self: *IoUring, task: usize, duration: Io.Duration) Error!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
+fn queue_timer(
+    io_uring: *IoUring,
+    allocator: mem.Allocator,
+    task: usize,
+    duration: Io.Duration,
+) Error!void {
+    const index = try io_uring.jobs.borrow_hint(allocator, task);
+    errdefer io_uring.jobs.release(index);
 
-    const item = self.jobs.get_ptr(index);
+    const item = io_uring.jobs.get_ptr(index);
     item.job = .{
         .index = index,
         .task = task,
@@ -179,8 +257,8 @@ fn queue_timer(self: *IoUring, task: usize, duration: Io.Duration) Error!void {
     };
 
     // TODO: make copierble types none pointers
-    const timespec_ptr = try self.allocator.create(linux.kernel_timespec);
-    errdefer self.allocator.destroy(timespec_ptr);
+    const timespec_ptr = try allocator.create(linux.kernel_timespec);
+    errdefer allocator.destroy(timespec_ptr);
 
     timespec_ptr.* = .{
         .sec = @intCast(@divFloor(duration.nanoseconds, std.time.ns_per_s)),
@@ -188,19 +266,25 @@ fn queue_timer(self: *IoUring, task: usize, duration: Io.Duration) Error!void {
     };
     item.timespec = timespec_ptr;
 
-    _ = try self.inner.timeout(index, timespec_ptr, 0, 0);
+    _ = try io_uring.inner.timeout(
+        index,
+        timespec_ptr,
+        0,
+        0,
+    );
 }
 
 fn queue_open(
-    self: *IoUring,
+    io_uring: *IoUring,
+    allocator: mem.Allocator,
     task: usize,
     path: fs.Path,
     flags: AsyncIO.OpenFlags,
 ) Error!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
+    const index = try io_uring.jobs.borrow_hint(allocator, task);
+    errdefer io_uring.jobs.release(index);
 
-    const item = self.jobs.get_ptr(index);
+    const item = io_uring.jobs.get_ptr(index);
     item.job = .{
         .index = index,
         .type = .{
@@ -237,14 +321,14 @@ fn queue_open(
     const perms = flags.perms orelse 0;
 
     switch (path) {
-        .rel => |inner| _ = try self.inner.openat(
+        .rel => |inner| _ = try io_uring.inner.openat(
             index,
             inner.dir,
             inner.path.ptr,
             o_flags,
             @intCast(perms),
         ),
-        .abs => |inner| _ = try self.inner.openat(
+        .abs => |inner| _ = try io_uring.inner.openat(
             index,
             posix.AT.FDCWD,
             inner.ptr,
@@ -254,11 +338,17 @@ fn queue_open(
     }
 }
 
-fn queue_delete(self: *IoUring, task: usize, path: fs.Path, is_dir: bool) Error!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
+fn queue_delete(
+    io_uring: *IoUring,
+    allocator: mem.Allocator,
+    task: usize,
+    path: fs.Path,
+    is_dir: bool,
+) Error!void {
+    const index = try io_uring.jobs.borrow_hint(allocator, task);
+    errdefer io_uring.jobs.release(index);
 
-    const item = self.jobs.get_ptr(index);
+    const item = io_uring.jobs.get_ptr(index);
     item.job = .{
         .index = index,
         .type = .{
@@ -273,16 +363,22 @@ fn queue_delete(self: *IoUring, task: usize, path: fs.Path, is_dir: bool) Error!
     const mode: u32 = if (is_dir) posix.AT.REMOVEDIR else 0;
 
     switch (path) {
-        .rel => |inner| _ = try self.inner.unlinkat(index, inner.dir, inner.path.ptr, mode),
-        .abs => |inner| _ = try self.inner.unlinkat(index, posix.AT.FDCWD, inner.ptr, mode),
+        .rel => |inner| _ = try io_uring.inner.unlinkat(index, inner.dir, inner.path.ptr, mode),
+        .abs => |inner| _ = try io_uring.inner.unlinkat(index, posix.AT.FDCWD, inner.ptr, mode),
     }
 }
 
-fn queue_mkdir(self: *IoUring, task: usize, path: fs.Path, mode: isize) Error!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
+fn queue_mkdir(
+    io_uring: *IoUring,
+    allocator: mem.Allocator,
+    task: usize,
+    path: fs.Path,
+    mode: isize,
+) Error!void {
+    const index = try io_uring.jobs.borrow_hint(allocator, task);
+    errdefer io_uring.jobs.release(index);
 
-    const item = self.jobs.get_ptr(index);
+    const item = io_uring.jobs.get_ptr(index);
     item.job = .{
         .index = index,
         .type = .{
@@ -295,27 +391,42 @@ fn queue_mkdir(self: *IoUring, task: usize, path: fs.Path, mode: isize) Error!vo
     };
 
     switch (path) {
-        .rel => |inner| _ = try self.inner.mkdirat(index, inner.dir, inner.path.ptr, @intCast(mode)),
-        .abs => |inner| _ = try self.inner.mkdirat(index, posix.AT.FDCWD, inner.ptr, @intCast(mode)),
+        .rel => |inner| _ = try io_uring.inner.mkdirat(
+            index,
+            inner.dir,
+            inner.path.ptr,
+            @intCast(mode),
+        ),
+        .abs => |inner| _ = try io_uring.inner.mkdirat(
+            index,
+            posix.AT.FDCWD,
+            inner.ptr,
+            @intCast(mode),
+        ),
     }
 }
 
-fn queue_stat(self: *IoUring, task: usize, fd: posix.fd_t) Error!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
+fn queue_stat(
+    io_uring: *IoUring,
+    allocator: mem.Allocator,
+    task: usize,
+    fd: posix.fd_t,
+) Error!void {
+    const index = try io_uring.jobs.borrow_hint(allocator, task);
+    errdefer io_uring.jobs.release(index);
 
-    const item = self.jobs.get_ptr(index);
+    const item = io_uring.jobs.get_ptr(index);
     item.job = .{
         .index = index,
         .type = .{ .stat = fd },
         .task = task,
     };
 
-    const statx_ptr = try self.allocator.create(linux.Statx);
-    errdefer self.allocator.destroy(statx_ptr);
+    const statx_ptr = try allocator.create(linux.Statx);
+    errdefer allocator.destroy(statx_ptr);
     item.statx = statx_ptr;
 
-    _ = try self.inner.statx(
+    _ = try io_uring.inner.statx(
         index,
         fd,
         "",
@@ -325,13 +436,21 @@ fn queue_stat(self: *IoUring, task: usize, fd: posix.fd_t) Error!void {
     );
 }
 
-fn queue_read(self: *IoUring, task: usize, fd: posix.fd_t, buffer: []u8, offset: ?usize) Error!void {
+fn queue_read(
+    io_uring: *IoUring,
+    allocator: mem.Allocator,
+    task: usize,
+    fd: posix.fd_t,
+    buffer: []u8,
+    offset: ?usize,
+) Error!void {
+    const index = try io_uring.jobs.borrow_hint(allocator, task);
+    errdefer io_uring.jobs.release(index);
+
     // If we don't have an offset, set it as -1.
     const real_offset: usize = if (offset) |o| o else @bitCast(@as(isize, -1));
 
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
-    const item = self.jobs.get_ptr(index);
+    const item = io_uring.jobs.get_ptr(index);
     item.job = .{
         .index = index,
         .type = .{
@@ -344,16 +463,32 @@ fn queue_read(self: *IoUring, task: usize, fd: posix.fd_t, buffer: []u8, offset:
         .task = task,
     };
 
-    _ = try self.inner.read(index, fd, .{ .buffer = buffer }, real_offset);
+    _ = try io_uring.inner.read(
+        index,
+        fd,
+        .{ .buffer = buffer },
+        real_offset,
+    );
 }
 
-fn queue_write(self: *IoUring, task: usize, fd: posix.fd_t, buffer: []const u8, offset: ?usize) Error!void {
+fn queue_write(
+    io_uring: *IoUring,
+    allocator: mem.Allocator,
+    task: usize,
+    fd: posix.fd_t,
+    buffer: []const u8,
+    offset: ?usize,
+) Error!void {
+    const index = io_uring.jobs.borrow_hint(
+        allocator,
+        task,
+    ) catch @panic("OOM");
+    errdefer io_uring.jobs.release(index);
+
     // If we don't have an offset, set it as -1.
     const real_offset: usize = if (offset) |o| o else @bitCast(@as(isize, -1));
 
-    const index = self.jobs.borrow_hint(task) catch @panic("OOM");
-    errdefer self.jobs.release(index);
-    const item = self.jobs.get_ptr(index);
+    const item = io_uring.jobs.get_ptr(index);
     item.job = .{
         .index = index,
         .type = .{
@@ -366,33 +501,50 @@ fn queue_write(self: *IoUring, task: usize, fd: posix.fd_t, buffer: []const u8, 
         .task = task,
     };
 
-    _ = try self.inner.write(index, fd, buffer, real_offset);
+    _ = try io_uring.inner.write(
+        index,
+        fd,
+        buffer,
+        real_offset,
+    );
 }
 
-fn queue_close(self: *IoUring, task: usize, fd: posix.fd_t) Error!void {
-    const index = self.jobs.borrow_hint(task) catch @panic("OOM");
-    errdefer self.jobs.release(index);
+fn queue_close(
+    io_uring: *IoUring,
+    allocator: mem.Allocator,
+    task: usize,
+    fd: posix.fd_t,
+) Error!void {
+    const index = io_uring.jobs.borrow_hint(
+        allocator,
+        task,
+    ) catch @panic("OOM");
+    errdefer io_uring.jobs.release(index);
 
-    const item = self.jobs.get_ptr(index);
+    const item = io_uring.jobs.get_ptr(index);
     item.job = .{
         .index = index,
         .type = .{ .close = fd },
         .task = task,
     };
 
-    _ = try self.inner.close(index, fd);
+    _ = try io_uring.inner.close(index, fd);
 }
 
 fn queue_accept(
-    self: *IoUring,
+    io_uring: *IoUring,
+    allocator: mem.Allocator,
     task: usize,
     socket: posix.socket_t,
     kind: net.Socket.Kind,
 ) Error!void {
-    const index = self.jobs.borrow_hint(task) catch @panic("OOM");
-    errdefer self.jobs.release(index);
+    const index = io_uring.jobs.borrow_hint(
+        allocator,
+        task,
+    ) catch @panic("OOM");
+    errdefer io_uring.jobs.release(index);
 
-    const item = self.jobs.get_ptr(index);
+    const item = io_uring.jobs.get_ptr(index);
     item.job = .{
         .index = index,
         .type = .{
@@ -406,7 +558,7 @@ fn queue_accept(
     };
     var sockaddr, var socklen = item.job.type.accept.addr.toPosix();
 
-    _ = try self.inner.accept(
+    _ = try io_uring.inner.accept(
         index,
         socket,
         &sockaddr,
@@ -416,16 +568,20 @@ fn queue_accept(
 }
 
 fn queue_connect(
-    self: *IoUring,
+    io_uring: *IoUring,
+    allocator: mem.Allocator,
     task: usize,
     socket: posix.socket_t,
     addr: net.Socket.Address,
     kind: net.Socket.Kind,
 ) Error!void {
-    const index = self.jobs.borrow_hint(task) catch @panic("OOM");
-    errdefer self.jobs.release(index);
+    const index = io_uring.jobs.borrow_hint(
+        allocator,
+        task,
+    ) catch @panic("OOM");
+    errdefer io_uring.jobs.release(index);
 
-    const item = self.jobs.get_ptr(index);
+    const item = io_uring.jobs.get_ptr(index);
     item.job = .{
         .index = index,
         .type = .{
@@ -439,7 +595,7 @@ fn queue_connect(
     };
     const sockaddr, const socklen = item.job.type.connect.addr.toPosix();
 
-    _ = try self.inner.connect(
+    _ = try io_uring.inner.connect(
         index,
         socket,
         &sockaddr,
@@ -448,14 +604,19 @@ fn queue_connect(
 }
 
 fn queue_recv(
-    self: *IoUring,
+    io_uring: *IoUring,
+    allocator: mem.Allocator,
     task: usize,
     socket: posix.socket_t,
     buffer: []u8,
 ) Error!void {
-    const index = self.jobs.borrow_hint(task) catch @panic("OOM");
-    errdefer self.jobs.release(index);
-    const item = self.jobs.get_ptr(index);
+    const index = io_uring.jobs.borrow_hint(
+        allocator,
+        task,
+    ) catch @panic("OOM");
+    errdefer io_uring.jobs.release(index);
+
+    const item = io_uring.jobs.get_ptr(index);
     item.job = .{
         .index = index,
         .type = .{
@@ -467,14 +628,25 @@ fn queue_recv(
         .task = task,
     };
 
-    _ = try self.inner.recv(index, socket, .{ .buffer = buffer }, 0);
+    _ = try io_uring.inner.recv(
+        index,
+        socket,
+        .{ .buffer = buffer },
+        0,
+    );
 }
 
-fn queue_send(self: *IoUring, task: usize, socket: posix.socket_t, buffer: []const u8) Error!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
+fn queue_send(
+    io_uring: *IoUring,
+    allocator: mem.Allocator,
+    task: usize,
+    socket: posix.socket_t,
+    buffer: []const u8,
+) Error!void {
+    const index = try io_uring.jobs.borrow_hint(allocator, task);
+    errdefer io_uring.jobs.release(index);
 
-    const item = self.jobs.get_ptr(index);
+    const item = io_uring.jobs.get_ptr(index);
     item.job = .{
         .index = index,
         .type = .{
@@ -486,26 +658,26 @@ fn queue_send(self: *IoUring, task: usize, socket: posix.socket_t, buffer: []con
         .task = task,
     };
 
-    _ = try self.inner.send(index, socket, buffer, 0);
+    _ = try io_uring.inner.send(index, socket, buffer, 0);
 }
 
-inline fn queue_wake(self: *IoUring) Error!void {
-    if (self.wake_event_fd == cross.fd.INVALID_FD) return;
+inline fn queue_wake(io_uring: *IoUring, alloator: mem.Allocator) Error!void {
+    const index = try io_uring.jobs.borrow(alloator);
+    errdefer io_uring.jobs.release(index);
 
-    const index = try self.jobs.borrow();
-    errdefer self.jobs.release(index);
+    if (io_uring.wake_event_fd == cross.fd.INVALID_FD) return;
 
-    const item = self.jobs.get_ptr(index);
+    const item = io_uring.jobs.get_ptr(index);
     item.job = .{
         .index = index,
         .type = .wake,
         .task = undefined,
     };
 
-    _ = try self.inner.read(
+    _ = try io_uring.inner.read(
         index,
-        self.wake_event_fd,
-        .{ .buffer = self.wake_event_buffer },
+        io_uring.wake_event_fd,
+        .{ .buffer = io_uring.wake_event_buffer },
         0,
     );
 }
@@ -530,6 +702,7 @@ fn submit(runner: *anyopaque) Errors.Submit!void {
 
 fn reap(
     runner: *anyopaque,
+    allocator: mem.Allocator,
     completions: []results.Completion,
     wait: bool,
 ) Errors.Reap![]results.Completion {
@@ -560,11 +733,11 @@ fn reap(
             }
             switch (job.type) {
                 .wake => {
-                    try uring.queue_wake();
+                    try uring.queue_wake(allocator);
                     break :blk .wake;
                 },
                 .timer => {
-                    defer uring.allocator.destroy(job_with_data.timespec);
+                    defer allocator.destroy(job_with_data.timespec);
                     break :blk .none;
                 },
                 .close => break :blk .close,
@@ -830,7 +1003,7 @@ fn reap(
                     break :blk .{ .write = result };
                 },
                 .stat => {
-                    defer uring.allocator.destroy(job_with_data.statx);
+                    defer allocator.destroy(job_with_data.statx);
 
                     if (cqe.res == 0) {
                         const statx = job_with_data.statx;
@@ -881,9 +1054,9 @@ fn reap(
     return completions[0..count];
 }
 
-pub fn to_async(self: *IoUring) AsyncIO {
+pub fn to_async(io_uring: *IoUring) AsyncIO {
     return .{
-        .runner = self,
+        .runner = io_uring,
         .features = .all(),
         .vtable = .{
             .queue_job = queue_job,
@@ -934,7 +1107,7 @@ pub const Errors = struct {
         // described by `addr` and `len` is not within the buffer registered at `buf_index`:
         BufferInvalid,
         RingShuttingDown,
-        // The kernel believes our `self.fd` does not refer to an io_uring instance,
+        // The kernel believes our `io_uring.fd` does not refer to an io_uring instance,
         // or the opcode is valid but not supported by this kernel (more likely):
         OpcodeNotSupported,
         // The thread submitting the work is invalid. This may occur if IORING_ENTER_GETEVENTS
