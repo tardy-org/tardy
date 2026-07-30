@@ -7,7 +7,7 @@ events: []posix.Kevent,
 
 jobs: pool.Pool(Job),
 
-pub fn init(allocator: std.mem.Allocator, options: AsyncIO.Options) !Kqueue {
+pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Kqueue {
     const kqueue_fd = try syscall.kqueue();
     debug.assert(kqueue_fd > -1);
     errdefer syscall.close(kqueue_fd);
@@ -59,14 +59,14 @@ pub fn init(allocator: std.mem.Allocator, options: AsyncIO.Options) !Kqueue {
     };
 }
 
-pub fn inner_deinit(kqueue: *Kqueue, allocator: std.mem.Allocator) void {
+pub fn inner_deinit(kqueue: *Kqueue, allocator: mem.Allocator) void {
     syscall.close(kqueue.kqueue_fd);
     allocator.free(kqueue.events);
     allocator.free(kqueue.changes);
     kqueue.jobs.deinit(allocator);
 }
 
-pub fn deinit(runner: *anyopaque, allocator: std.mem.Allocator) void {
+pub fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
     const kqueue: *Kqueue = @ptrCast(@alignCast(runner));
     kqueue.inner_deinit(allocator);
 }

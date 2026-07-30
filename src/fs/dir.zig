@@ -65,7 +65,11 @@ pub fn open(rt: *Runtime, path: fs.Path) !Dir {
             .rel => |inner| {
                 const dir: StdDir = .{ .handle = inner.dir };
 
-                const opened = dir.openDir(rt.io, inner.path, .{ .iterate = true }) catch |e| {
+                const opened = dir.openDir(
+                    rt.io,
+                    inner.path,
+                    .{ .iterate = true },
+                ) catch |e| {
                     return switch (e) {
                         StdDir.OpenError.AccessDenied => OpenError.AccessDenied,
                         else => OpenError.Unexpected,
@@ -75,7 +79,11 @@ pub fn open(rt: *Runtime, path: fs.Path) !Dir {
                 return .{ .handle = opened.handle };
             },
             .abs => |inner| {
-                const opened = Io.Dir.openDirAbsolute(rt.io, inner, .{ .iterate = true }) catch |e| {
+                const opened = Io.Dir.openDirAbsolute(
+                    rt.io,
+                    inner,
+                    .{ .iterate = true },
+                ) catch |e| {
                     return switch (e) {
                         StdDir.OpenError.AccessDenied => OpenError.AccessDenied,
                         else => OpenError.Unexpected,
@@ -105,7 +113,7 @@ pub fn create(rt: *Runtime, path: fs.Path) !Dir {
             else => |e| return e,
         };
 
-        return try Dir.open(rt, path);
+        return try .open(rt, path);
     } else {
         switch (path) {
             .rel => |p| {
@@ -117,7 +125,11 @@ pub fn create(rt: *Runtime, path: fs.Path) !Dir {
                 };
             },
             .abs => |p| {
-                Io.Dir.createDirAbsolute(rt.io, p, .default_dir) catch |e| {
+                Io.Dir.createDirAbsolute(
+                    rt.io,
+                    p,
+                    .default_dir,
+                ) catch |e| {
                     return switch (e) {
                         else => results.MkdirError.Unexpected,
                     };
@@ -125,7 +137,7 @@ pub fn create(rt: *Runtime, path: fs.Path) !Dir {
             },
         }
 
-        return try Dir.open(rt, path);
+        return try .open(rt, path);
     }
 }
 
@@ -161,7 +173,7 @@ pub fn open_file(
 
 /// Create a Dir relative to this Dir.
 pub fn create_dir(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !Dir {
-    return try Dir.create(rt, .{
+    return try .create(rt, .{
         .rel = .{
             .dir = dir.handle,
             .path = subpath,
@@ -171,7 +183,7 @@ pub fn create_dir(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !Dir {
 
 /// Open a Dir relative to this Dir.
 pub fn open_dir(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !Dir {
-    return try Dir.open(rt, .{
+    return try .open(rt, .{
         .rel = .{
             .dir = dir.handle,
             .path = subpath,
@@ -232,7 +244,10 @@ pub fn delete_file(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
         });
     } else {
         const std_dir = dir.to_std();
-        return std_dir.deleteFile(rt.io, subpath) catch |e| switch (e) {
+        return std_dir.deleteFile(
+            rt.io,
+            subpath,
+        ) catch |e| switch (e) {
             else => results.DeleteError.Unexpected,
         };
     }
@@ -251,7 +266,10 @@ pub fn delete_dir(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
         });
     } else {
         const std_dir = dir.to_std();
-        return std_dir.deleteDir(rt.io, subpath) catch |e| switch (e) {
+        return std_dir.deleteDir(
+            rt.io,
+            subpath,
+        ) catch |e| switch (e) {
             else => results.DeleteError.Unexpected,
         };
     }

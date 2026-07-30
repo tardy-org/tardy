@@ -149,7 +149,9 @@ pub const Address = union(enum) {
     pub fn fromAny(addr: *const posix.sockaddr) Address {
         switch (addr.family) {
             posix.AF.INET => {
-                const sock = @as(*const posix.sockaddr.in, @ptrCast(@alignCast(addr))).*;
+                const sock = @as(*const posix.sockaddr.in, @ptrCast(@alignCast(
+                    addr,
+                ))).*;
                 return .{
                     .ip = .{
                         .ip4 = .{
@@ -160,7 +162,9 @@ pub const Address = union(enum) {
                 };
             },
             posix.AF.INET6 => {
-                const sock6 = @as(*const posix.sockaddr.in6, @ptrCast(@alignCast(addr))).*;
+                const sock6 = @as(*const posix.sockaddr.in6, @ptrCast(@alignCast(
+                    addr,
+                ))).*;
                 return .{
                     .ip = .{
                         .ip6 = .{
@@ -173,7 +177,9 @@ pub const Address = union(enum) {
                 };
             },
             posix.AF.UNIX => {
-                const sockun = @as(*const posix.sockaddr.un, @ptrCast(@alignCast(addr))).*;
+                const sockun = @as(*const posix.sockaddr.un, @ptrCast(@alignCast(
+                    addr,
+                ))).*;
                 return .{
                     .unix = .{
                         .path = mem.sliceTo(&sockun.path, 0x0),
@@ -193,7 +199,10 @@ pub const Address = union(enum) {
                             .addr = @bitCast(ip4.bytes),
                             .port = mem.nativeToBig(u16, ip4.port),
                         };
-                        const addr_: posix.sockaddr = @as(*const posix.sockaddr, @ptrCast(@alignCast(&saddr))).*;
+                        const addr_: posix.sockaddr = @as(
+                            *const posix.sockaddr,
+                            @ptrCast(@alignCast(&saddr)),
+                        ).*;
                         return .{ addr_, @sizeOf(@TypeOf(saddr)) };
                     },
                     .ip6 => |ip6| {
@@ -203,7 +212,10 @@ pub const Address = union(enum) {
                             .scope_id = ip6.interface.index,
                             .port = mem.nativeToBig(u16, ip6.port),
                         };
-                        const addr_: posix.sockaddr = @as(*const posix.sockaddr, @ptrCast(@alignCast(&saddr))).*;
+                        const addr_: posix.sockaddr = @as(
+                            *const posix.sockaddr,
+                            @ptrCast(@alignCast(&saddr)),
+                        ).*;
                         return .{ addr_, @sizeOf(@TypeOf(saddr)) };
                     },
                 }
@@ -213,7 +225,10 @@ pub const Address = union(enum) {
                     .path = @splat(0x0),
                 };
                 @memcpy(saddr.path[0..unix.path.len], unix.path[0..]);
-                const addr_: posix.sockaddr = @as(*const posix.sockaddr, @ptrCast(@alignCast(&saddr))).*;
+                const addr_: posix.sockaddr = @as(
+                    *const posix.sockaddr,
+                    @ptrCast(@alignCast(&saddr)),
+                ).*;
                 return .{ addr_, @sizeOf(@TypeOf(saddr)) };
             },
         }
@@ -224,13 +239,19 @@ pub const Address = union(enum) {
 pub fn init(io_: Io, kind: InitKind) !Socket {
     const addr: Address = switch (kind) {
         .tcp, .udp => |inner| blk: {
-            break :blk if (comptime builtin.os.tag == .linux)
-                .{ .ip = try .resolve(io_, inner.host, inner.port) }
-            else
-                .{ .ip = try .parse(inner.host, inner.port) };
+            break :blk if (comptime builtin.os.tag == .linux) .{
+                .ip = try .resolve(
+                    io_,
+                    inner.host,
+                    inner.port,
+                ),
+            } else .{ .ip = try .parse(inner.host, inner.port) };
         },
         // Not supported on Windows at the moment.
-        .unix => |path| if (builtin.os.tag == .windows) unreachable else .{ .unix = try .init(path) },
+        .unix => |path| if (builtin.os.tag == .windows)
+            unreachable
+        else
+            .{ .unix = try .init(path) },
     };
 
     return try init_with_address(kind, addr);
@@ -261,7 +282,11 @@ pub fn init_with_address(kind: Kind, addr: Address) !Socket {
         sock_type;
 
     // TODO: audit these and posix uses across tardy
-    const socket = try syscall.socket(family, flags, protocol);
+    const socket = try syscall.socket(
+        family,
+        flags,
+        protocol,
+    );
 
     if (kind != .unix) {
         if (@hasDecl(posix.SO, "REUSEPORT_LB")) {
@@ -423,10 +448,11 @@ pub fn recv_all(sock: Socket, rt: *Runtime, buffer: []u8) !usize {
     var length: usize = 0;
 
     while (length < buffer.len) {
-        const result = sock.recv(rt, buffer[length..]) catch |e| switch (e) {
-            error.Closed => return length,
-            else => |err| return err,
-        };
+        const result = sock.recv(rt, buffer[length..]) catch |e|
+            switch (e) {
+                error.Closed => return length,
+                else => |err| return err,
+            };
 
         length += result;
     }
@@ -510,8 +536,14 @@ pub const Writer = struct {
         };
     }
 
-    pub fn drain(io_w: *Io.Writer, data: []const []const u8, splat: usize) Io.Writer.Error!usize {
-        const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
+    pub fn drain(
+        io_w: *Io.Writer,
+        data: []const []const u8,
+        splat: usize,
+    ) Io.Writer.Error!usize {
+        const w: *Writer = @alignCast(
+            @fieldParentPtr("interface", io_w),
+        );
         const buffered = io_w.buffered();
 
         if (buffered.len != 0) {
@@ -522,6 +554,7 @@ pub const Writer = struct {
             w.pos += n;
             return io_w.consume(n);
         }
+
         for (data[0 .. data.len - 1]) |buf| {
             if (buf.len == 0) continue;
             const n = w.socket.send(w.rt, buf) catch |err| {
@@ -531,6 +564,7 @@ pub const Writer = struct {
             w.pos += n;
             return io_w.consume(n);
         }
+
         const pattern = data[data.len - 1];
         if (pattern.len == 0 or splat == 0) return 0;
         const n = w.socket.send(w.rt, pattern) catch |err| {
@@ -579,19 +613,27 @@ pub const Reader = struct {
         };
     }
 
-    fn stream(io_reader: *Io.Reader, w: *Io.Writer, limit: Io.Limit) Io.Reader.StreamError!usize {
-        const r: *Reader = @alignCast(@fieldParentPtr("interface", io_reader));
+    fn stream(
+        io_reader: *Io.Reader,
+        w: *Io.Writer,
+        limit: Io.Limit,
+    ) Io.Reader.StreamError!usize {
+        const r: *Reader = @alignCast(
+            @fieldParentPtr("interface", io_reader),
+        );
         const w_dest = limit.slice(try w.writableSliceGreedy(1));
 
-        const n = r.socket.recv(r.rt, w_dest) catch |err| switch (err) {
-            error.Closed => {
-                return error.EndOfStream;
-            },
-            else => {
-                r.err = err;
-                return error.ReadFailed;
-            },
-        };
+        const n = r.socket.recv(r.rt, w_dest) catch |err|
+            switch (err) {
+                error.Closed => {
+                    return error.EndOfStream;
+                },
+                else => {
+                    r.err = err;
+                    return error.ReadFailed;
+                },
+            };
+
         r.pos += n;
         w.advance(n);
         return n;
@@ -613,7 +655,11 @@ pub fn stream_to(from: Socket, to_w: *Io.Writer, rt: *Runtime) !void {
     var file = from.reader(rt, &.{});
     const file_r = &file.interface;
     while (true) {
-        _ = Reader.stream(file_r, to_w, .limited(to_w.buffer.len)) catch |e| switch (e) {
+        _ = Reader.stream(
+            file_r,
+            to_w,
+            .limited(to_w.buffer.len),
+        ) catch |e| switch (e) {
             error.EndOfStream => break,
             else => |err| return err,
         };
