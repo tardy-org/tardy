@@ -1,5 +1,4 @@
 pub const Server = struct {
-    allocator: mem.Allocator,
     socket: ?net.Socket = null,
     steps: []Step,
     index: usize = 0,
@@ -21,15 +20,14 @@ pub const Server = struct {
         errdefer allocator.free(buffer);
 
         return .{
-            .allocator = allocator,
             .steps = chain_dupe,
             .buffer = buffer,
         };
     }
 
-    pub fn deinit(self: *const Server) void {
-        defer self.allocator.free(self.steps);
-        defer self.allocator.free(self.buffer);
+    pub fn deinit(server: *const Server, allocator: mem.Allocator) void {
+        defer allocator.free(server.steps);
+        defer allocator.free(server.buffer);
     }
 
     pub fn next_steps(current: Step) []const Step {
@@ -75,16 +73,16 @@ pub const Server = struct {
         return try list.toOwnedSlice(allocator);
     }
 
-    pub fn derive_client_chain(self: *const Server) !Client {
-        debug.assert(self.steps.len > 0);
+    pub fn derive_client_chain(server: *const Server, allocator: mem.Allocator) !Client {
+        debug.assert(server.steps.len > 0);
 
-        const client_steps = try self.allocator.alloc(
+        const client_steps = try allocator.alloc(
             Client.Step,
-            self.steps.len,
+            server.steps.len,
         );
-        errdefer self.allocator.free(client_steps);
+        errdefer allocator.free(client_steps);
 
-        for (self.steps, 0..) |step, i| {
+        for (server.steps, 0..) |step, i| {
             switch (step) {
                 .accept => client_steps[i] = .connect,
                 .recv => client_steps[i] = .send,
@@ -93,11 +91,10 @@ pub const Server = struct {
             }
         }
 
-        const buffer = try self.allocator.alloc(u8, self.buffer.len);
-        errdefer self.allocator.free(buffer);
+        const buffer = try allocator.alloc(u8, server.buffer.len);
+        errdefer allocator.free(buffer);
 
         return .{
-            .allocator = self.allocator,
             .steps = client_steps,
             .buffer = buffer,
         };
@@ -110,7 +107,7 @@ pub const Server = struct {
         server_socket: net.Socket,
     ) !void {
         defer rt.allocator.destroy(chain);
-        defer chain.deinit();
+        defer chain.deinit(rt.allocator);
         errdefer unreachable;
 
         chain: while (chain.index < chain.steps.len) : (chain.index += 1) {
@@ -156,19 +153,18 @@ pub const Server = struct {
 };
 
 pub const Client = struct {
-    allocator: mem.Allocator,
     steps: []Step,
     index: usize = 0,
     buffer: []u8,
 
-    pub fn deinit(self: *const Client) void {
-        defer self.allocator.free(self.steps);
-        defer self.allocator.free(self.buffer);
+    pub fn deinit(client: *const Client, allocator: mem.Allocator) void {
+        defer allocator.free(client.steps);
+        defer allocator.free(client.buffer);
     }
 
     pub fn chain_frame(chain: *Client, rt: *Runtime, counter: *usize, port: u16) !void {
         defer rt.allocator.destroy(chain);
-        defer chain.deinit();
+        defer chain.deinit(rt.allocator);
         errdefer unreachable;
 
         var socket: net.Socket = try .init(rt.io, .{

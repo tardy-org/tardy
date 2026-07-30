@@ -33,7 +33,7 @@ pub fn start_frame(rt: *Runtime, shared_params: *const e2e.Params) !void {
     errdefer rt.allocator.destroy(client_chain_ptr);
 
     server_chain_ptr.* = try .init(rt.allocator, chain, 4096);
-    client_chain_ptr.* = try server_chain_ptr.derive_client_chain();
+    client_chain_ptr.* = try server_chain_ptr.derive_client_chain(rt.allocator);
 
     try rt.spawn(
         Client.chain_frame,
