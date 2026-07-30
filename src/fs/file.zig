@@ -21,15 +21,15 @@ pub const OpenFlags = struct {
     mode: AsyncIO.FileMode = .read,
 };
 
-pub fn to_std(self: File) Io.File {
+pub fn to_std(file: File) Io.File {
     return .{
-        .handle = self.handle,
+        .handle = file.handle,
         .flags = .{ .nonblocking = false },
     };
 }
 
-pub fn from_std(self: Io.File) File {
-    return .{ .handle = self.handle };
+pub fn from_std(file: Io.File) File {
+    return .{ .handle = file.handle };
 }
 
 /// Get `stdout` as a File.
@@ -47,17 +47,17 @@ pub fn std_err() File {
     return .{ .handle = cross.get_std_err() };
 }
 
-pub fn close(self: File, rt: *Runtime) !void {
+pub fn close(file: File, rt: *Runtime) !void {
     if (rt.aio.features.has_capability(.close))
         try rt.scheduler.io_await(rt.allocator, .{
-            .close = self.handle,
+            .close = file.handle,
         })
     else
-        syscall.close(self.handle);
+        syscall.close(file.handle);
 }
 
-pub fn close_blocking(self: File) void {
-    syscall.close(self.handle);
+pub fn close_blocking(file: File) void {
+    syscall.close(file.handle);
 }
 
 pub fn create(rt: *Runtime, path: fs.Path, flags: CreateFlags) !File {
@@ -264,11 +264,11 @@ pub fn open(rt: *Runtime, path: fs.Path, flags: OpenFlags) !File {
     }
 }
 
-pub fn read(self: File, rt: *Runtime, buffer: []u8, offset: ?usize) !usize {
+pub fn read(file: File, rt: *Runtime, buffer: []u8, offset: ?usize) !usize {
     if (rt.aio.features.has_capability(.read)) {
         try rt.scheduler.io_await(rt.allocator, .{
             .read = .{
-                .fd = self.handle,
+                .fd = file.handle,
                 .buffer = buffer,
                 .offset = offset,
             },
@@ -278,7 +278,7 @@ pub fn read(self: File, rt: *Runtime, buffer: []u8, offset: ?usize) !usize {
         const task = rt.scheduler.tasks.get(index);
         return try task.result.read.unwrap();
     } else {
-        const std_file = self.to_std();
+        const std_file = file.to_std();
 
         const ReadError = results.ReadError;
         const count = blk: {
@@ -324,16 +324,16 @@ pub fn read(self: File, rt: *Runtime, buffer: []u8, offset: ?usize) !usize {
         if (count == 0) return ReadError.EndOfFile;
         return count;
     }
-    return .{ .file = self, .buffer = buffer, .offset = offset };
+    return .{ .file = file, .buffer = buffer, .offset = offset };
 }
 
-pub fn read_all(self: File, rt: *Runtime, buffer: []u8, offset: ?usize) !usize {
+pub fn read_all(file: File, rt: *Runtime, buffer: []u8, offset: ?usize) !usize {
     var length: usize = 0;
 
     while (length < buffer.len) {
         const real_offset: ?usize = if (offset) |o| o + length else null;
 
-        const result = self.read(rt, buffer[length..], real_offset) catch |e| switch (e) {
+        const result = file.read(rt, buffer[length..], real_offset) catch |e| switch (e) {
             error.EndOfFile => return length,
             else => |err| return err,
         };
@@ -345,7 +345,7 @@ pub fn read_all(self: File, rt: *Runtime, buffer: []u8, offset: ?usize) !usize {
 }
 
 pub fn write(
-    self: File,
+    file: File,
     rt: *Runtime,
     buffer: []const u8,
     offset: ?usize,
@@ -353,7 +353,7 @@ pub fn write(
     if (rt.aio.features.has_capability(.write)) {
         rt.scheduler.io_await(rt.allocator, .{
             .write = .{
-                .fd = self.handle,
+                .fd = file.handle,
                 .buffer = buffer,
                 .offset = offset,
             },
@@ -363,7 +363,7 @@ pub fn write(
         const task = rt.scheduler.tasks.get(index);
         return try task.result.write.unwrap();
     } else {
-        const std_file = self.to_std();
+        const std_file = file.to_std();
 
         const WriteError = results.WriteError;
         // TODO: fix `error.Unseekable` when fd is a fifo
@@ -408,7 +408,7 @@ pub fn write(
 }
 
 pub fn write_all(
-    self: File,
+    file: File,
     rt: *Runtime,
     buffer: []const u8,
     offset: ?usize,
@@ -418,7 +418,7 @@ pub fn write_all(
     while (length < buffer.len) {
         const real_offset: ?usize = if (offset) |o| o + length else null;
 
-        const result = self.write(
+        const result = file.write(
             rt,
             buffer[length..],
             real_offset,
@@ -433,17 +433,17 @@ pub fn write_all(
     return length;
 }
 
-pub fn stat(self: File, rt: *Runtime) !fs.Stat {
+pub fn stat(file: File, rt: *Runtime) !fs.Stat {
     if (rt.aio.features.has_capability(.stat)) {
         try rt.scheduler.io_await(rt.allocator, .{
-            .stat = self.handle,
+            .stat = file.handle,
         });
 
         const index = rt.current_task.?;
         const task = rt.scheduler.tasks.get(index);
         return try task.result.stat.unwrap();
     } else {
-        const std_file = self.to_std();
+        const std_file = file.to_std();
 
         const StatError = results.StatError;
         const file_stat = std_file.stat(rt.io) catch |e| {

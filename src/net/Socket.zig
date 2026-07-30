@@ -10,8 +10,8 @@ pub const Kind = enum {
     udp,
     unix,
 
-    pub fn listenable(self: Kind) bool {
-        return switch (self) {
+    pub fn listenable(kind: Kind) bool {
+        return switch (kind) {
             .tcp, .unix => true,
             else => false,
         };
@@ -297,34 +297,34 @@ pub fn bind(sock: Socket) !void {
 }
 
 /// Listen on the Current Socket.
-pub fn listen(self: Socket, backlog: usize) !void {
-    debug.assert(self.kind.listenable());
-    try syscall.listen(self.handle, @truncate(backlog));
+pub fn listen(sock: Socket, backlog: usize) !void {
+    debug.assert(sock.kind.listenable());
+    try syscall.listen(sock.handle, @truncate(backlog));
 }
 
 // TODO: rethink the aio to io approach
-pub fn close(self: Socket, rt: *Runtime) !void {
+pub fn close(sock: Socket, rt: *Runtime) !void {
     if (rt.aio.features.has_capability(.close))
         try rt.scheduler.io_await(rt.allocator, .{
-            .close = self.handle,
+            .close = sock.handle,
         })
     else
-        syscall.close(self.handle);
+        syscall.close(sock.handle);
 }
 
-pub fn close_blocking(self: Socket) void {
+pub fn close_blocking(sock: Socket) void {
     // todo: delete the unix socket if the
     // server is being closed
-    syscall.close(self.handle);
+    syscall.close(sock.handle);
 }
 
-pub fn accept(self: Socket, rt: *Runtime) !Socket {
-    debug.assert(self.kind.listenable());
+pub fn accept(sock: Socket, rt: *Runtime) !Socket {
+    debug.assert(sock.kind.listenable());
     if (rt.aio.features.has_capability(.accept)) {
         try rt.scheduler.io_await(rt.allocator, .{
             .accept = .{
-                .socket = self.handle,
-                .kind = self.kind,
+                .socket = sock.handle,
+                .kind = sock.kind,
             },
         });
 
@@ -337,7 +337,7 @@ pub fn accept(self: Socket, rt: *Runtime) !Socket {
         const AcceptError = results.AcceptError;
         const socket: posix.socket_t = blk: while (true) {
             break :blk syscall.accept(
-                self.handle,
+                sock.handle,
                 &addr,
                 if (builtin.os.tag != .windows) posix.SOCK.NONBLOCK else 0,
             ) catch |e| return switch (e) {
@@ -357,18 +357,18 @@ pub fn accept(self: Socket, rt: *Runtime) !Socket {
         return .{
             .handle = socket,
             .addr = addr,
-            .kind = self.kind,
+            .kind = sock.kind,
         };
     }
 }
 
-pub fn connect(self: Socket, rt: *Runtime) !void {
+pub fn connect(sock: Socket, rt: *Runtime) !void {
     if (rt.aio.features.has_capability(.connect)) {
         try rt.scheduler.io_await(rt.allocator, .{
             .connect = .{
-                .socket = self.handle,
-                .addr = self.addr,
-                .kind = self.kind,
+                .socket = sock.handle,
+                .addr = sock.addr,
+                .kind = sock.kind,
             },
         });
 
@@ -378,8 +378,8 @@ pub fn connect(self: Socket, rt: *Runtime) !void {
     } else {
         while (true) {
             break syscall.connect(
-                self.handle,
-                &self.addr,
+                sock.handle,
+                &sock.addr,
             ) catch |e| return switch (e) {
                 error.WouldBlock => {
                     Coroutine.yield();
@@ -391,11 +391,11 @@ pub fn connect(self: Socket, rt: *Runtime) !void {
     }
 }
 
-pub fn recv(self: Socket, rt: *Runtime, buffer: []u8) !usize {
+pub fn recv(sock: Socket, rt: *Runtime, buffer: []u8) !usize {
     if (rt.aio.features.has_capability(.recv)) {
         try rt.scheduler.io_await(rt.allocator, .{
             .recv = .{
-                .socket = self.handle,
+                .socket = sock.handle,
                 .buffer = buffer,
             },
         });
@@ -405,7 +405,7 @@ pub fn recv(self: Socket, rt: *Runtime, buffer: []u8) !usize {
         return try task.result.recv.unwrap();
     } else {
         const count: usize = blk: while (true) {
-            break :blk syscall.recv(self.handle, buffer, 0) catch |e| return switch (e) {
+            break :blk syscall.recv(sock.handle, buffer, 0) catch |e| return switch (e) {
                 error.WouldBlock => {
                     Coroutine.yield();
                     continue;
@@ -419,11 +419,11 @@ pub fn recv(self: Socket, rt: *Runtime, buffer: []u8) !usize {
     }
 }
 
-pub fn recv_all(self: Socket, rt: *Runtime, buffer: []u8) !usize {
+pub fn recv_all(sock: Socket, rt: *Runtime, buffer: []u8) !usize {
     var length: usize = 0;
 
     while (length < buffer.len) {
-        const result = self.recv(rt, buffer[length..]) catch |e| switch (e) {
+        const result = sock.recv(rt, buffer[length..]) catch |e| switch (e) {
             error.Closed => return length,
             else => |err| return err,
         };
@@ -434,11 +434,11 @@ pub fn recv_all(self: Socket, rt: *Runtime, buffer: []u8) !usize {
     return length;
 }
 
-pub fn send(self: Socket, rt: *Runtime, buffer: []const u8) !usize {
+pub fn send(sock: Socket, rt: *Runtime, buffer: []const u8) !usize {
     if (rt.aio.features.has_capability(.send)) {
         try rt.scheduler.io_await(rt.allocator, .{
             .send = .{
-                .socket = self.handle,
+                .socket = sock.handle,
                 .buffer = buffer,
             },
         });
@@ -449,7 +449,7 @@ pub fn send(self: Socket, rt: *Runtime, buffer: []const u8) !usize {
     } else {
         const count: usize = blk: while (true) {
             break :blk syscall.send(
-                self.handle,
+                sock.handle,
                 buffer,
                 0,
             ) catch |e| return switch (e) {
@@ -468,11 +468,11 @@ pub fn send(self: Socket, rt: *Runtime, buffer: []const u8) !usize {
     }
 }
 
-pub fn send_all(self: Socket, rt: *Runtime, buffer: []const u8) !usize {
+pub fn send_all(sock: Socket, rt: *Runtime, buffer: []const u8) !usize {
     var length: usize = 0;
 
     while (length < buffer.len) {
-        const result = self.send(
+        const result = sock.send(
             rt,
             buffer[length..],
         ) catch |e| switch (e) {

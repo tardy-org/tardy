@@ -1,6 +1,6 @@
 pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
     return struct {
-        const Self = @This();
+        const Tardy_t = @This();
         aios: std.ArrayList(inner: {
             const AioImpl = selected_aio.Impl();
             break :inner *AioImpl;
@@ -11,9 +11,11 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
         mutex: std.Io.Mutex = .init,
         options: Options,
 
-        pub fn init(allocator: mem.Allocator, io: std.Io, options: Options) !Self {
-            if (comptime builtin.os.tag == .windows)
-                AsyncIO.syscall.ws2.wsaStartup(2, 2) catch unreachable;
+        pub fn init(allocator: mem.Allocator, io: std.Io, options: Options) !Tardy_t {
+            if (comptime builtin.os.tag == .windows) AsyncIO.syscall.ws2.wsaStartup(
+                2,
+                2,
+            ) catch unreachable;
             const aio_type: AsyncIO.Kind = switch (selected_aio) {
                 .auto => AsyncIO.native(),
                 else => selected_aio,
@@ -32,7 +34,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             };
         }
 
-        pub fn deinit(tardy: *Self) void {
+        pub fn deinit(tardy: *Tardy_t) void {
             defer if (comptime builtin.os.tag == .windows)
                 AsyncIO.syscall.ws2.wsaCleanup() catch unreachable;
 
@@ -41,7 +43,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
         }
 
         /// This will spawn a new Runtime.
-        fn spawn_runtime(tardy: *Self, id: usize, options: AsyncIO.Options) !Runtime {
+        fn spawn_runtime(tardy: *Tardy_t, id: usize, options: AsyncIO.Options) !Runtime {
             tardy.mutex.lockUncancelable(tardy.io);
             defer tardy.mutex.unlock(tardy.io);
 
@@ -84,7 +86,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
         /// exist throughout the lifetime of the runtime. It happens in an arena and is
         /// cleaned up after the runtime terminates.
         pub fn entry(
-            tardy: *Self,
+            tardy: *Tardy_t,
             entry_params: anytype,
             comptime entry_func: *const fn (*Runtime, @TypeOf(entry_params)) anyerror!void,
         ) !void {
@@ -129,7 +131,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                 );
                 const handle: std.Thread = try .spawn(.{}, struct {
                     fn thread_init(
-                        tardy_: *Self,
+                        tardy_: *Tardy_t,
                         parent: *AsyncIO,
                         entry_parameters: @TypeOf(entry_params),
                         count: *atomic.Value(usize),
@@ -211,12 +213,12 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
         /// in a new Thread, allowing for more code to
         /// execute even after the runtime spawns.
         pub fn entry_in_new_thread(
-            tardy: *Self,
+            tardy: *Tardy_t,
             entry_params: anytype,
             comptime entry_func: *const fn (*Runtime, @TypeOf(entry_params)) anyerror!void,
         ) !void {
             const handle: std.Thread = try .spawn(.{}, struct {
-                fn entry_in_new_thread(tardy_: *Self, parms: @TypeOf(entry_params)) void {
+                fn entry_in_new_thread(tardy_: *Tardy_t, parms: @TypeOf(entry_params)) void {
                     tardy_.entry(
                         parms,
                         entry_func,
