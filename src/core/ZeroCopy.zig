@@ -1,12 +1,11 @@
 pub fn ZeroCopy(comptime T: type) type {
     return struct {
-        const Self = @This();
-        allocator: mem.Allocator,
+        const ZeroCopy_t = @This();
         ptr: [*]T,
         len: usize,
         capacity: usize,
 
-        pub fn init(allocator: mem.Allocator, capacity: usize) !Self {
+        pub fn init(allocator: mem.Allocator, capacity: usize) !ZeroCopy_t {
             const slice = try allocator.alloc(T, capacity);
             return .{
                 .allocator = allocator,
@@ -16,26 +15,21 @@ pub fn ZeroCopy(comptime T: type) type {
             };
         }
 
-        pub fn deinit(self: *Self) void {
-            self.allocator.free(self.ptr[0..self.capacity]);
+        pub fn deinit(zc: *ZeroCopy_t, allocator: mem.Allocator) void {
+            allocator.free(zc.ptr[0..zc.capacity]);
         }
 
-        pub fn as_slice(self: *const Self) []T {
-            return self.ptr[0..self.len];
+        pub fn as_slice(zc: *const ZeroCopy_t) []T {
+            return zc.ptr[0..zc.len];
         }
 
-        const SubsliceOptions = struct {
-            start: ?usize = null,
-            end: ?usize = null,
-        };
-
-        pub fn subslice(self: *const Self, options: SubsliceOptions) []T {
+        pub fn subslice(zc: *const ZeroCopy_t, options: SubsliceOptions) []T {
             const start: usize = options.start orelse 0;
-            const end: usize = options.end orelse self.len;
+            const end: usize = options.end orelse zc.len;
             debug.assert(start <= end);
-            debug.assert(end <= self.len);
+            debug.assert(end <= zc.len);
 
-            return self.ptr[start..end];
+            return zc.ptr[start..end];
         }
 
         /// This returns a slice that you can write into for zero-copy uses.
@@ -43,92 +37,108 @@ pub fn ZeroCopy(comptime T: type) type {
         ///
         /// The write area that is returned is ONLY valid until the next call of
         /// `get_write_area` or mark_written.
-        pub fn get_write_area(self: *Self, size: usize) ![]T {
-            const available_space = self.capacity - self.len;
+        pub fn get_write_area(
+            zc: *ZeroCopy_t,
+            allocator: mem.Allocator,
+            size: usize,
+        ) ![]T {
+            const available_space = zc.capacity - zc.len;
             if (available_space >= size) {
-                return self.ptr[self.len .. self.len + size];
+                return zc.ptr[zc.len .. zc.len + size];
             } else {
-                const old_slice = self.ptr[0..self.capacity];
+                const old_slice = zc.ptr[0..zc.capacity];
                 const new_size = try std.math.ceilPowerOfTwo(
                     usize,
-                    self.capacity + size,
+                    zc.capacity + size,
                 );
 
-                if (self.allocator.remap(
-                    self.ptr[0..self.capacity],
+                if (allocator.remap(
+                    zc.ptr[0..zc.capacity],
                     new_size,
                 )) |new| {
-                    self.ptr = new.ptr;
-                    self.capacity = new.len;
-                } else if (self.allocator.resize(
-                    self.ptr[0..self.capacity],
+                    zc.ptr = new.ptr;
+                    zc.capacity = new.len;
+                } else if (allocator.resize(
+                    zc.ptr[0..zc.capacity],
                     new_size,
                 )) {
-                    self.capacity = new_size;
+                    zc.capacity = new_size;
                 } else {
-                    const new_slice = try self.allocator.alloc(T, new_size);
-                    @memcpy(new_slice[0..self.len], self.ptr[0..self.len]);
-                    self.allocator.free(old_slice);
+                    const new_slice = try allocator.alloc(T, new_size);
+                    @memcpy(new_slice[0..zc.len], zc.ptr[0..zc.len]);
+                    allocator.free(old_slice);
 
-                    self.ptr = new_slice.ptr;
-                    self.capacity = new_slice.len;
+                    zc.ptr = new_slice.ptr;
+                    zc.capacity = new_slice.len;
                 }
 
-                debug.assert(self.capacity - self.len >= size);
-                return self.ptr[self.len .. self.len + size];
+                debug.assert(zc.capacity - zc.len >= size);
+                return zc.ptr[zc.len .. zc.len + size];
             }
         }
 
-        pub fn get_write_area_assume_space(self: *const Self, size: usize) []T {
-            debug.assert(self.capacity - self.len >= size);
-            return self.ptr[self.len .. self.len + size];
+        pub fn get_write_area_assume_space(zc: *const ZeroCopy_t, size: usize) []T {
+            debug.assert(zc.capacity - zc.len >= size);
+            return zc.ptr[zc.len .. zc.len + size];
         }
 
-        pub fn mark_written(self: *Self, length: usize) void {
-            debug.assert(self.len + length <= self.capacity);
-            self.len += length;
+        pub fn mark_written(zc: *ZeroCopy_t, length: usize) void {
+            debug.assert(zc.len + length <= zc.capacity);
+            zc.len += length;
         }
 
-        pub fn shrink_retaining_capacity(self: *Self, new_size: usize) void {
-            debug.assert(new_size <= self.len);
-            self.len = new_size;
+        pub fn shrink_retaining_capacity(zc: *ZeroCopy_t, new_size: usize) void {
+            debug.assert(new_size <= zc.len);
+            zc.len = new_size;
         }
 
-        pub fn shrink_clear_and_free(self: *Self, new_size: usize) !void {
-            debug.assert(new_size <= self.len);
-            if (!self.allocator.resize(
-                self.ptr[0..self.capacity],
+        pub fn shrink_clear_and_free(
+            zc: *ZeroCopy_t,
+            allocator: mem.Allocator,
+            new_size: usize,
+        ) !void {
+            debug.assert(new_size <= zc.len);
+            if (!allocator.resize(
+                zc.ptr[0..zc.capacity],
                 new_size,
             )) {
-                const slice = try self.allocator.realloc(
-                    self.ptr[0..self.capacity],
+                const slice = try allocator.realloc(
+                    zc.ptr[0..zc.capacity],
                     new_size,
                 );
-                self.ptr = slice.ptr;
+                zc.ptr = slice.ptr;
             }
-            self.capacity = new_size;
-            self.len = 0;
+            zc.capacity = new_size;
+            zc.len = 0;
         }
 
-        pub fn clear_retaining_capacity(self: *Self) void {
-            self.len = 0;
+        pub fn clear_retaining_capacity(zc: *ZeroCopy_t) void {
+            zc.len = 0;
         }
 
-        pub fn clear_and_free(self: *Self) void {
-            self.allocator.free(self.ptr[0..self.capacity]);
-            self.len = 0;
-            self.capacity = 0;
+        pub fn clear_and_free(zc: *ZeroCopy_t, allocator: mem.Allocator) void {
+            allocator.free(zc.ptr[0..zc.capacity]);
+            zc.len = 0;
+            zc.capacity = 0;
         }
     };
 }
+
+const SubsliceOptions = struct {
+    start: ?usize = null,
+    end: ?usize = null,
+};
 
 test "ZeroCopy: First" {
     const garbage: [128]u8 = @splat(212);
 
     var zc: ZeroCopy(u8) = try .init(testing.allocator, 512);
-    defer zc.deinit();
+    defer zc.deinit(testing.allocator);
 
-    const write_area = try zc.get_write_area(garbage.len);
+    const write_area = try zc.get_write_area(
+        garbage.len,
+        testing.allocator,
+    );
     @memcpy(write_area, garbage[0..]);
     zc.mark_written(write_area.len);
 
@@ -141,40 +151,57 @@ test "ZeroCopy: First" {
 
 test "ZeroCopy: Growth" {
     var zc: ZeroCopy(u8) = try .init(testing.allocator, 16);
-    defer zc.deinit();
+    defer zc.deinit(testing.allocator);
 
     const large_data: [32]u8 = @splat(1);
-    const write_area = try zc.get_write_area(large_data.len);
+    const write_area = try zc.get_write_area(
+        testing.allocator,
+        large_data.len,
+    );
     @memcpy(write_area, &large_data);
     zc.mark_written(write_area.len);
 
     try testing.expect(zc.capacity >= 32);
-    try testing.expectEqualSlices(u8, large_data[0..], zc.as_slice());
+    try testing.expectEqualSlices(
+        u8,
+        large_data[0..],
+        zc.as_slice(),
+    );
 }
 
 test "ZeroCopy: Multiple Writes" {
     var zc: ZeroCopy(u8) = try .init(testing.allocator, 64);
-    defer zc.deinit();
+    defer zc.deinit(testing.allocator);
 
     const data1 = "Hello, ";
     const data2 = "World!";
 
-    const area1 = try zc.get_write_area(data1.len);
+    const area1 = try zc.get_write_area(
+        testing.allocator,
+        data1.len,
+    );
     @memcpy(area1, data1);
     zc.mark_written(area1.len);
 
-    const area2 = try zc.get_write_area(data2.len);
+    const area2 = try zc.get_write_area(
+        testing.allocator,
+        data2.len,
+    );
     @memcpy(area2, data2);
     zc.mark_written(area2.len);
 
-    try testing.expectEqualSlices(u8, "Hello, World!", zc.as_slice());
+    try testing.expectEqualSlices(
+        u8,
+        "Hello, World!",
+        zc.as_slice(),
+    );
 }
 
 test "ZeroCopy: Zero Size Write" {
     var zc: ZeroCopy(u8) = try .init(testing.allocator, 8);
-    defer zc.deinit();
+    defer zc.deinit(testing.allocator);
 
-    const area = try zc.get_write_area(0);
+    const area = try zc.get_write_area(testing.allocator, 0);
     try testing.expect(area.len == 0);
     zc.mark_written(0);
     try testing.expect(zc.len == 0);

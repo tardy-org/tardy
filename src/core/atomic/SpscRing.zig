@@ -1,15 +1,14 @@
 /// An Atomic Spsc Ring
 pub fn SpscRing(comptime T: type) type {
     return struct {
-        const Self = @This();
+        const SpscRing_t = @This();
 
-        allocator: mem.Allocator,
         items: []T,
 
         write_index: atomic.Value(usize) align(atomic.cache_line),
         read_index: atomic.Value(usize) align(atomic.cache_line),
 
-        pub fn init(allocator: mem.Allocator, size: usize) !Self {
+        pub fn init(allocator: mem.Allocator, size: usize) !SpscRing_t {
             debug.assert(size >= 2);
             debug.assert(std.math.isPowerOfTwo(size));
 
@@ -17,30 +16,32 @@ pub fn SpscRing(comptime T: type) type {
             errdefer allocator.free(items);
 
             return .{
-                .allocator = allocator,
                 .items = items,
                 .write_index = .{ .raw = 0 },
                 .read_index = .{ .raw = 0 },
             };
         }
 
-        pub fn deinit(self: Self) void {
-            self.allocator.free(self.items);
+        pub fn deinit(spsc_ring: SpscRing_t, allocator: mem.Allocator) void {
+            allocator.free(spsc_ring.items);
         }
 
-        pub fn push(self: *Self, item: T) !void {
-            const write = self.write_index.load(.acquire);
-            const next: usize = (write + 1) % self.items.len;
-            if (next == self.read_index.load(.acquire)) return error.RingFull;
-            self.items[write] = item;
-            self.write_index.store((write + 1) % self.items.len, .release);
+        pub fn push(spsc_ring: *SpscRing_t, item: T) !void {
+            const write = spsc_ring.write_index.load(.acquire);
+            const next: usize = (write + 1) % spsc_ring.items.len;
+            if (next == spsc_ring.read_index.load(.acquire)) return error.RingFull;
+            spsc_ring.items[write] = item;
+            spsc_ring.write_index.store(
+                (write + 1) % spsc_ring.items.len,
+                .release,
+            );
         }
 
-        pub fn pop(self: *Self) !T {
-            const read = self.read_index.load(.acquire);
-            if (read == self.write_index.load(.acquire)) return error.RingEmpty;
-            const item = self.items[read];
-            self.read_index.store((read + 1) % self.items.len, .release);
+        pub fn pop(spsc_ring: *SpscRing_t) !T {
+            const read = spsc_ring.read_index.load(.acquire);
+            if (read == spsc_ring.write_index.load(.acquire)) return error.RingEmpty;
+            const item = spsc_ring.items[read];
+            spsc_ring.read_index.store((read + 1) % spsc_ring.items.len, .release);
             return item;
         }
     };
@@ -49,13 +50,25 @@ pub fn SpscRing(comptime T: type) type {
 test "SpscRing: Fill and Empty" {
     const size: u32 = 128;
     var ring: SpscRing(usize) = try .init(testing.allocator, size);
-    defer ring.deinit();
+    defer ring.deinit(testing.allocator);
 
-    try testing.expectError(error.RingEmpty, ring.pop());
+    try testing.expectError(
+        error.RingEmpty,
+        ring.pop(),
+    );
     for (0..size - 1) |i| try ring.push(i);
-    try testing.expectError(error.RingFull, ring.push(1));
-    for (0..size - 1) |i| try testing.expectEqual(i, try ring.pop());
-    try testing.expectError(error.RingEmpty, ring.pop());
+    try testing.expectError(
+        error.RingFull,
+        ring.push(1),
+    );
+    for (0..size - 1) |i| try testing.expectEqual(
+        i,
+        try ring.pop(),
+    );
+    try testing.expectError(
+        error.RingEmpty,
+        ring.pop(),
+    );
 }
 
 const std = @import("std");

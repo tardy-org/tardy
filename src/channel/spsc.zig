@@ -1,40 +1,40 @@
 pub fn Spsc(comptime T: type) type {
     return struct {
-        const Self = @This();
+        const Spsc_t = @This();
 
-        fn trigger_consumer(self: *Self) !void {
-            try self.consumer_rt.load(.acquire).?.trigger(
-                self.consumer_index.load(.acquire),
+        fn trigger_consumer(spsc: *Spsc_t) !void {
+            try spsc.consumer_rt.load(.acquire).?.trigger(
+                spsc.consumer_index.load(.acquire),
             );
         }
 
-        fn trigger_producer(self: *Self) !void {
-            try self.producer_rt.load(.acquire).?.trigger(
-                self.producer_index.load(.acquire),
+        fn trigger_producer(spsc: *Spsc_t) !void {
+            try spsc.producer_rt.load(.acquire).?.trigger(
+                spsc.producer_index.load(.acquire),
             );
         }
 
         pub const Producer = struct {
-            inner: *Self,
+            inner: *Spsc_t,
             rt: *Runtime,
 
-            pub fn send(self: Producer, message: T) !void {
+            pub fn send(spsc: Producer, message: T) !void {
                 log.debug("producer sending...", .{});
-                while (true) switch (self.inner.state.load(.acquire)) {
+                while (true) switch (spsc.inner.state.load(.acquire)) {
                     // Both ends must be open.
-                    .starting => self.rt.scheduler.trigger_await(),
+                    .starting => spsc.rt.scheduler.trigger_await(),
                     // Channel was cleaned up.
                     .closed => return error.Closed,
                     .running => {
-                        if (!self.inner.consumer_open.load(.acquire)) return error.Closed;
-                        self.inner.ring.push(message) catch |e| switch (e) {
+                        if (!spsc.inner.consumer_open.load(.acquire)) return error.Closed;
+                        spsc.inner.ring.push(message) catch |e| switch (e) {
                             error.RingFull => {
-                                self.inner.producer_index.store(
-                                    self.rt.current_task.?,
+                                spsc.inner.producer_index.store(
+                                    spsc.rt.current_task.?,
                                     .release,
                                 );
-                                try self.inner.trigger_consumer();
-                                self.rt.scheduler.trigger_await();
+                                try spsc.inner.trigger_consumer();
+                                spsc.rt.scheduler.trigger_await();
                                 continue;
                             },
                         };
@@ -44,34 +44,34 @@ pub fn Spsc(comptime T: type) type {
                 };
             }
 
-            pub fn close(self: Producer) void {
-                self.inner.producer_open.store(false, .release);
-                self.inner.trigger_consumer() catch unreachable;
+            pub fn close(spsc: Producer) void {
+                spsc.inner.producer_open.store(false, .release);
+                spsc.inner.trigger_consumer() catch unreachable;
             }
         };
 
         pub const Consumer = struct {
-            inner: *Self,
+            inner: *Spsc_t,
             rt: *Runtime,
 
-            pub fn recv(self: Consumer) !T {
+            pub fn recv(spsc: Consumer) !T {
                 log.debug("consumer recving...", .{});
-                while (true) switch (self.inner.state.load(.acquire)) {
+                while (true) switch (spsc.inner.state.load(.acquire)) {
                     // Both ends must be open.
-                    .starting => self.rt.scheduler.trigger_await(),
+                    .starting => spsc.rt.scheduler.trigger_await(),
                     // Channel was cleaned up.
                     .closed => return error.Closed,
                     .running => {
-                        const data = self.inner.ring.pop() catch |e| switch (e) {
+                        const data = spsc.inner.ring.pop() catch |e| switch (e) {
                             // If we are empty, trigger the producer to run.
                             error.RingEmpty => {
-                                if (!self.inner.producer_open.load(.acquire)) return error.Closed;
-                                self.inner.consumer_index.store(
-                                    self.rt.current_task.?,
+                                if (!spsc.inner.producer_open.load(.acquire)) return error.Closed;
+                                spsc.inner.consumer_index.store(
+                                    spsc.rt.current_task.?,
                                     .release,
                                 );
-                                try self.inner.trigger_producer();
-                                self.rt.scheduler.trigger_await();
+                                try spsc.inner.trigger_producer();
+                                spsc.rt.scheduler.trigger_await();
                                 continue;
                             },
                         };
@@ -81,9 +81,9 @@ pub fn Spsc(comptime T: type) type {
                 };
             }
 
-            pub fn close(self: Consumer) void {
-                self.inner.consumer_open.store(false, .release);
-                self.inner.trigger_producer() catch unreachable;
+            pub fn close(spsc: Consumer) void {
+                spsc.inner.consumer_open.store(false, .release);
+                spsc.inner.trigger_producer() catch unreachable;
             }
         };
 
@@ -99,7 +99,7 @@ pub fn Spsc(comptime T: type) type {
 
         state: std.atomic.Value(State) align(std_atomic.cache_line),
 
-        pub fn init(allocator: std.mem.Allocator, size: usize) !Self {
+        pub fn init(allocator: std.mem.Allocator, size: usize) !Spsc_t {
             return .{
                 .ring = try .init(allocator, size),
 
@@ -114,47 +114,47 @@ pub fn Spsc(comptime T: type) type {
             };
         }
 
-        pub fn deinit(self: *Self) void {
-            self.producer_open.store(false, .release);
-            self.consumer_open.store(false, .release);
+        pub fn deinit(spsc: *Spsc_t) void {
+            spsc.producer_open.store(false, .release);
+            spsc.consumer_open.store(false, .release);
 
-            if (self.state.cmpxchgStrong(.running, .closed, .acq_rel, .acquire)) |_| {
+            if (spsc.state.cmpxchgStrong(.running, .closed, .acq_rel, .acquire)) |_| {
                 return; // Someone else is handling deinit
             }
 
-            self.ring.deinit();
+            spsc.ring.deinit();
         }
 
-        pub fn producer(self: *Self, runtime: *Runtime) Producer {
-            if (self.producer_rt.cmpxchgStrong(
+        pub fn producer(spsc: *Spsc_t, runtime: *Runtime) Producer {
+            if (spsc.producer_rt.cmpxchgStrong(
                 null,
                 runtime,
                 .acq_rel,
                 .acquire,
             )) |_| @panic("Only one producer can exist for a Spsc");
 
-            self.producer_open.store(true, .release);
-            if (self.consumer_rt.load(.acquire) != null) self.state.store(
+            spsc.producer_open.store(true, .release);
+            if (spsc.consumer_rt.load(.acquire) != null) spsc.state.store(
                 .running,
                 .release,
             );
-            return .{ .inner = self, .rt = runtime };
+            return .{ .inner = spsc, .rt = runtime };
         }
 
-        pub fn consumer(self: *Self, runtime: *Runtime) Consumer {
-            if (self.consumer_rt.cmpxchgStrong(
+        pub fn consumer(spsc: *Spsc_t, runtime: *Runtime) Consumer {
+            if (spsc.consumer_rt.cmpxchgStrong(
                 null,
                 runtime,
                 .acq_rel,
                 .acquire,
             )) |_| @panic("Only one consumer can exist for a Spsc");
 
-            self.consumer_open.store(true, .release);
-            if (self.producer_rt.load(.acquire) != null) self.state.store(
+            spsc.consumer_open.store(true, .release);
+            if (spsc.producer_rt.load(.acquire) != null) spsc.state.store(
                 .running,
                 .release,
             );
-            return .{ .inner = self, .rt = runtime };
+            return .{ .inner = spsc, .rt = runtime };
         }
     };
 }

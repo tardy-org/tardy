@@ -1,7 +1,6 @@
 /// An Atomic Dynamic Bitset
 pub const Bitset = @This();
 
-allocator: mem.Allocator,
 words: []atomic.Value(usize),
 lock: std.Io.RwLock,
 /// Not safe to access. Use `get_bit_length`.
@@ -19,37 +18,36 @@ pub fn init(allocator: mem.Allocator, size: usize, default: bool) !Bitset {
     for (words) |*word| word.* = .{ .raw = value };
 
     return .{
-        .allocator = allocator,
         .words = words,
         .lock = .init,
         .bit_length = size,
     };
 }
 
-pub fn deinit(self: *Bitset, allocator: mem.Allocator, io: std.Io) void {
-    self.lock.lockUncancelable(io);
-    defer self.lock.unlock(io);
+pub fn deinit(bitset: *Bitset, allocator: mem.Allocator, io: std.Io) void {
+    bitset.lock.lockUncancelable(io);
+    defer bitset.lock.unlock(io);
 
-    allocator.free(self.words);
+    allocator.free(bitset.words);
 }
 
 fn resize(
-    self: *Bitset,
+    bitset: *Bitset,
     allocator: mem.Allocator,
     io: std.Io,
     new_size: usize,
     default: bool,
 ) !void {
-    self.lock.lockUncancelable(io);
-    defer self.lock.unlock(io);
+    bitset.lock.lockUncancelable(io);
+    defer bitset.lock.unlock(io);
 
     const new_word_count = @divCeil(new_size, @bitSizeOf(usize));
-    debug.assert(new_word_count > self.words.len);
+    debug.assert(new_word_count > bitset.words.len);
 
     const value: usize = if (default) math.maxInt(usize) else 0;
-    const old_words = self.words;
-    if (allocator.resize(self.words, new_word_count)) {
-        for (self.words[old_words.len..]) |*word| word.* = .{
+    const old_words = bitset.words;
+    if (allocator.resize(bitset.words, new_word_count)) {
+        for (bitset.words[old_words.len..]) |*word| word.* = .{
             .raw = value,
         };
     } else {
@@ -62,77 +60,77 @@ fn resize(
         for (new_words[old_words.len..]) |*word| word.* = .{
             .raw = value,
         };
-        self.words = new_words;
-        self.bit_length = new_size;
+        bitset.words = new_words;
+        bitset.bit_length = new_size;
     }
 }
 
-pub fn is_empty(self: *Bitset, io: std.Io) bool {
-    self.lock.lockSharedUncancelable(io);
-    defer self.lock.unlockShared(io);
+pub fn is_empty(bitset: *Bitset, io: std.Io) bool {
+    bitset.lock.lockSharedUncancelable(io);
+    defer bitset.lock.unlockShared(io);
 
-    for (self.words) |*word| if (word.load(.acquire) != 0) return false;
+    for (bitset.words) |*word| if (word.load(.acquire) != 0) return false;
     return true;
 }
 
-pub fn get_bit_length(self: *Bitset, io: std.Io) usize {
-    self.lock.lockSharedUncancelable(io);
-    defer self.lock.unlockShared(io);
+pub fn get_bit_length(bitset: *Bitset, io: std.Io) usize {
+    bitset.lock.lockSharedUncancelable(io);
+    defer bitset.lock.unlockShared(io);
 
-    return self.bit_length;
+    return bitset.bit_length;
 }
 
-pub fn set(self: *Bitset, io: std.Io, index: usize) !void {
-    self.lock.lockSharedUncancelable(io);
-    defer self.lock.unlockShared(io);
+pub fn set(bitset: *Bitset, allocator: mem.Allocator, io: std.Io, index: usize) !void {
+    bitset.lock.lockSharedUncancelable(io);
+    defer bitset.lock.unlockShared(io);
 
-    if (index > self.bit_length) {
-        self.lock.unlockShared(io);
-        defer self.lock.lockSharedUncancelable(io);
+    if (index > bitset.bit_length) {
+        bitset.lock.unlockShared(io);
+        defer bitset.lock.lockSharedUncancelable(io);
 
-        try self.resize(
-            self.allocator,
+        try bitset.resize(
+            allocator,
             io,
             try math.ceilPowerOfTwo(usize, index),
             false,
         );
     }
-    debug.assert(self.bit_length >= index);
+    debug.assert(bitset.bit_length >= index);
 
     const word = index / @bitSizeOf(usize);
-    debug.assert(word < self.words.len);
+    debug.assert(word < bitset.words.len);
     const mask: usize = @as(usize, 1) << @intCast(@mod(index, @bitSizeOf(usize)));
-    _ = self.words[word].fetchOr(mask, .release);
+    _ = bitset.words[word].fetchOr(mask, .release);
 }
 
-pub fn is_set(self: *Bitset, io: std.Io, index: usize) bool {
-    self.lock.lockSharedUncancelable(io);
-    defer self.lock.unlockShared(io);
-    debug.assert(self.bit_length >= index);
+pub fn is_set(bitset: *Bitset, io: std.Io, index: usize) bool {
+    bitset.lock.lockSharedUncancelable(io);
+    defer bitset.lock.unlockShared(io);
+    debug.assert(bitset.bit_length >= index);
 
     const word = index / @bitSizeOf(usize);
-    debug.assert(word < self.words.len);
+    debug.assert(word < bitset.words.len);
     const mask: usize = @as(usize, 1) << @intCast(@mod(index, @bitSizeOf(usize)));
-    return (self.words[word].load(.acquire) & mask) != 0;
+    return (bitset.words[word].load(.acquire) & mask) != 0;
 }
 
-pub fn unset(self: *Bitset, io: std.Io, index: usize) void {
-    self.lock.lockSharedUncancelable(io);
-    defer self.lock.unlockShared(io);
-    debug.assert(self.bit_length >= index);
+pub fn unset(bitset: *Bitset, io: std.Io, index: usize) void {
+    bitset.lock.lockSharedUncancelable(io);
+    defer bitset.lock.unlockShared(io);
+    debug.assert(bitset.bit_length >= index);
 
     const word = index / @bitSizeOf(usize);
-    debug.assert(word < self.words.len);
+    debug.assert(word < bitset.words.len);
     var mask: usize = math.maxInt(usize);
     mask ^= @as(usize, 1) << @intCast(@mod(index, @bitSizeOf(usize)));
-    _ = self.words[word].fetchAnd(mask, .release);
+    _ = bitset.words[word].fetchAnd(mask, .release);
 }
 
-pub fn unset_all(self: *Bitset, io: std.Io) void {
-    self.lock.lockSharedUncancelable(io);
-    defer self.lock.unlockShared(io);
+pub fn unset_all(bitset: *Bitset, io: std.Io) void {
+    bitset.lock.lockSharedUncancelable(io);
+    defer bitset.lock.unlockShared(io);
 
-    for (self.words) |*word| word.store(0, .release);
+    for (bitset.words) |*word| word.store(0, .release);
 }
 
 const std = @import("std");

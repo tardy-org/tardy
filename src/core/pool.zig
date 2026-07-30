@@ -1,13 +1,13 @@
 pub fn Pool(comptime T: type) type {
     return struct {
-        const Self = @This();
+        const Pool_t = @This();
         // Buffer for the Pool.
         items: []T,
         dirty: std.DynamicBitSetUnmanaged,
         kind: Kind,
 
         /// Initalizes our items buffer as undefined.
-        pub fn init(allocator: mem.Allocator, size: usize, kind: Kind) !Self {
+        pub fn init(allocator: mem.Allocator, size: usize, kind: Kind) !Pool_t {
             return .{
                 .items = try allocator.alloc(T, size),
                 .dirty = try .initEmpty(allocator, size),
@@ -15,14 +15,14 @@ pub fn Pool(comptime T: type) type {
             };
         }
 
-        pub fn deinit(pool: *Self, allocator: mem.Allocator) void {
+        pub fn deinit(pool: *Pool_t, allocator: mem.Allocator) void {
             allocator.free(pool.items);
             pool.dirty.deinit(allocator);
         }
 
         /// Deinitalizes our items buffer with a passed in hook.
         pub fn deinit_with_hook(
-            pool: *Self,
+            pool: *Pool_t,
             allocator: mem.Allocator,
             args: anytype,
             deinit_hook: ?*const fn (buffer: []T, args: @TypeOf(args)) void,
@@ -35,32 +35,32 @@ pub fn Pool(comptime T: type) type {
             pool.dirty.deinit(allocator);
         }
 
-        pub fn get(pool: *const Self, index: usize) T {
+        pub fn get(pool: *const Pool_t, index: usize) T {
             debug.assert(index < pool.items.len);
             return pool.items[index];
         }
 
-        pub fn get_ptr(pool: *const Self, index: usize) *T {
+        pub fn get_ptr(pool: *const Pool_t, index: usize) *T {
             debug.assert(index < pool.items.len);
             return &pool.items[index];
         }
 
         /// Is this empty?
-        pub fn empty(pool: *const Self) bool {
+        pub fn empty(pool: *const Pool_t) bool {
             return pool.dirty.count() == 0;
         }
 
         /// Is this full?
-        pub fn full(pool: *const Self) bool {
+        pub fn full(pool: *const Pool_t) bool {
             return pool.dirty.count() == pool.items.len;
         }
 
         /// Returns the number of clean (or available) slots.
-        pub fn clean(pool: *const Self) usize {
+        pub fn clean(pool: *const Pool_t) usize {
             return pool.items.len - pool.dirty.count();
         }
 
-        fn grow(pool: *Self, allocator: mem.Allocator) Error!void {
+        fn grow(pool: *Pool_t, allocator: mem.Allocator) Error!void {
             debug.assert(pool.kind == .grow);
 
             const old_slice = pool.items;
@@ -97,7 +97,7 @@ pub fn Pool(comptime T: type) type {
         /// If dynamic, this *might* grow the Pool.
         ///
         /// Returns the index into the Pool.
-        pub fn borrow(pool: *Self, allocator: mem.Allocator) Error!usize {
+        pub fn borrow(pool: *Pool_t, allocator: mem.Allocator) Error!usize {
             var iter = pool.dirty.iterator(.{
                 .kind = .unset,
             });
@@ -118,7 +118,7 @@ pub fn Pool(comptime T: type) type {
         /// Uses a provided hint value as the starting index.
         ///
         /// Returns the index into the Pool.
-        pub fn borrow_hint(pool: *Self, allocator: mem.Allocator, hint: usize) Error!usize {
+        pub fn borrow_hint(pool: *Pool_t, allocator: mem.Allocator, hint: usize) Error!usize {
             const length = pool.items.len;
             for (0..length) |i| {
                 const index = @mod(hint + i, length);
@@ -141,7 +141,7 @@ pub fn Pool(comptime T: type) type {
         /// Attempts to borrow at the given index.
         /// Asserts that it is an available slot.
         /// This will never grow the Pool.
-        pub fn borrow_assume_unset(pool: *Self, index: usize) usize {
+        pub fn borrow_assume_unset(pool: *Pool_t, index: usize) usize {
             debug.assert(!pool.dirty.isSet(index));
             pool.dirty.set(index);
             return index;
@@ -149,13 +149,13 @@ pub fn Pool(comptime T: type) type {
 
         /// Releases the item with the given index back to the Pool.
         /// Asserts that the given index was borrowed.
-        pub fn release(pool: *Self, index: usize) void {
+        pub fn release(pool: *Pool_t, index: usize) void {
             debug.assert(pool.dirty.isSet(index));
             pool.dirty.unset(index);
         }
 
         /// Returns an iterator over the taken values in the Pool.
-        pub fn iterator(pool: *const Self) Iterator {
+        pub fn iterator(pool: *const Pool_t) Iterator {
             const iter = pool.dirty.iterator(.{});
             return .{ .iter = iter, .items = pool.items };
         }
