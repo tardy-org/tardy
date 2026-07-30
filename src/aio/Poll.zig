@@ -129,36 +129,31 @@ pub fn queue_job(
     const poll: *Poll = @ptrCast(@alignCast(runner));
 
     try switch (job) {
-        .timer => |inner| queue_timer(
-            poll,
+        .timer => |inner| poll.queue_timer(
             allocator,
             task,
             inner,
         ),
-        .accept => |inner| queue_accept(
-            poll,
+        .accept => |inner| poll.queue_accept(
             allocator,
             task,
             inner.socket,
             inner.kind,
         ),
-        .connect => |inner| queue_connect(
-            poll,
+        .connect => |inner| poll.queue_connect(
             allocator,
             task,
             inner.socket,
             inner.addr,
             inner.kind,
         ),
-        .recv => |inner| queue_recv(
-            poll,
+        .recv => |inner| poll.queue_recv(
             allocator,
             task,
             inner.socket,
             inner.buffer,
         ),
-        .send => |inner| queue_send(
-            poll,
+        .send => |inner| poll.queue_send(
             allocator,
             task,
             inner.socket,
@@ -364,15 +359,20 @@ pub fn reap(
             const result: results.Result = result: {
                 switch (job.type) {
                     .wake => {
-                        debug.assert(pfd.revents & syscall.POLL.IN != 0 or pfd.revents & syscall.POLL.RDNORM != 0);
+                        debug.assert(pfd.revents & syscall.POLL.IN != 0 or
+                            pfd.revents & syscall.POLL.RDNORM != 0);
 
                         var buf: [8]u8 = undefined;
-                        _ = syscall.read(poll.wake_pipe[0], &buf) catch unreachable;
+                        _ = syscall.read(
+                            poll.wake_pipe[0],
+                            &buf,
+                        ) catch unreachable;
                         remove = false;
                         break :result .wake;
                     },
                     .accept => |*inner| {
-                        debug.assert(pfd.revents & syscall.POLL.IN != 0 or pfd.revents & syscall.POLL.RDNORM != 0);
+                        debug.assert(pfd.revents & syscall.POLL.IN != 0 or
+                            pfd.revents & syscall.POLL.RDNORM != 0);
 
                         const AcceptError = results.AcceptError;
                         const socket = syscall.accept(
@@ -382,7 +382,10 @@ pub fn reap(
                         ) catch |e| {
                             const err = switch (e) {
                                 error.WouldBlock => {
-                                    log.debug("accept wouldblock - not removing", .{});
+                                    log.debug(
+                                        "accept wouldblock - not removing",
+                                        .{},
+                                    );
                                     remove = false;
                                     continue;
                                 },
@@ -394,7 +397,9 @@ pub fn reap(
                                 else => AcceptError.Unexpected,
                             };
 
-                            break :result .{ .accept = .{ .err = err } };
+                            break :result .{ .accept = .{
+                                .err = err,
+                            } };
                         };
 
                         break :result .{
@@ -415,7 +420,9 @@ pub fn reap(
                                 .err = results.ConnectError.Unexpected,
                             } };
                         } else {
-                            break :result .{ .connect = .actual };
+                            break :result .{
+                                .connect = .actual,
+                            };
                         }
                     },
                     .recv => |inner| {
@@ -436,7 +443,10 @@ pub fn reap(
                         ) catch |e| {
                             const err = switch (e) {
                                 error.WouldBlock => {
-                                    log.debug("recv wouldblock - not removing", .{});
+                                    log.debug(
+                                        "recv wouldblock - not removing",
+                                        .{},
+                                    );
                                     remove = false;
                                     continue;
                                 },
@@ -444,11 +454,19 @@ pub fn reap(
                                 else => RecvError.Unexpected,
                             };
 
-                            break :result .{ .recv = .{ .err = err } };
+                            break :result .{ .recv = .{
+                                .err = err,
+                            } };
                         };
 
-                        if (count == 0) break :result .{ .recv = .{ .err = RecvError.Closed } };
-                        break :result .{ .recv = .{ .actual = count } };
+                        if (count == 0) break :result .{
+                            .recv = .{
+                                .err = RecvError.Closed,
+                            },
+                        };
+                        break :result .{ .recv = .{
+                            .actual = count,
+                        } };
                     },
                     .send => |inner| {
                         const SendError = results.SendError;
@@ -467,7 +485,10 @@ pub fn reap(
                             log.err("send failed with {}", .{e});
                             const err = switch (e) {
                                 error.WouldBlock => {
-                                    log.debug("send wouldblock - not removing", .{});
+                                    log.debug(
+                                        "send wouldblock - not removing",
+                                        .{},
+                                    );
                                     remove = false;
                                     continue;
                                 },
@@ -545,11 +566,15 @@ const TimerPair = struct {
     task: usize,
 };
 
-const TimerQueue = std.PriorityQueue(TimerPair, void, struct {
-    fn compare(_: void, a: TimerPair, b: TimerPair) math.Order {
-        return math.order(a.duration.nanoseconds, b.duration.nanoseconds);
-    }
-}.compare);
+const TimerQueue = std.PriorityQueue(
+    TimerPair,
+    void,
+    struct {
+        fn compare(_: void, a: TimerPair, b: TimerPair) math.Order {
+            return math.order(a.duration.nanoseconds, b.duration.nanoseconds);
+        }
+    }.compare,
+);
 
 const std = @import("std");
 const Io = std.Io;

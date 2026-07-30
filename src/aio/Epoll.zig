@@ -12,10 +12,16 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Epoll {
     debug.assert(epoll_fd > -1);
     errdefer syscall.close(epoll_fd);
 
-    const wake_event_fd: posix.fd_t = try syscall.eventfd(0, linux.EFD.CLOEXEC);
+    const wake_event_fd: posix.fd_t = try syscall.eventfd(
+        0,
+        linux.EFD.CLOEXEC,
+    );
     errdefer syscall.close(wake_event_fd);
 
-    const events = try allocator.alloc(linux.epoll_event, options.size_aio_reap_max);
+    const events = try allocator.alloc(
+        linux.epoll_event,
+        options.size_aio_reap_max,
+    );
     errdefer allocator.free(events);
 
     var jobs: pool.Pool(Job) = try .init(
@@ -39,7 +45,12 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Epoll {
         .data = .{ .u64 = index },
     };
 
-    try syscall.epoll_ctl(epoll_fd, linux.EPOLL.CTL_ADD, wake_event_fd, &event);
+    try syscall.epoll_ctl(
+        epoll_fd,
+        linux.EPOLL.CTL_ADD,
+        wake_event_fd,
+        &event,
+    );
 
     return .{
         .epoll_fd = epoll_fd,
@@ -70,36 +81,31 @@ pub fn queue_job(
     const epoll: *Epoll = @ptrCast(@alignCast(runner));
 
     try switch (job) {
-        .timer => |inner| queue_timer(
-            epoll,
+        .timer => |inner| epoll.queue_timer(
             allocator,
             task,
             inner,
         ),
-        .accept => |inner| queue_accept(
-            epoll,
+        .accept => |inner| epoll.queue_accept(
             allocator,
             task,
             inner.socket,
             inner.kind,
         ),
-        .connect => |inner| queue_connect(
-            epoll,
+        .connect => |inner| epoll.queue_connect(
             allocator,
             task,
             inner.socket,
             inner.addr,
             inner.kind,
         ),
-        .recv => |inner| queue_recv(
-            epoll,
+        .recv => |inner| epoll.queue_recv(
             allocator,
             task,
             inner.socket,
             inner.buffer,
         ),
-        .send => |inner| queue_send(
-            epoll,
+        .send => |inner| epoll.queue_send(
             allocator,
             task,
             inner.socket,
@@ -385,7 +391,10 @@ pub fn reap(
                         var buffer: [8]u8 = undefined;
 
                         // Should NEVER fail.
-                        _ = syscall.read(epoll.wake_event_fd, buffer[0..]) catch |e| {
+                        _ = syscall.read(
+                            epoll.wake_event_fd,
+                            buffer[0..],
+                        ) catch |e| {
                             log.err("wake failed: {}", .{e});
                             unreachable;
                         };
@@ -399,7 +408,10 @@ pub fn reap(
 
                         var buffer: [8]u8 = undefined;
                         // Should NEVER fail.
-                        _ = syscall.read(timer_fd, buffer[0..]) catch |e| {
+                        _ = syscall.read(
+                            timer_fd,
+                            buffer[0..],
+                        ) catch |e| {
                             log.debug("timer failed: {}", .{e});
                             unreachable;
                         };

@@ -1,7 +1,6 @@
 pub const Kqueue = @This();
 
 kqueue_fd: posix.fd_t,
-
 changes: []posix.Kevent,
 change_count: usize = 0,
 events: []posix.Kevent,

@@ -63,10 +63,13 @@ pub fn init(
 
             // Initialize using the WQ from the parent ring.
             const flags: u32 = base_flags | linux.IORING_SETUP_ATTACH_WQ;
-            var params = mem.zeroInit(linux.io_uring_params, .{
-                .flags = flags,
-                .wq_fd = @as(u32, @intCast(parent_uring.inner.fd)),
-            });
+            var params = mem.zeroInit(
+                linux.io_uring_params,
+                .{
+                    .flags = flags,
+                    .wq_fd = @as(u32, @intCast(parent_uring.inner.fd)),
+                },
+            );
 
             const uring = try allocator.create(linux.IoUring);
             errdefer allocator.destroy(uring);
@@ -147,85 +150,74 @@ fn queue_job(
 ) Errors.QueueJob!void {
     const uring: *IoUring = @ptrCast(@alignCast(runner));
     (switch (job) {
-        .timer => |inner| queue_timer(
-            uring,
+        .timer => |inner| uring.queue_timer(
             allocator,
             task,
             inner,
         ),
-        .open => |inner| queue_open(
-            uring,
+        .open => |inner| uring.queue_open(
             allocator,
             task,
             inner.path,
             inner.flags,
         ),
-        .delete => |inner| queue_delete(
-            uring,
+        .delete => |inner| uring.queue_delete(
             allocator,
             task,
             inner.path,
             inner.is_dir,
         ),
-        .mkdir => |inner| queue_mkdir(
-            uring,
+        .mkdir => |inner| uring.queue_mkdir(
             allocator,
             task,
             inner.path,
             inner.mode,
         ),
-        .stat => |inner| queue_stat(
-            uring,
+        .stat => |inner| uring.queue_stat(
             allocator,
             task,
             inner,
         ),
-        .read => |inner| queue_read(
-            uring,
+        .read => |inner| uring.queue_read(
             allocator,
             task,
             inner.fd,
             inner.buffer,
             inner.offset,
         ),
-        .write => |inner| queue_write(
-            uring,
+        .write => |inner| uring.queue_write(
             allocator,
             task,
             inner.fd,
             inner.buffer,
             inner.offset,
         ),
-        .close => |inner| queue_close(
-            uring,
+        .close => |inner| uring.queue_close(
             allocator,
             task,
             inner,
         ),
-        .accept => |inner| queue_accept(
-            uring,
+        .accept => |inner| uring.queue_accept(
             allocator,
             task,
             inner.socket,
             inner.kind,
         ),
-        .connect => |inner| queue_connect(
-            uring,
+        .connect => |inner| uring.queue_connect(
             allocator,
             task,
             inner.socket,
             inner.addr,
             inner.kind,
         ),
-        .recv => |inner| queue_recv(
+        .recv => |inner| uring.queue_recv(
             uring,
             allocator,
             task,
             inner.socket,
             inner.buffer,
         ),
-        .send => |inner| queue_send(
-            uring,
+        .send => |inner| uring.queue_send(
             allocator,
             task,
             inner.socket,
@@ -363,8 +355,18 @@ fn queue_delete(
     const mode: u32 = if (is_dir) posix.AT.REMOVEDIR else 0;
 
     switch (path) {
-        .rel => |inner| _ = try io_uring.inner.unlinkat(index, inner.dir, inner.path.ptr, mode),
-        .abs => |inner| _ = try io_uring.inner.unlinkat(index, posix.AT.FDCWD, inner.ptr, mode),
+        .rel => |rel| _ = try io_uring.inner.unlinkat(
+            index,
+            rel.dir,
+            rel.path.ptr,
+            mode,
+        ),
+        .abs => |abs| _ = try io_uring.inner.unlinkat(
+            index,
+            posix.AT.FDCWD,
+            abs.ptr,
+            mode,
+        ),
     }
 }
 
@@ -391,16 +393,16 @@ fn queue_mkdir(
     };
 
     switch (path) {
-        .rel => |inner| _ = try io_uring.inner.mkdirat(
+        .rel => |rel| _ = try io_uring.inner.mkdirat(
             index,
-            inner.dir,
-            inner.path.ptr,
+            rel.dir,
+            rel.path.ptr,
             @intCast(mode),
         ),
-        .abs => |inner| _ = try io_uring.inner.mkdirat(
+        .abs => |abs| _ = try io_uring.inner.mkdirat(
             index,
             posix.AT.FDCWD,
-            inner.ptr,
+            abs.ptr,
             @intCast(mode),
         ),
     }
@@ -711,12 +713,13 @@ fn reap(
     const uring_nr: u32 = if (wait) 1 else 0;
 
     const count = while (true) {
-        break uring.inner.copy_cqes(uring.cqes[0..], uring_nr) catch |e| {
-            switch (e) {
-                error.SignalInterrupt => continue,
-                else => |err| return err,
-            }
-        };
+        break uring.inner.copy_cqes(uring.cqes[0..], uring_nr) catch |e|
+            {
+                switch (e) {
+                    error.SignalInterrupt => continue,
+                    else => |err| return err,
+                }
+            };
     };
 
     for (uring.cqes[0..count], 0..) |cqe, i| {
@@ -759,15 +762,33 @@ fn reap(
                     const result: results.AcceptResult = result: {
                         const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
-                            .AGAIN => .{ .err = AcceptError.WouldBlock },
-                            .BADF => .{ .err = AcceptError.InvalidFd },
-                            .CONNABORTED => .{ .err = AcceptError.ConnectionAborted },
-                            .FAULT => .{ .err = AcceptError.InvalidAddress },
-                            .INVAL => .{ .err = AcceptError.NotListening },
-                            .MFILE => .{ .err = AcceptError.ProcessFdQuotaExceeded },
-                            .NFILE => .{ .err = AcceptError.SystemFdQuotaExceeded },
-                            .NOBUFS, .NOMEM => .{ .err = AcceptError.OutOfMemory },
-                            else => .{ .err = AcceptError.Unexpected },
+                            .AGAIN => .{
+                                .err = AcceptError.WouldBlock,
+                            },
+                            .BADF => .{
+                                .err = AcceptError.InvalidFd,
+                            },
+                            .CONNABORTED => .{
+                                .err = AcceptError.ConnectionAborted,
+                            },
+                            .FAULT => .{
+                                .err = AcceptError.InvalidAddress,
+                            },
+                            .INVAL => .{
+                                .err = AcceptError.NotListening,
+                            },
+                            .MFILE => .{
+                                .err = AcceptError.ProcessFdQuotaExceeded,
+                            },
+                            .NFILE => .{
+                                .err = AcceptError.SystemFdQuotaExceeded,
+                            },
+                            .NOBUFS, .NOMEM => .{
+                                .err = AcceptError.OutOfMemory,
+                            },
+                            else => .{
+                                .err = AcceptError.Unexpected,
+                            },
                         };
                     };
 
@@ -781,22 +802,48 @@ fn reap(
                     const result: results.ConnectResult = result: {
                         const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
-                            .ACCES, .PERM => .{ .err = ConnectError.AccessDenied },
-                            .ADDRINUSE => .{ .err = ConnectError.AddressInUse },
-                            .ADDRNOTAVAIL => .{ .err = ConnectError.AddressNotAvailable },
-                            .AFNOSUPPORT => .{ .err = ConnectError.AddressFamilyNotSupported },
+                            .ACCES, .PERM => .{
+                                .err = ConnectError.AccessDenied,
+                            },
+                            .ADDRINUSE => .{
+                                .err = ConnectError.AddressInUse,
+                            },
+                            .ADDRNOTAVAIL => .{
+                                .err = ConnectError.AddressNotAvailable,
+                            },
+                            .AFNOSUPPORT => .{
+                                .err = ConnectError.AddressFamilyNotSupported,
+                            },
                             .AGAIN, .ALREADY, .INPROGRESS => .{
                                 .err = ConnectError.WouldBlock,
                             },
-                            .BADF => .{ .err = ConnectError.InvalidFd },
-                            .CONNREFUSED => .{ .err = ConnectError.ConnectionRefused },
-                            .FAULT => .{ .err = ConnectError.InvalidAddress },
-                            .ISCONN => .{ .err = ConnectError.AlreadyConnected },
-                            .NETUNREACH => .{ .err = ConnectError.NetworkUnreachable },
-                            .NOTSOCK => .{ .err = ConnectError.NotASocket },
-                            .PROTOTYPE => .{ .err = ConnectError.ProtocolFamilyNotSupported },
-                            .TIMEDOUT => .{ .err = ConnectError.TimedOut },
-                            else => .{ .err = ConnectError.Unexpected },
+                            .BADF => .{
+                                .err = ConnectError.InvalidFd,
+                            },
+                            .CONNREFUSED => .{
+                                .err = ConnectError.ConnectionRefused,
+                            },
+                            .FAULT => .{
+                                .err = ConnectError.InvalidAddress,
+                            },
+                            .ISCONN => .{
+                                .err = ConnectError.AlreadyConnected,
+                            },
+                            .NETUNREACH => .{
+                                .err = ConnectError.NetworkUnreachable,
+                            },
+                            .NOTSOCK => .{
+                                .err = ConnectError.NotASocket,
+                            },
+                            .PROTOTYPE => .{
+                                .err = ConnectError.ProtocolFamilyNotSupported,
+                            },
+                            .TIMEDOUT => .{
+                                .err = ConnectError.TimedOut,
+                            },
+                            else => .{
+                                .err = ConnectError.Unexpected,
+                            },
                         };
                     };
 
@@ -816,12 +863,24 @@ fn reap(
                         const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
                             .NOTSOCK, .INVAL, .FAULT, .BADF => unreachable,
-                            .AGAIN => .{ .err = RecvError.WouldBlock },
-                            .CONNRESET => .{ .err = RecvError.Closed },
-                            .CONNREFUSED => .{ .err = RecvError.ConnectionRefused },
-                            .NOMEM => .{ .err = RecvError.SystemResources },
-                            .NOTCONN => .{ .err = RecvError.SocketNotConnected },
-                            else => .{ .err = RecvError.Unexpected },
+                            .AGAIN => .{
+                                .err = RecvError.WouldBlock,
+                            },
+                            .CONNRESET => .{
+                                .err = RecvError.Closed,
+                            },
+                            .CONNREFUSED => .{
+                                .err = RecvError.ConnectionRefused,
+                            },
+                            .NOMEM => .{
+                                .err = RecvError.SystemResources,
+                            },
+                            .NOTCONN => .{
+                                .err = RecvError.SocketNotConnected,
+                            },
+                            else => .{
+                                .err = RecvError.Unexpected,
+                            },
                         };
                     };
 
@@ -841,39 +900,73 @@ fn reap(
                             .INVAL,
                             .DESTADDRREQ,
                             => unreachable,
-                            .BADF => .{ .err = SendError.InvalidFd },
-                            .ACCES => .{ .err = SendError.AccessDenied },
-                            .AGAIN => .{ .err = SendError.WouldBlock },
-                            .ALREADY => .{ .err = SendError.FastOpenAlreadyInProgress },
-                            .CONNRESET, .PIPE => .{ .err = SendError.Closed },
-                            .MSGSIZE => .{ .err = SendError.MessageOversize },
+                            .BADF => .{
+                                .err = SendError.InvalidFd,
+                            },
+                            .ACCES => .{
+                                .err = SendError.AccessDenied,
+                            },
+                            .AGAIN => .{
+                                .err = SendError.WouldBlock,
+                            },
+                            .ALREADY => .{
+                                .err = SendError.FastOpenAlreadyInProgress,
+                            },
+                            .CONNRESET, .PIPE => .{
+                                .err = SendError.Closed,
+                            },
+                            .MSGSIZE => .{
+                                .err = SendError.MessageOversize,
+                            },
                             .NOBUFS,
                             .NOMEM,
                             => .{
                                 .err = SendError.SystemResources,
                             },
-                            else => .{ .err = SendError.Unexpected },
+                            else => .{
+                                .err = SendError.Unexpected,
+                            },
                         };
                     };
 
                     break :blk .{ .send = result };
                 },
                 .mkdir => {
-                    if (cqe.res == 0) break :blk .{ .mkdir = .{ .actual = {} } };
+                    if (cqe.res == 0) break :blk .{
+                        .mkdir = .{ .actual = {} },
+                    };
 
                     const MkdirError = results.MkdirError;
                     const result: results.MkdirResult = result: {
                         const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
-                            .ACCES => .{ .err = MkdirError.AccessDenied },
-                            .EXIST => .{ .err = MkdirError.AlreadyExists },
-                            .LOOP, .MLINK => .{ .err = MkdirError.Loop },
-                            .NAMETOOLONG => .{ .err = MkdirError.NameTooLong },
-                            .NOENT => .{ .err = MkdirError.NotFound },
-                            .NOSPC => .{ .err = MkdirError.NoSpace },
-                            .NOTDIR => .{ .err = MkdirError.NotADirectory },
-                            .ROFS => .{ .err = MkdirError.ReadOnlyFileSystem },
-                            else => .{ .err = MkdirError.Unexpected },
+                            .ACCES => .{
+                                .err = MkdirError.AccessDenied,
+                            },
+                            .EXIST => .{
+                                .err = MkdirError.AlreadyExists,
+                            },
+                            .LOOP, .MLINK => .{
+                                .err = MkdirError.Loop,
+                            },
+                            .NAMETOOLONG => .{
+                                .err = MkdirError.NameTooLong,
+                            },
+                            .NOENT => .{
+                                .err = MkdirError.NotFound,
+                            },
+                            .NOSPC => .{
+                                .err = MkdirError.NoSpace,
+                            },
+                            .NOTDIR => .{
+                                .err = MkdirError.NotADirectory,
+                            },
+                            .ROFS => .{
+                                .err = MkdirError.ReadOnlyFileSystem,
+                            },
+                            else => .{
+                                .err = MkdirError.Unexpected,
+                            },
                         };
                     };
 
@@ -882,10 +975,18 @@ fn reap(
                 .open => |inner| {
                     if (cqe.res >= 0) switch (inner.kind) {
                         .file => break :blk .{
-                            .open = .{ .actual = .{ .file = .{ .handle = @intCast(cqe.res) } } },
+                            .open = .{
+                                .actual = .{ .file = .{
+                                    .handle = @intCast(cqe.res),
+                                } },
+                            },
                         },
                         .dir => break :blk .{
-                            .open = .{ .actual = .{ .dir = .{ .handle = @intCast(cqe.res) } } },
+                            .open = .{
+                                .actual = .{ .dir = .{
+                                    .handle = @intCast(cqe.res),
+                                } },
+                            },
                         },
                     };
 
@@ -893,29 +994,75 @@ fn reap(
                     const result: results.InnerOpenResult = result: {
                         const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
-                            .ACCES, .PERM => .{ .err = OpenError.AccessDenied },
-                            .BADF => .{ .err = OpenError.InvalidFd },
-                            .BUSY => .{ .err = OpenError.Busy },
-                            .DQUOT => .{ .err = OpenError.DiskQuotaExceeded },
-                            .EXIST => .{ .err = OpenError.AlreadyExists },
-                            .FAULT => .{ .err = OpenError.InvalidAddress },
-                            .FBIG, .OVERFLOW => .{ .err = OpenError.FileTooBig },
-                            .INVAL => .{ .err = OpenError.InvalidArguments },
-                            .ISDIR => .{ .err = OpenError.IsDirectory },
-                            .LOOP => .{ .err = OpenError.Loop },
-                            .MFILE => .{ .err = OpenError.ProcessFdQuotaExceeded },
-                            .NAMETOOLONG => .{ .err = OpenError.NameTooLong },
-                            .NFILE => .{ .err = OpenError.SystemFdQuotaExceeded },
-                            .NODEV, .NXIO => .{ .err = OpenError.DeviceNotFound },
-                            .NOENT => .{ .err = OpenError.NotFound },
-                            .NOMEM => .{ .err = OpenError.OutOfMemory },
-                            .NOSPC => .{ .err = OpenError.NoSpace },
-                            .NOTDIR => .{ .err = OpenError.NotADirectory },
-                            .OPNOTSUPP => .{ .err = OpenError.OperationNotSupported },
-                            .ROFS => .{ .err = OpenError.ReadOnlyFileSystem },
-                            .TXTBSY => .{ .err = OpenError.FileLocked },
-                            .AGAIN => .{ .err = OpenError.WouldBlock },
-                            else => .{ .err = OpenError.Unexpected },
+                            .ACCES, .PERM => .{
+                                .err = OpenError.AccessDenied,
+                            },
+                            .BADF => .{
+                                .err = OpenError.InvalidFd,
+                            },
+                            .BUSY => .{
+                                .err = OpenError.Busy,
+                            },
+                            .DQUOT => .{
+                                .err = OpenError.DiskQuotaExceeded,
+                            },
+                            .EXIST => .{
+                                .err = OpenError.AlreadyExists,
+                            },
+                            .FAULT => .{
+                                .err = OpenError.InvalidAddress,
+                            },
+                            .FBIG, .OVERFLOW => .{
+                                .err = OpenError.FileTooBig,
+                            },
+                            .INVAL => .{
+                                .err = OpenError.InvalidArguments,
+                            },
+                            .ISDIR => .{
+                                .err = OpenError.IsDirectory,
+                            },
+                            .LOOP => .{
+                                .err = OpenError.Loop,
+                            },
+                            .MFILE => .{
+                                .err = OpenError.ProcessFdQuotaExceeded,
+                            },
+                            .NAMETOOLONG => .{
+                                .err = OpenError.NameTooLong,
+                            },
+                            .NFILE => .{
+                                .err = OpenError.SystemFdQuotaExceeded,
+                            },
+                            .NODEV, .NXIO => .{
+                                .err = OpenError.DeviceNotFound,
+                            },
+                            .NOENT => .{
+                                .err = OpenError.NotFound,
+                            },
+                            .NOMEM => .{
+                                .err = OpenError.OutOfMemory,
+                            },
+                            .NOSPC => .{
+                                .err = OpenError.NoSpace,
+                            },
+                            .NOTDIR => .{
+                                .err = OpenError.NotADirectory,
+                            },
+                            .OPNOTSUPP => .{
+                                .err = OpenError.OperationNotSupported,
+                            },
+                            .ROFS => .{
+                                .err = OpenError.ReadOnlyFileSystem,
+                            },
+                            .TXTBSY => .{
+                                .err = OpenError.FileLocked,
+                            },
+                            .AGAIN => .{
+                                .err = OpenError.WouldBlock,
+                            },
+                            else => .{
+                                .err = OpenError.Unexpected,
+                            },
                         };
                     };
 
@@ -929,22 +1076,52 @@ fn reap(
                         const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
                             // unlink
-                            .ACCES => .{ .err = DeleteError.AccessDenied },
-                            .BUSY => .{ .err = DeleteError.Busy },
-                            .FAULT => .{ .err = DeleteError.InvalidAddress },
-                            .IO => .{ .err = DeleteError.IoError },
-                            .ISDIR, .PERM => .{ .err = DeleteError.IsDirectory },
-                            .LOOP => .{ .err = DeleteError.Loop },
-                            .NAMETOOLONG => .{ .err = DeleteError.NameTooLong },
-                            .NOENT => .{ .err = DeleteError.NotFound },
-                            .NOMEM => .{ .err = DeleteError.OutOfMemory },
-                            .NOTDIR => .{ .err = DeleteError.IsNotDirectory },
-                            .ROFS => .{ .err = DeleteError.ReadOnlyFileSystem },
-                            .BADF => .{ .err = DeleteError.InvalidFd },
+                            .ACCES => .{
+                                .err = DeleteError.AccessDenied,
+                            },
+                            .BUSY => .{
+                                .err = DeleteError.Busy,
+                            },
+                            .FAULT => .{
+                                .err = DeleteError.InvalidAddress,
+                            },
+                            .IO => .{
+                                .err = DeleteError.IoError,
+                            },
+                            .ISDIR, .PERM => .{
+                                .err = DeleteError.IsDirectory,
+                            },
+                            .LOOP => .{
+                                .err = DeleteError.Loop,
+                            },
+                            .NAMETOOLONG => .{
+                                .err = DeleteError.NameTooLong,
+                            },
+                            .NOENT => .{
+                                .err = DeleteError.NotFound,
+                            },
+                            .NOMEM => .{
+                                .err = DeleteError.OutOfMemory,
+                            },
+                            .NOTDIR => .{
+                                .err = DeleteError.IsNotDirectory,
+                            },
+                            .ROFS => .{
+                                .err = DeleteError.ReadOnlyFileSystem,
+                            },
+                            .BADF => .{
+                                .err = DeleteError.InvalidFd,
+                            },
                             // rmdir
-                            .INVAL => .{ .err = DeleteError.InvalidArguments },
-                            .NOTEMPTY => .{ .err = DeleteError.NotEmpty },
-                            else => .{ .err = DeleteError.Unexpected },
+                            .INVAL => .{
+                                .err = DeleteError.InvalidArguments,
+                            },
+                            .NOTEMPTY => .{
+                                .err = DeleteError.NotEmpty,
+                            },
+                            else => .{
+                                .err = DeleteError.Unexpected,
+                            },
                         };
                     };
 
@@ -966,37 +1143,77 @@ fn reap(
                     const result: results.ReadResult = result: {
                         const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
-                            .AGAIN => .{ .err = ReadError.WouldBlock },
-                            .BADF => .{ .err = ReadError.InvalidFd },
-                            .FAULT => .{ .err = ReadError.InvalidAddress },
-                            .INVAL => .{ .err = ReadError.InvalidArguments },
-                            .IO => .{ .err = ReadError.IoError },
-                            .ISDIR => .{ .err = ReadError.IsDirectory },
-                            else => .{ .err = ReadError.Unexpected },
+                            .AGAIN => .{
+                                .err = ReadError.WouldBlock,
+                            },
+                            .BADF => .{
+                                .err = ReadError.InvalidFd,
+                            },
+                            .FAULT => .{
+                                .err = ReadError.InvalidAddress,
+                            },
+                            .INVAL => .{
+                                .err = ReadError.InvalidArguments,
+                            },
+                            .IO => .{
+                                .err = ReadError.IoError,
+                            },
+                            .ISDIR => .{
+                                .err = ReadError.IsDirectory,
+                            },
+                            else => .{
+                                .err = ReadError.Unexpected,
+                            },
                         };
                     };
 
                     break :blk .{ .read = result };
                 },
                 .write => {
-                    if (cqe.res > 0) break :blk .{ .write = .{ .actual = @intCast(cqe.res) } };
+                    if (cqe.res > 0) break :blk .{
+                        .write = .{
+                            .actual = @intCast(cqe.res),
+                        },
+                    };
 
                     const WriteError = results.WriteError;
                     const result: results.WriteResult = result: {
                         const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
                             .INVAL => unreachable,
-                            .AGAIN => .{ .err = WriteError.WouldBlock },
-                            .BADF => .{ .err = WriteError.InvalidFd },
-                            .DESTADDRREQ => .{ .err = WriteError.NoDestinationAddress },
-                            .DQUOT => .{ .err = WriteError.DiskQuotaExceeded },
-                            .FAULT => .{ .err = WriteError.InvalidAddress },
-                            .FBIG => .{ .err = WriteError.FileTooBig },
-                            .IO => .{ .err = WriteError.IoError },
-                            .NOSPC => .{ .err = WriteError.NoSpace },
-                            .PERM => .{ .err = WriteError.AccessDenied },
-                            .PIPE => .{ .err = WriteError.BrokenPipe },
-                            else => .{ .err = WriteError.Unexpected },
+                            .AGAIN => .{
+                                .err = WriteError.WouldBlock,
+                            },
+                            .BADF => .{
+                                .err = WriteError.InvalidFd,
+                            },
+                            .DESTADDRREQ => .{
+                                .err = WriteError.NoDestinationAddress,
+                            },
+                            .DQUOT => .{
+                                .err = WriteError.DiskQuotaExceeded,
+                            },
+                            .FAULT => .{
+                                .err = WriteError.InvalidAddress,
+                            },
+                            .FBIG => .{
+                                .err = WriteError.FileTooBig,
+                            },
+                            .IO => .{
+                                .err = WriteError.IoError,
+                            },
+                            .NOSPC => .{
+                                .err = WriteError.NoSpace,
+                            },
+                            .PERM => .{
+                                .err = WriteError.AccessDenied,
+                            },
+                            .PIPE => .{
+                                .err = WriteError.BrokenPipe,
+                            },
+                            else => .{
+                                .err = WriteError.Unexpected,
+                            },
                         };
                     };
 
@@ -1020,23 +1237,45 @@ fn reap(
                                 .nanoseconds = (statx.ctime.sec * std.time.ns_per_s) + statx.ctime.nsec,
                             },
                         };
-                        break :blk .{ .stat = .{ .actual = stat } };
+                        break :blk .{ .stat = .{
+                            .actual = stat,
+                        } };
                     }
 
                     const StatError = results.StatError;
                     const result: results.StatResult = result: {
                         const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
-                            .ACCES => .{ .err = StatError.AccessDenied },
-                            .BADF => .{ .err = StatError.InvalidFd },
-                            .FAULT => .{ .err = StatError.InvalidAddress },
-                            .INVAL => .{ .err = StatError.InvalidArguments },
-                            .LOOP => .{ .err = StatError.Loop },
-                            .NAMETOOLONG => .{ .err = StatError.NameTooLong },
-                            .NOENT => .{ .err = StatError.NotFound },
-                            .NOMEM => .{ .err = StatError.OutOfMemory },
-                            .NOTDIR => .{ .err = StatError.NotADirectory },
-                            else => .{ .err = StatError.Unexpected },
+                            .ACCES => .{
+                                .err = StatError.AccessDenied,
+                            },
+                            .BADF => .{
+                                .err = StatError.InvalidFd,
+                            },
+                            .FAULT => .{
+                                .err = StatError.InvalidAddress,
+                            },
+                            .INVAL => .{
+                                .err = StatError.InvalidArguments,
+                            },
+                            .LOOP => .{
+                                .err = StatError.Loop,
+                            },
+                            .NAMETOOLONG => .{
+                                .err = StatError.NameTooLong,
+                            },
+                            .NOENT => .{
+                                .err = StatError.NotFound,
+                            },
+                            .NOMEM => .{
+                                .err = StatError.OutOfMemory,
+                            },
+                            .NOTDIR => .{
+                                .err = StatError.NotADirectory,
+                            },
+                            else => .{
+                                .err = StatError.Unexpected,
+                            },
                         };
                     };
 
