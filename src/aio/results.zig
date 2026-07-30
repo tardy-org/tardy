@@ -6,12 +6,12 @@ const Socket = tardy.net.Socket;
 
 pub fn Resulted(comptime T: type, comptime E: type) type {
     return union(enum) {
-        const Self = @This();
+        const Resulted_t = @This();
         actual: T,
         err: E,
 
-        pub fn unwrap(self: *const Self) E!T {
-            switch (self.*) {
+        pub fn unwrap(result: *const Resulted_t) E!T {
+            switch (result.*) {
                 .actual => |a| return a,
                 .err => |e| return e,
             }

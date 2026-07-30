@@ -182,8 +182,11 @@ fn build_example_exe(
 
     // windows: errors with `unknow size: 0xx(%%rsp)` without llvm
     // aarch64: use_new_linker panics and codegen deadlocks without llvm
-    const use_llvm = (options.target.result.os.tag == .windows) or
-        (options.target.result.cpu.arch == .aarch64);
+    // macos: doesn't currently support new_linker
+    const use_llvm = switch (options.target.result.os.tag) {
+        .windows, .macos => true,
+        else => if (options.target.result.cpu.arch == .aarch64) true else false,
+    };
     const example_exe = b.addExecutable(.{
         .name = @tagName(options.example),
         .root_module = example_mod,
@@ -314,10 +317,10 @@ fn build_test_e2e(
 
     e2e_mod.addOptions("options", test_options);
 
-    // windows: errors with `unknow size: 0xx(%%rsp)` without llvm
-    // aarch64: use_new_linker panics and codegen deadlocks without llvm
-    const use_llvm = (options.target.result.os.tag == .windows) or
-        (options.target.result.cpu.arch == .aarch64);
+    const use_llvm = switch (options.target.result.os.tag) {
+        .windows, .macos => true,
+        else => if (options.target.result.cpu.arch == .aarch64) true else false,
+    };
     const exe = b.addExecutable(.{
         .name = "e2e",
         .root_module = e2e_mod,

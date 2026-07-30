@@ -2,13 +2,6 @@
 pub const Coroutine = @This();
 
 threadlocal var active_frame: ?*Coroutine = null;
-
-const Status = enum(u8) {
-    in_progress,
-    done,
-    errored,
-};
-
 /// The previous SP.
 caller_sp: *align(raw_alignment) anyopaque,
 /// The current SP.
@@ -17,6 +10,12 @@ current_sp: *align(raw_alignment) anyopaque,
 stack_mem: []align(raw_alignment) u8,
 /// Is the Coroutine Frame done?
 status: Status = .in_progress,
+
+const Status = enum(u8) {
+    in_progress,
+    done,
+    errored,
+};
 
 pub const Stack = enum(u32) {
     @"2KiB" = 2 * unit,
@@ -148,8 +147,8 @@ pub fn init(
     return frame;
 }
 
-pub fn deinit(self: *Coroutine, allocator: mem.Allocator) void {
-    allocator.free(self.stack_mem);
+pub fn deinit(frame: *Coroutine, allocator: mem.Allocator) void {
+    allocator.free(frame.stack_mem);
 }
 
 /// This runs/continues a Coroutine Frame.

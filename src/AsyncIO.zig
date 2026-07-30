@@ -15,45 +15,55 @@ mutex: Io.Mutex = .init,
 /// This provides the completions that the backend will utilize when
 /// submitting and reaping. This MUST be called before any other
 /// methods on this AsyncIO instance.
-pub fn attach(self: *AsyncIO, completions: []results.Completion) void {
-    self.completions = completions;
-    self.attached = true;
+pub fn attach(async_io: *AsyncIO, completions: []results.Completion) void {
+    async_io.completions = completions;
+    async_io.attached = true;
 }
 
-pub fn deinit(self: *AsyncIO, allocator: mem.Allocator, io: Io) void {
-    self.mutex.lockUncancelable(io);
-    defer self.mutex.unlock(io);
+pub fn deinit(async_io: *AsyncIO, allocator: mem.Allocator, io: Io) void {
+    async_io.mutex.lockUncancelable(io);
+    defer async_io.mutex.unlock(io);
 
-    self.vtable.deinit(self.runner, allocator);
+    async_io.vtable.deinit(async_io.runner, allocator);
 }
 
 pub fn queue_job(
-    self: *AsyncIO,
+    async_io: *AsyncIO,
     allocator: mem.Allocator,
     task: usize,
     sub: Submission,
 ) QueueJobError!void {
-    debug.assert(self.attached);
+    debug.assert(async_io.attached);
     log.debug("queuing up job={t} at index={d}", .{ sub, task });
-    try self.vtable.queue_job(self.runner, allocator, task, sub);
+    try async_io.vtable.queue_job(async_io.runner, allocator, task, sub);
 }
 
-pub fn wake(self: *AsyncIO, io: Io) !void {
-    self.mutex.lockUncancelable(io);
-    defer self.mutex.unlock(io);
+pub fn wake(async_io: *AsyncIO, io: Io) !void {
+    async_io.mutex.lockUncancelable(io);
+    defer async_io.mutex.unlock(io);
 
-    debug.assert(self.attached);
-    try self.vtable.wake(self.runner);
+    debug.assert(async_io.attached);
+    try async_io.vtable.wake(async_io.runner);
 }
 
-pub fn reap(self: *AsyncIO, allocator: mem.Allocator, wait: bool) ![]results.Completion {
-    debug.assert(self.attached);
-    return try self.vtable.reap(self.runner, allocator, self.completions, wait);
+pub fn reap(
+    async_io: *AsyncIO,
+    allocator: mem.Allocator,
+    wait: bool,
+) ![]results.Completion {
+    debug.assert(async_io.attached);
+
+    return try async_io.vtable.reap(
+        async_io.runner,
+        allocator,
+        async_io.completions,
+        wait,
+    );
 }
 
-pub fn submit(self: *AsyncIO) !void {
-    debug.assert(self.attached);
-    try self.vtable.submit(self.runner);
+pub fn submit(async_io: *AsyncIO) !void {
+    debug.assert(async_io.attached);
+    try async_io.vtable.submit(async_io.runner);
 }
 
 pub const Kind = union(enum) {
@@ -129,7 +139,9 @@ pub fn native() Kind {
         .ios, .macos, .watchos, .tvos, .visionos => return Kind.kqueue,
         .freebsd, .openbsd, .netbsd, .dragonfly => return Kind.kqueue,
         .illumos => return Kind.poll,
-        else => @compileError("Unsupported platform! Provide a custom Async I/O backend."),
+        else => @compileError(
+            "Unsupported platform! Provide a custom Async I/O backend.",
+        ),
     };
 }
 
@@ -178,8 +190,8 @@ pub const Features = struct {
         return .{ .bitmask = mask };
     }
 
-    pub fn has_capability(self: Features, op: Op) bool {
-        return (self.bitmask & @backingInt(op)) != 0;
+    pub fn has_capability(features: Features, op: Op) bool {
+        return (features.bitmask & @backingInt(op)) != 0;
     }
 };
 
