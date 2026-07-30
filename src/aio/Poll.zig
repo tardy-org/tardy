@@ -1,10 +1,10 @@
 pub const Poll = @This();
 
-allocator: mem.Allocator,
 wake_pipe: [2]fs.File.Handle,
-
 fd_list: std.ArrayList(syscall.pollfd),
-fd_job_map: std.AutoHashMap(fs.File.Handle, Job),
+// TODO: audit all uses of `AutoHashMap` if they can be replaced
+// by array variant
+fd_job_map: std.AutoHashMapUnmanaged(fs.File.Handle, Job),
 
 timers: TimerQueue,
 
@@ -38,7 +38,11 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Poll {
             // Required to prevent INVALID_ADDRESS_COMPONENT error on AFD
             var binded_addr = mem.zeroes(std.posix.sockaddr);
             var binded_size: std.posix.socklen_t = @sizeOf(std.posix.sockaddr);
-            try syscall.getsockname(server_socket, &binded_addr, &binded_size);
+            try syscall.getsockname(
+                server_socket,
+                &binded_addr,
+                &binded_size,
+            );
             const bounded_addr = net.Socket.Address.fromAny(&binded_addr);
 
             try syscall.connect(write_end, &bounded_addr);
@@ -61,9 +65,10 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Poll {
     );
     errdefer fd_list.deinit(allocator);
 
-    var fd_job_map: std.AutoHashMap(fs.File.Handle, Job) = .init(allocator);
-    errdefer fd_job_map.deinit();
-    try fd_job_map.ensureTotalCapacity(@intCast(size));
+    var fd_job_map: std.AutoHashMapUnmanaged(fs.File.Handle, Job) = .empty;
+    errdefer fd_job_map.deinit(allocator);
+
+    try fd_job_map.ensureTotalCapacity(allocator, @intCast(size));
 
     if (comptime native_os == .windows) {
         try fd_list.append(allocator, .{
@@ -71,7 +76,7 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Poll {
             .events = syscall.POLL.IN,
             .revents = 0,
         });
-        try fd_job_map.put(@ptrCast(pipe[0]), .{
+        try fd_job_map.put(allocator, @ptrCast(pipe[0]), .{
             .index = 0,
             .type = .wake,
             .task = 0,
@@ -82,7 +87,7 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Poll {
             .events = syscall.POLL.IN,
             .revents = 0,
         });
-        try fd_job_map.put(pipe[0], .{
+        try fd_job_map.put(allocator, pipe[0], .{
             .index = 0,
             .type = .wake,
             .task = 0,
@@ -93,7 +98,6 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Poll {
     errdefer timers.deinit(allocator);
 
     return .{
-        .allocator = allocator,
         .wake_pipe = pipe,
         .fd_list = fd_list,
         .fd_job_map = fd_job_map,
@@ -101,11 +105,14 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Poll {
     };
 }
 
-pub fn inner_deinit(self: *Poll, allocator: mem.Allocator) void {
-    self.fd_list.deinit(allocator);
-    self.fd_job_map.deinit();
-    self.timers.deinit(allocator);
-    for (self.wake_pipe) |fd| if (comptime native_os == .windows) (syscall.ws2.closesock(fd) catch unreachable) else syscall.close(fd);
+pub fn inner_deinit(poll: *Poll, allocator: mem.Allocator) void {
+    poll.fd_list.deinit(allocator);
+    poll.fd_job_map.deinit(allocator);
+    poll.timers.deinit(allocator);
+    for (poll.wake_pipe) |fd| if (comptime native_os == .windows)
+        syscall.ws2.closesock(fd) catch unreachable
+    else
+        syscall.close(fd);
 }
 
 fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
@@ -113,39 +120,80 @@ fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
     poll.inner_deinit(allocator);
 }
 
-pub fn queue_job(runner: *anyopaque, task: usize, job: AsyncIO.Submission) Errors.QueueJob!void {
+pub fn queue_job(
+    runner: *anyopaque,
+    allocator: mem.Allocator,
+    task: usize,
+    job: AsyncIO.Submission,
+) Errors.QueueJob!void {
     const poll: *Poll = @ptrCast(@alignCast(runner));
 
     try switch (job) {
-        .timer => |inner| queue_timer(poll, task, inner),
-        .accept => |inner| queue_accept(poll, task, inner.socket, inner.kind),
-        .connect => |inner| queue_connect(poll, task, inner.socket, inner.addr, inner.kind),
-        .recv => |inner| queue_recv(poll, task, inner.socket, inner.buffer),
-        .send => |inner| queue_send(poll, task, inner.socket, inner.buffer),
+        .timer => |inner| queue_timer(
+            poll,
+            allocator,
+            task,
+            inner,
+        ),
+        .accept => |inner| queue_accept(
+            poll,
+            allocator,
+            task,
+            inner.socket,
+            inner.kind,
+        ),
+        .connect => |inner| queue_connect(
+            poll,
+            allocator,
+            task,
+            inner.socket,
+            inner.addr,
+            inner.kind,
+        ),
+        .recv => |inner| queue_recv(
+            poll,
+            allocator,
+            task,
+            inner.socket,
+            inner.buffer,
+        ),
+        .send => |inner| queue_send(
+            poll,
+            allocator,
+            task,
+            inner.socket,
+            inner.buffer,
+        ),
         .open, .delete, .mkdir, .stat, .read, .write, .close => unreachable,
     };
 }
 
-fn queue_timer(self: *Poll, task: usize, duration: Io.Duration) Errors.Timer!void {
+fn queue_timer(
+    poll: *Poll,
+    allocator: mem.Allocator,
+    task: usize,
+    duration: Io.Duration,
+) Errors.Timer!void {
     const current = syscall.now(.real);
-    try self.timers.push(self.allocator, .{
+    try poll.timers.push(allocator, .{
         .duration = current.addDuration(duration),
         .task = task,
     });
 }
 
 fn queue_accept(
-    self: *Poll,
+    poll: *Poll,
+    allocator: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     kind: net.Socket.Kind,
 ) Errors.Accept!void {
-    try self.fd_list.append(self.allocator, .{
+    try poll.fd_list.append(allocator, .{
         .fd = socket,
         .events = syscall.POLL.IN,
         .revents = 0,
     });
-    try self.fd_job_map.put(socket, .{
+    try poll.fd_job_map.put(allocator, socket, .{
         .index = 0,
         .type = .{
             .accept = .{
@@ -159,7 +207,8 @@ fn queue_accept(
 }
 
 fn queue_connect(
-    self: *Poll,
+    poll: *Poll,
+    allocator: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     // TODO: take by *const
@@ -174,12 +223,12 @@ fn queue_connect(
         else => |err| return err,
     };
 
-    try self.fd_list.append(self.allocator, .{
+    try poll.fd_list.append(allocator, .{
         .fd = socket,
         .events = syscall.POLL.OUT,
         .revents = 0,
     });
-    try self.fd_job_map.put(socket, .{
+    try poll.fd_job_map.put(allocator, socket, .{
         .index = 0,
         .type = .{
             .connect = .{
@@ -193,17 +242,18 @@ fn queue_connect(
 }
 
 fn queue_recv(
-    self: *Poll,
+    poll: *Poll,
+    allocator: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     buffer: []u8,
 ) Errors.Recv!void {
-    try self.fd_list.append(self.allocator, .{
+    try poll.fd_list.append(allocator, .{
         .fd = socket,
         .events = syscall.POLL.IN,
         .revents = 0,
     });
-    try self.fd_job_map.put(socket, .{
+    try poll.fd_job_map.put(allocator, socket, .{
         .index = 0,
         .type = .{
             .recv = .{
@@ -216,17 +266,18 @@ fn queue_recv(
 }
 
 fn queue_send(
-    self: *Poll,
+    poll: *Poll,
+    allocator: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     buffer: []const u8,
 ) Errors.Send!void {
-    try self.fd_list.append(self.allocator, .{
+    try poll.fd_list.append(allocator, .{
         .fd = socket,
         .events = syscall.POLL.OUT,
         .revents = 0,
     });
-    try self.fd_job_map.put(socket, .{
+    try poll.fd_job_map.put(allocator, socket, .{
         .index = 0,
         .type = .{
             .send = .{
@@ -253,6 +304,7 @@ pub fn submit(_: *anyopaque) !void {}
 
 pub fn reap(
     runner: *anyopaque,
+    _: mem.Allocator,
     completions: []results.Completion,
     wait: bool,
 ) ![]results.Completion {
@@ -278,10 +330,15 @@ pub fn reap(
         var timeout: i96 = if (!wait or reaped > 0) 0 else -1;
 
         // Select next Timer
-        if (poll.timers.peek()) |peeked| timeout = @intCast(peeked.duration.nanoseconds - current.nanoseconds);
+        if (poll.timers.peek()) |peeked| timeout = @intCast(
+            peeked.duration.nanoseconds - current.nanoseconds,
+        );
 
         log.debug("timeout = {d}", .{timeout});
-        const poll_result = try syscall.poll(poll.fd_list.items, @intCast(@divFloor(timeout, std.time.ns_per_ms)));
+        const poll_result = try syscall.poll(
+            poll.fd_list.items,
+            @intCast(@divFloor(timeout, std.time.ns_per_ms)),
+        );
 
         if (poll_result == 0 and timeout > 0) continue :poll_loop;
 
@@ -452,9 +509,9 @@ pub fn reap(
     return completions[0..reaped];
 }
 
-pub fn to_async(self: *Poll) AsyncIO {
+pub fn to_async(poll: *Poll) AsyncIO {
     return .{
-        .runner = self,
+        .runner = poll,
         .features = .init(&.{
             .timer,
             .accept,

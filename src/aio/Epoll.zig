@@ -18,8 +18,12 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Epoll {
     const events = try allocator.alloc(linux.epoll_event, options.size_aio_reap_max);
     errdefer allocator.free(events);
 
-    var jobs: pool.Pool(Job) = try .init(allocator, size, options.pooling);
-    errdefer jobs.deinit();
+    var jobs: pool.Pool(Job) = try .init(
+        allocator,
+        size,
+        options.pooling,
+    );
+    errdefer jobs.deinit(allocator);
 
     // Queue the wake task.
     const index = jobs.borrow_assume_unset(0);
@@ -45,11 +49,11 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Epoll {
     };
 }
 
-pub fn inner_deinit(self: *Epoll, allocator: mem.Allocator) void {
-    syscall.close(self.epoll_fd);
-    allocator.free(self.events);
-    self.jobs.deinit();
-    syscall.close(self.wake_event_fd);
+pub fn inner_deinit(epoll: *Epoll, allocator: mem.Allocator) void {
+    syscall.close(epoll.epoll_fd);
+    allocator.free(epoll.events);
+    epoll.jobs.deinit(allocator);
+    syscall.close(epoll.wake_event_fd);
 }
 
 fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
@@ -59,31 +63,68 @@ fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
 
 pub fn queue_job(
     runner: *anyopaque,
+    allocator: mem.Allocator,
     task: usize,
     job: AsyncIO.Submission,
 ) Errors.QueueJob!void {
     const epoll: *Epoll = @ptrCast(@alignCast(runner));
 
     try switch (job) {
-        .timer => |inner| queue_timer(epoll, task, inner),
-        .accept => |inner| queue_accept(epoll, task, inner.socket, inner.kind),
-        .connect => |inner| queue_connect(epoll, task, inner.socket, inner.addr, inner.kind),
-        .recv => |inner| queue_recv(epoll, task, inner.socket, inner.buffer),
-        .send => |inner| queue_send(epoll, task, inner.socket, inner.buffer),
+        .timer => |inner| queue_timer(
+            epoll,
+            allocator,
+            task,
+            inner,
+        ),
+        .accept => |inner| queue_accept(
+            epoll,
+            allocator,
+            task,
+            inner.socket,
+            inner.kind,
+        ),
+        .connect => |inner| queue_connect(
+            epoll,
+            allocator,
+            task,
+            inner.socket,
+            inner.addr,
+            inner.kind,
+        ),
+        .recv => |inner| queue_recv(
+            epoll,
+            allocator,
+            task,
+            inner.socket,
+            inner.buffer,
+        ),
+        .send => |inner| queue_send(
+            epoll,
+            allocator,
+            task,
+            inner.socket,
+            inner.buffer,
+        ),
         .open, .delete, .mkdir, .stat, .read, .write, .close => unreachable,
     };
 }
 
-fn queue_timer(self: *Epoll, task: usize, duration: Io.Duration) Errors.Timer!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
+fn queue_timer(
+    epoll: *Epoll,
+    allocator: mem.Allocator,
+    task: usize,
+    duration: Io.Duration,
+) Errors.Timer!void {
+    const index = try epoll.jobs.borrow_hint(allocator, task);
+    errdefer epoll.jobs.release(index);
 
-    const item = self.jobs.get_ptr(index);
+    const item = epoll.jobs.get_ptr(index);
 
     const timer_fd = try syscall.timerfd_create(
         linux.TIMERFD_CLOCK.MONOTONIC,
         .{ .NONBLOCK = true },
     );
+
     const ktimerspec: linux.itimerspec = .{
         .it_value = .{
             .sec = @intCast(@divFloor(duration.nanoseconds, std.time.ns_per_s)),
@@ -92,7 +133,12 @@ fn queue_timer(self: *Epoll, task: usize, duration: Io.Duration) Errors.Timer!vo
         .it_interval = .{ .sec = 0, .nsec = 0 },
     };
 
-    try syscall.timerfd_settime(timer_fd, .{}, &ktimerspec, null);
+    try syscall.timerfd_settime(
+        timer_fd,
+        .{},
+        &ktimerspec,
+        null,
+    );
     item.* = .{
         .index = index,
         .type = .{ .timer = .{ .fd = timer_fd } },
@@ -104,19 +150,20 @@ fn queue_timer(self: *Epoll, task: usize, duration: Io.Duration) Errors.Timer!vo
         .data = .{ .u64 = index },
     };
 
-    try self.add_fd(timer_fd, &event);
+    try epoll.add_fd(timer_fd, &event);
 }
 
 fn queue_accept(
-    self: *Epoll,
+    epoll: *Epoll,
+    allocator: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     kind: net.Socket.Kind,
 ) Errors.Accept!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
+    const index = try epoll.jobs.borrow_hint(allocator, task);
+    errdefer epoll.jobs.release(index);
 
-    const item = self.jobs.get_ptr(index);
+    const item = epoll.jobs.get_ptr(index);
     item.* = .{
         .index = index,
         .type = .{
@@ -134,21 +181,22 @@ fn queue_accept(
         .data = .{ .u64 = index },
     };
 
-    try self.add_or_mod_fd(socket, &event);
+    try epoll.add_or_mod_fd(socket, &event);
 }
 
 fn queue_connect(
-    self: *Epoll,
+    epoll: *Epoll,
+    allocator: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     // TODO: take *const
     addr: net.Socket.Address,
     kind: net.Socket.Kind,
 ) Errors.Connect!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
+    const index = try epoll.jobs.borrow_hint(allocator, task);
+    errdefer epoll.jobs.release(index);
 
-    const item = self.jobs.get_ptr(index);
+    const item = epoll.jobs.get_ptr(index);
     item.* = .{
         .index = index,
         .type = .{
@@ -174,19 +222,20 @@ fn queue_connect(
         .data = .{ .u64 = index },
     };
 
-    try self.add_or_mod_fd(socket, &event);
+    try epoll.add_or_mod_fd(socket, &event);
 }
 
 fn queue_recv(
-    self: *Epoll,
+    epoll: *Epoll,
+    allocator: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     buffer: []u8,
 ) Errors.Recv!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
+    const index = try epoll.jobs.borrow_hint(allocator, task);
+    errdefer epoll.jobs.release(index);
 
-    const item = self.jobs.get_ptr(index);
+    const item = epoll.jobs.get_ptr(index);
     item.* = .{
         .index = index,
         .type = .{
@@ -203,19 +252,20 @@ fn queue_recv(
         .data = .{ .u64 = index },
     };
 
-    try self.add_or_mod_fd(socket, &event);
+    try epoll.add_or_mod_fd(socket, &event);
 }
 
 fn queue_send(
-    self: *Epoll,
+    epoll: *Epoll,
+    allocator: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     buffer: []const u8,
 ) Errors.Send!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
+    const index = try epoll.jobs.borrow_hint(allocator, task);
+    errdefer epoll.jobs.release(index);
 
-    const item = self.jobs.get_ptr(index);
+    const item = epoll.jobs.get_ptr(index);
     item.* = .{
         .index = index,
         .type = .{
@@ -232,32 +282,55 @@ fn queue_send(
         .data = .{ .u64 = index },
     };
 
-    try self.add_or_mod_fd(socket, &event);
+    try epoll.add_or_mod_fd(socket, &event);
 }
 
 fn add_or_mod_fd(
-    self: *Epoll,
+    epoll: *Epoll,
     fd: posix.fd_t,
     event: *linux.epoll_event,
 ) syscall.EpollCtlError!void {
-    self.add_fd(fd, event) catch |e| switch (e) {
+    epoll.add_fd(fd, event) catch |e| switch (e) {
         error.FileDescriptorAlreadyPresentInSet => {
-            try self.mod_fd(fd, event);
+            try epoll.mod_fd(fd, event);
         },
         else => |err| return err,
     };
 }
 
-fn add_fd(self: *Epoll, fd: posix.fd_t, event: *linux.epoll_event) syscall.EpollCtlError!void {
-    try syscall.epoll_ctl(self.epoll_fd, linux.EPOLL.CTL_ADD, fd, event);
+fn add_fd(
+    epoll: *Epoll,
+    fd: posix.fd_t,
+    event: *linux.epoll_event,
+) syscall.EpollCtlError!void {
+    try syscall.epoll_ctl(
+        epoll.epoll_fd,
+        linux.EPOLL.CTL_ADD,
+        fd,
+        event,
+    );
 }
 
-fn mod_fd(self: *Epoll, fd: posix.fd_t, event: *linux.epoll_event) syscall.EpollCtlError!void {
-    try syscall.epoll_ctl(self.epoll_fd, linux.EPOLL.CTL_MOD, fd, event);
+fn mod_fd(
+    epoll: *Epoll,
+    fd: posix.fd_t,
+    event: *linux.epoll_event,
+) syscall.EpollCtlError!void {
+    try syscall.epoll_ctl(
+        epoll.epoll_fd,
+        linux.EPOLL.CTL_MOD,
+        fd,
+        event,
+    );
 }
 
-fn remove_fd(self: *Epoll, fd: posix.fd_t) syscall.EpollCtlError!void {
-    try syscall.epoll_ctl(self.epoll_fd, linux.EPOLL.CTL_DEL, fd, null);
+fn remove_fd(epoll: *Epoll, fd: posix.fd_t) syscall.EpollCtlError!void {
+    try syscall.epoll_ctl(
+        epoll.epoll_fd,
+        linux.EPOLL.CTL_DEL,
+        fd,
+        null,
+    );
 }
 
 pub fn wake(runner: *anyopaque) syscall.WriteError!void {
@@ -274,6 +347,7 @@ pub fn submit(_: *anyopaque) !void {}
 
 pub fn reap(
     runner: *anyopaque,
+    _: mem.Allocator,
     completions: []results.Completion,
     wait: bool,
 ) ![]results.Completion {
@@ -285,14 +359,21 @@ pub fn reap(
         if (remaining == 0) break;
 
         const timeout: i32 = if (!wait) 0 else -1;
+
         // Handle all of the epoll I/O
-        const epoll_events = syscall.epoll_wait(epoll.epoll_fd, epoll.events[0..remaining], timeout);
+        const epoll_events = syscall.epoll_wait(
+            epoll.epoll_fd,
+            epoll.events[0..remaining],
+            timeout,
+        );
+
         for (epoll.events[0..epoll_events]) |event| {
             const job_index: usize = @intCast(event.data.u64);
             debug.assert(epoll.jobs.dirty.isSet(job_index));
 
             var job_complete = true;
             defer if (job_complete) epoll.jobs.release(job_index);
+
             const job = epoll.jobs.get_ptr(job_index);
 
             const result: results.Result = blk: {
@@ -442,9 +523,9 @@ pub fn reap(
     return completions[0..reaped];
 }
 
-pub fn to_async(self: *Epoll) AsyncIO {
+pub fn to_async(epoll: *Epoll) AsyncIO {
     return .{
-        .runner = self,
+        .runner = epoll,
         .features = .init(&.{
             .timer,
             .accept,
