@@ -3,32 +3,31 @@ pub fn Queue(comptime T: type) type {
     const Node = List.Node;
 
     return struct {
-        allocator: mem.Allocator,
         items: List,
 
         pub fn init(allocator: mem.Allocator) Queue {
-            return .{ .allocator = allocator, .items = List{} };
+            return .{ .allocator = allocator, .items = .{} };
         }
 
-        pub fn deinit(self: *Queue) void {
-            while (self.items.pop()) |node| self.allocator.destroy(node);
+        pub fn deinit(queue: *Queue, allocator: mem.Allocator) void {
+            while (queue.items.popLast()) |node| allocator.destroy(node);
         }
 
-        pub fn append(self: *Queue, item: T) !void {
-            const node = try self.allocator.create(Node);
+        pub fn append(queue: *Queue, allocator: mem.Allocator, item: T) !void {
+            const node = try allocator.create(Node);
             node.* = .{ .data = item };
-            self.items.append(node);
+            queue.items.append(node);
         }
 
-        pub fn pop(self: *Queue) ?T {
-            const node = self.items.popFirst() orelse return null;
-            defer self.allocator.destroy(node);
+        pub fn pop(queue: *Queue, allocator: mem.Allocator) ?T {
+            const node = queue.items.popFirst() orelse return null;
+            defer allocator.destroy(node);
             return node.data;
         }
 
-        pub fn pop_assert(self: *Queue) T {
-            const node = self.items.popFirst().?;
-            defer self.allocator.destroy(node);
+        pub fn pop_assert(queue: *Queue, allocator: mem.Allocator) T {
+            const node = queue.items.popFirst().?;
+            defer allocator.destroy(node);
             return node.data;
         }
     };

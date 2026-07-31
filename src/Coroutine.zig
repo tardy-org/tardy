@@ -2,13 +2,6 @@
 pub const Coroutine = @This();
 
 threadlocal var active_frame: ?*Coroutine = null;
-
-const Status = enum(u8) {
-    in_progress,
-    done,
-    errored,
-};
-
 /// The previous SP.
 caller_sp: *align(raw_alignment) anyopaque,
 /// The current SP.
@@ -18,7 +11,13 @@ stack_mem: []align(raw_alignment) u8,
 /// Is the Coroutine Frame done?
 status: Status = .in_progress,
 
-pub const Stack = enum(usize) {
+const Status = enum(u8) {
+    in_progress,
+    done,
+    errored,
+};
+
+pub const Stack = enum(u32) {
     @"2KiB" = 2 * unit,
     @"4KiB" = 4 * unit,
     @"8KiB" = 8 * unit,
@@ -148,8 +147,8 @@ pub fn init(
     return frame;
 }
 
-pub fn deinit(self: *Coroutine, allocator: mem.Allocator) void {
-    allocator.free(self.stack_mem);
+pub fn deinit(frame: *Coroutine, allocator: mem.Allocator) void {
+    allocator.free(frame.stack_mem);
 }
 
 /// This runs/continues a Coroutine Frame.
@@ -178,7 +177,7 @@ const RegisterFn = *allowzero const fn () callconv(.c) noreturn;
 fn EntryFn(comptime coroutine_fn: anytype, args: anytype) RegisterFn {
     const Args = @TypeOf(args);
     const Fn = struct {
-        fn inner() callconv(.c) noreturn {
+        fn entry() callconv(.c) noreturn {
             const frame_ptr: *Coroutine = active_frame.?;
 
             const args_addr = Frame.alignment.backward(
@@ -194,9 +193,14 @@ fn EntryFn(comptime coroutine_fn: anytype, args: anytype) RegisterFn {
             };
 
             if (builtin.mode == .debug) {
-                log.debug("Coroutine \nfn: `* const {any}`\nUsed {Bi} / {Bi} bytes of stack", .{
-                    @TypeOf(coroutine_fn), frame_ptr.stackUsed(), frame_ptr.stack_mem.len,
-                });
+                log.debug(
+                    "Coroutine \nfn: `* const {any}`\nUsed {Bi} / {Bi} bytes of stack",
+                    .{
+                        @TypeOf(coroutine_fn),
+                        frame_ptr.stackUsed(),
+                        frame_ptr.stack_mem.len,
+                    },
+                );
             }
 
             // When our coroutine is done running, just yield.
@@ -205,7 +209,7 @@ fn EntryFn(comptime coroutine_fn: anytype, args: anytype) RegisterFn {
             unreachable;
         }
     };
-    return Fn.inner;
+    return Fn.entry;
 }
 
 const is_unix = builtin.os.tag != .windows;

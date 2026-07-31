@@ -1,127 +1,116 @@
 pub fn Pool(comptime T: type) type {
     return struct {
-        pub const Iterator = struct {
-            items: []T,
-            iter: std.DynamicBitSetUnmanaged.Iterator(.{
-                .kind = .set,
-                .direction = .forward,
-            }),
-
-            pub fn next(self: *Iterator) ?T {
-                const index = self.iter.next() orelse return null;
-                return self.items[index];
-            }
-
-            pub fn next_ptr(self: *Iterator) ?*T {
-                const index = self.iter.next() orelse return null;
-                return &self.items[index];
-            }
-
-            pub fn next_index(self: *Iterator) ?usize {
-                return self.iter.next();
-            }
-        };
-
-        const Self = @This();
-        allocator: mem.Allocator,
+        const Pool_t = @This();
         // Buffer for the Pool.
         items: []T,
         dirty: std.DynamicBitSetUnmanaged,
         kind: Kind,
 
         /// Initalizes our items buffer as undefined.
-        pub fn init(allocator: mem.Allocator, size: usize, kind: Kind) !Self {
+        pub fn init(allocator: mem.Allocator, size: usize, kind: Kind) !Pool_t {
             return .{
-                .allocator = allocator,
                 .items = try allocator.alloc(T, size),
                 .dirty = try .initEmpty(allocator, size),
                 .kind = kind,
             };
         }
 
-        pub fn deinit(self: *Self) void {
-            self.allocator.free(self.items);
-            self.dirty.deinit(self.allocator);
+        pub fn deinit(pool: *Pool_t, allocator: mem.Allocator) void {
+            allocator.free(pool.items);
+            pool.dirty.deinit(allocator);
         }
 
         /// Deinitalizes our items buffer with a passed in hook.
         pub fn deinit_with_hook(
-            self: *Self,
+            pool: *Pool_t,
+            allocator: mem.Allocator,
             args: anytype,
             deinit_hook: ?*const fn (buffer: []T, args: @TypeOf(args)) void,
         ) void {
             if (deinit_hook) |hook| {
-                @call(.auto, hook, .{ self.items, args });
+                @call(.auto, hook, .{ pool.items, args });
             }
 
-            self.allocator.free(self.items);
-            self.dirty.deinit(self.allocator);
+            allocator.free(pool.items);
+            pool.dirty.deinit(allocator);
         }
 
-        pub fn get(self: *const Self, index: usize) T {
-            debug.assert(index < self.items.len);
-            return self.items[index];
+        pub fn get(pool: *const Pool_t, index: usize) T {
+            debug.assert(index < pool.items.len);
+            return pool.items[index];
         }
 
-        pub fn get_ptr(self: *const Self, index: usize) *T {
-            debug.assert(index < self.items.len);
-            return &self.items[index];
+        pub fn get_ptr(pool: *const Pool_t, index: usize) *T {
+            debug.assert(index < pool.items.len);
+            return &pool.items[index];
         }
 
         /// Is this empty?
-        pub fn empty(self: *const Self) bool {
-            return self.dirty.count() == 0;
+        pub fn empty(pool: *const Pool_t) bool {
+            return pool.dirty.count() == 0;
         }
 
         /// Is this full?
-        pub fn full(self: *const Self) bool {
-            return self.dirty.count() == self.items.len;
+        pub fn full(pool: *const Pool_t) bool {
+            return pool.dirty.count() == pool.items.len;
         }
 
         /// Returns the number of clean (or available) slots.
-        pub fn clean(self: *const Self) usize {
-            return self.items.len - self.dirty.count();
+        pub fn clean(pool: *const Pool_t) usize {
+            return pool.items.len - pool.dirty.count();
         }
 
-        fn grow(self: *Self) Error!void {
-            debug.assert(self.kind == .grow);
+        fn grow(pool: *Pool_t, allocator: mem.Allocator) Error!void {
+            debug.assert(pool.kind == .grow);
 
-            const old_slice = self.items;
-            const new_size = std.math.ceilPowerOfTwoAssert(usize, self.items.len + 1);
+            const old_slice = pool.items;
+            const new_size = std.math.ceilPowerOfTwoAssert(
+                usize,
+                pool.items.len + 1,
+            );
 
-            if (self.allocator.remap(self.items, new_size)) |new_slice| {
-                self.items = new_slice;
-            } else if (self.allocator.resize(self.items, new_size)) {
-                self.items = self.items.ptr[0..new_size];
-            } else {
-                const new_slice = try self.allocator.alloc(T, new_size);
-                errdefer self.allocator.free(new_slice);
-                @memcpy(new_slice[0..self.items.len], self.items);
-                self.items = new_slice;
-                self.allocator.free(old_slice);
+            if (allocator.remap(pool.items, new_size)) |new_slice|
+                pool.items = new_slice
+            else if (allocator.resize(pool.items, new_size))
+                pool.items = pool.items.ptr[0..new_size]
+            else {
+                const new_slice = try allocator.alloc(T, new_size);
+                errdefer allocator.free(new_slice);
+
+                @memcpy(new_slice[0..pool.items.len], pool.items);
+
+                pool.items = new_slice;
+                allocator.free(old_slice);
             }
-            try self.dirty.resize(self.allocator, new_size, false);
 
-            debug.assert(self.items.len == new_size);
-            debug.assert(self.dirty.bit_length == new_size);
+            try pool.dirty.resize(
+                allocator,
+                new_size,
+                false,
+            );
+
+            debug.assert(pool.items.len == new_size);
+            debug.assert(pool.dirty.bit_length == new_size);
         }
 
         /// Linearly probes for an available slot in the pool.
         /// If dynamic, this *might* grow the Pool.
         ///
         /// Returns the index into the Pool.
-        pub fn borrow(self: *Self) Error!usize {
-            var iter = self.dirty.iterator(.{ .kind = .unset });
-            const index = iter.next() orelse switch (self.kind) {
+        pub fn borrow(pool: *Pool_t, allocator: mem.Allocator) Error!usize {
+            var iter = pool.dirty.iterator(.{
+                .kind = .unset,
+            });
+            const index = iter.next() orelse switch (pool.kind) {
                 .static => return error.Full,
                 .grow => {
-                    const last_index = self.items.len;
-                    try self.grow();
-                    return self.borrow_assume_unset(last_index);
+                    const last_index = pool.items.len;
+                    try pool.grow(allocator);
+                    return pool.borrow_assume_unset(last_index);
                 },
             };
 
-            self.dirty.set(index);
+            pool.dirty.set(index);
             return index;
         }
 
@@ -129,22 +118,22 @@ pub fn Pool(comptime T: type) type {
         /// Uses a provided hint value as the starting index.
         ///
         /// Returns the index into the Pool.
-        pub fn borrow_hint(self: *Self, hint: usize) Error!usize {
-            const length = self.items.len;
+        pub fn borrow_hint(pool: *Pool_t, allocator: mem.Allocator, hint: usize) Error!usize {
+            const length = pool.items.len;
             for (0..length) |i| {
                 const index = @mod(hint + i, length);
-                if (!self.dirty.isSet(index)) {
-                    self.dirty.set(index);
+                if (!pool.dirty.isSet(index)) {
+                    pool.dirty.set(index);
                     return index;
                 }
             }
 
-            switch (self.kind) {
+            switch (pool.kind) {
                 .static => return error.Full,
                 .grow => {
-                    const last_index = self.items.len;
-                    try self.grow();
-                    return self.borrow_assume_unset(last_index);
+                    const last_index = pool.items.len;
+                    try pool.grow(allocator);
+                    return pool.borrow_assume_unset(last_index);
                 },
             }
         }
@@ -152,33 +141,62 @@ pub fn Pool(comptime T: type) type {
         /// Attempts to borrow at the given index.
         /// Asserts that it is an available slot.
         /// This will never grow the Pool.
-        pub fn borrow_assume_unset(self: *Self, index: usize) usize {
-            debug.assert(!self.dirty.isSet(index));
-            self.dirty.set(index);
+        pub fn borrow_assume_unset(pool: *Pool_t, index: usize) usize {
+            debug.assert(!pool.dirty.isSet(index));
+            pool.dirty.set(index);
             return index;
         }
 
         /// Releases the item with the given index back to the Pool.
         /// Asserts that the given index was borrowed.
-        pub fn release(self: *Self, index: usize) void {
-            debug.assert(self.dirty.isSet(index));
-            self.dirty.unset(index);
+        pub fn release(pool: *Pool_t, index: usize) void {
+            debug.assert(pool.dirty.isSet(index));
+            pool.dirty.unset(index);
         }
 
         /// Returns an iterator over the taken values in the Pool.
-        pub fn iterator(self: *const Self) Iterator {
-            const iter = self.dirty.iterator(.{});
-            return .{ .iter = iter, .items = self.items };
+        pub fn iterator(pool: *const Pool_t) Iterator {
+            const iter = pool.dirty.iterator(.{});
+            return .{ .iter = iter, .items = pool.items };
         }
+
+        pub const Iterator = struct {
+            items: []T,
+            iter: std.DynamicBitSetUnmanaged.Iterator(.{
+                .kind = .set,
+                .direction = .forward,
+            }),
+
+            pub fn next(iter: *Iterator) ?T {
+                const index = iter.iter.next() orelse return null;
+                return iter.items[index];
+            }
+
+            pub fn next_ptr(iter: *Iterator) ?*T {
+                const index = iter.iter.next() orelse return null;
+                return &iter.items[index];
+            }
+
+            pub fn next_index(iter: *Iterator) ?usize {
+                return iter.iter.next();
+            }
+        };
     };
 }
 
 test "Pool: Initalization (integer)" {
-    var byte_pool: Pool(u8) = try .init(testing.allocator, 1024, .static);
-    defer byte_pool.deinit();
+    var byte_pool: Pool(u8) = try .init(
+        testing.allocator,
+        1024,
+        .static,
+    );
+    defer byte_pool.deinit(testing.allocator);
 
     for (0..1024) |i| {
-        const index = try byte_pool.borrow_hint(i);
+        const index = try byte_pool.borrow_hint(
+            testing.allocator,
+            i,
+        );
         const byte_ptr = byte_pool.get_ptr(index);
         byte_ptr.* = 2;
     }
@@ -189,13 +207,20 @@ test "Pool: Initalization (integer)" {
 }
 
 test "Pool: Dynamic Growth (integer)" {
-    var byte_pool: Pool(u8) = try .init(testing.allocator, 1, .grow);
-    defer byte_pool.deinit();
+    var byte_pool: Pool(u8) = try .init(
+        testing.allocator,
+        1,
+        .grow,
+    );
+    defer byte_pool.deinit(testing.allocator);
 
     const count = 1024;
 
     for (0..count) |i| {
-        const index = try byte_pool.borrow_hint(i);
+        const index = try byte_pool.borrow_hint(
+            testing.allocator,
+            i,
+        );
         const byte_ptr = byte_pool.get_ptr(index);
         byte_ptr.* = 2;
     }
@@ -208,8 +233,12 @@ test "Pool: Dynamic Growth (integer)" {
 }
 
 test "Pool: Initalization & Deinit (ArrayList)" {
-    var list_pool: Pool(std.ArrayList(u8)) = try .init(testing.allocator, 256, .static);
-    defer list_pool.deinit();
+    var list_pool: Pool(std.ArrayList(u8)) = try .init(
+        testing.allocator,
+        256,
+        .static,
+    );
+    defer list_pool.deinit(testing.allocator);
 
     for (list_pool.items, 0..) |*item, i| {
         item.* = .empty;
@@ -226,8 +255,12 @@ test "Pool: Initalization & Deinit (ArrayList)" {
 }
 
 test "Pool: BufferPool ([][]u8)" {
-    var buffer_pool: Pool([1024]u8) = try .init(testing.allocator, 1024, .static);
-    defer buffer_pool.deinit();
+    var buffer_pool: Pool([1024]u8) = try .init(
+        testing.allocator,
+        1024,
+        .static,
+    );
+    defer buffer_pool.deinit(testing.allocator);
 
     for (buffer_pool.items) |*item| {
         @memcpy(item[0..6], "ABCDEF");
@@ -239,15 +272,22 @@ test "Pool: BufferPool ([][]u8)" {
 }
 
 test "Pool: Borrowing" {
-    var byte_pool: Pool(u8) = try .init(testing.allocator, 1024, .static);
-    defer byte_pool.deinit();
+    var byte_pool: Pool(u8) = try .init(
+        testing.allocator,
+        1024,
+        .static,
+    );
+    defer byte_pool.deinit(testing.allocator);
 
     for (0..byte_pool.items.len) |_| {
-        _ = try byte_pool.borrow();
+        _ = try byte_pool.borrow(testing.allocator);
     }
 
     // Expect a Full.
-    try testing.expectError(error.Full, byte_pool.borrow());
+    try testing.expectError(
+        error.Full,
+        byte_pool.borrow(testing.allocator),
+    );
 
     for (0..byte_pool.items.len) |i| {
         byte_pool.release(i);
@@ -255,11 +295,15 @@ test "Pool: Borrowing" {
 }
 
 test "Pool: Borrowing Hint" {
-    var byte_pool: Pool(u8) = try .init(testing.allocator, 1024, .static);
-    defer byte_pool.deinit();
+    var byte_pool: Pool(u8) = try .init(
+        testing.allocator,
+        1024,
+        .static,
+    );
+    defer byte_pool.deinit(testing.allocator);
 
     for (0..byte_pool.items.len) |i| {
-        _ = try byte_pool.borrow_hint(i);
+        _ = try byte_pool.borrow_hint(testing.allocator, i);
     }
 
     for (0..byte_pool.items.len) |i| {
@@ -268,8 +312,12 @@ test "Pool: Borrowing Hint" {
 }
 
 test "Pool: Borrowing Unset" {
-    var byte_pool: Pool(u8) = try .init(testing.allocator, 1024, .static);
-    defer byte_pool.deinit();
+    var byte_pool: Pool(u8) = try .init(
+        testing.allocator,
+        1024,
+        .static,
+    );
+    defer byte_pool.deinit(testing.allocator);
 
     for (0..byte_pool.items.len) |i| {
         _ = byte_pool.borrow_assume_unset(i);
@@ -281,11 +329,15 @@ test "Pool: Borrowing Unset" {
 }
 
 test "Pool Iterator" {
-    var int_pool: Pool(usize) = try .init(testing.allocator, 1024, .static);
-    defer int_pool.deinit();
+    var int_pool: Pool(usize) = try .init(
+        testing.allocator,
+        1024,
+        .static,
+    );
+    defer int_pool.deinit(testing.allocator);
 
     for (0..(1024 / 2)) |_| {
-        const borrowed = try int_pool.borrow();
+        const borrowed = try int_pool.borrow(testing.allocator);
         const item_ptr = int_pool.get_ptr(borrowed);
         item_ptr.* = borrowed;
     }
@@ -299,7 +351,7 @@ test "Pool Iterator" {
     try testing.expect(int_pool.empty());
 }
 
-pub const Error = error{Full} || Allocator.Error;
+pub const Error = error{Full} || mem.Allocator.Error;
 
 pub const Kind = enum {
     /// This keeps the Pool at a static size, never growing.
@@ -312,4 +364,3 @@ const std = @import("std");
 const debug = std.debug;
 const testing = std.testing;
 const mem = std.mem;
-const Allocator = mem.Allocator;

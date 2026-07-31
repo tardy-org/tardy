@@ -1,13 +1,3 @@
-const std = @import("std");
-const builtin = @import("builtin");
-const os = builtin.os.tag;
-
-const tardy = @import("../root.zig");
-const syscall = tardy.AsyncIO.syscall;
-
-/// Invalid `fd_t`.
-pub const INVALID_FD = if (os == .windows) syscall.ws2.INVALID_SOCKET else -1;
-
 /// Ensures that the `std.posix.fd_t` is valid.
 pub fn is_valid(fd: std.posix.fd_t) bool {
     switch (comptime os) {
@@ -27,3 +17,16 @@ pub fn to_nonblock(fd: std.posix.fd_t) !void {
         _ = try syscall.fcntl(fd, std.posix.F.SETFL, arg);
     }
 }
+
+/// Invalid `fd_t`.
+pub const INVALID_FD = if (os == .windows)
+    syscall.ws2.INVALID_SOCKET
+else
+    -1;
+
+const std = @import("std");
+const builtin = @import("builtin");
+const os = builtin.os.tag;
+
+const tardy = @import("../root.zig");
+const syscall = tardy.AsyncIO.syscall;

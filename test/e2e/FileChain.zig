@@ -28,7 +28,7 @@ pub fn validate_chain(chain: []const Step) bool {
     return true;
 }
 
-pub fn generate_random_chain(allocator: std.mem.Allocator, seed: u64) ![]Step {
+pub fn generate_random_chain(allocator: mem.Allocator, seed: u64) ![]Step {
     var prng: std.Random.DefaultPrng = .init(seed);
     const rand = prng.random();
 
@@ -52,7 +52,7 @@ pub fn generate_random_chain(allocator: std.mem.Allocator, seed: u64) ![]Step {
 
 // Path is expected to remain valid.
 pub fn init(
-    allocator: std.mem.Allocator,
+    allocator: mem.Allocator,
     chain: []const Step,
     path: fs.Path,
     buffer_size: usize,
@@ -64,8 +64,8 @@ pub fn init(
 
     const path_dupe = try path.dupe(allocator);
     errdefer switch (path_dupe) {
-        .rel => |inner| allocator.free(inner.path),
-        .abs => |p| allocator.free(p),
+        .rel => |rel| allocator.free(rel.path),
+        .abs => |abs| allocator.free(abs),
     };
 
     debug.assert(validate_chain(chain));
@@ -80,12 +80,12 @@ pub fn init(
     };
 }
 
-pub fn deinit(self: *FileChain, allocator: std.mem.Allocator) void {
-    defer allocator.free(self.steps);
-    defer allocator.free(self.buffer);
-    defer switch (self.path) {
-        .rel => |inner| allocator.free(inner.path),
-        .abs => |p| allocator.free(p),
+pub fn deinit(file_chain: *FileChain, allocator: mem.Allocator) void {
+    defer allocator.free(file_chain.steps);
+    defer allocator.free(file_chain.buffer);
+    defer switch (file_chain.path) {
+        .rel => |rel| allocator.free(rel.path),
+        .abs => |abs| allocator.free(abs),
     };
 }
 
@@ -216,11 +216,15 @@ test "FileChain: Verify Double Close" {
 test "FileChain: Validate Random Chain" {
     // Actually generates and tests a random FileChain :)
     var seed: u64 = undefined;
-    try std.posix.getrandom(std.mem.asBytes(&seed));
+    try std.posix.getrandom(mem.asBytes(&seed));
     errdefer std.debug.print("failed seed: {d}\n", .{seed});
 
-    const chain = try FileChain.generate_random_chain(testing.allocator, seed);
+    const chain = try FileChain.generate_random_chain(
+        testing.allocator,
+        seed,
+    );
     defer testing.allocator.free(chain);
+
     try testing.expect(FileChain.validate_chain(chain));
 }
 
@@ -237,6 +241,7 @@ const Step = enum {
 };
 
 const std = @import("std");
+const mem = std.mem;
 const debug = std.debug;
 const testing = std.testing;
 

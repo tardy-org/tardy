@@ -1,7 +1,9 @@
 pub const Timer = @This();
 
 pub fn delay(rt: *Runtime, duration: std.Io.Duration) !void {
-    try rt.scheduler.io_await(.{ .timer = duration });
+    try rt.scheduler.io_await(rt.allocator, .{
+        .timer = duration,
+    });
 }
 
 const std = @import("std");

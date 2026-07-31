@@ -1,14 +1,13 @@
 pub const Kqueue = @This();
 
 kqueue_fd: posix.fd_t,
-
 changes: []posix.Kevent,
 change_count: usize = 0,
 events: []posix.Kevent,
 
 jobs: pool.Pool(Job),
 
-pub fn init(allocator: std.mem.Allocator, options: AsyncIO.Options) !Kqueue {
+pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Kqueue {
     const kqueue_fd = try syscall.kqueue();
     debug.assert(kqueue_fd > -1);
     errdefer syscall.close(kqueue_fd);
@@ -60,38 +59,74 @@ pub fn init(allocator: std.mem.Allocator, options: AsyncIO.Options) !Kqueue {
     };
 }
 
-pub fn inner_deinit(self: *Kqueue, allocator: std.mem.Allocator) void {
-    syscall.close(self.kqueue_fd);
-    allocator.free(self.events);
-    allocator.free(self.changes);
-    self.jobs.deinit();
+pub fn inner_deinit(kqueue: *Kqueue, allocator: mem.Allocator) void {
+    syscall.close(kqueue.kqueue_fd);
+    allocator.free(kqueue.events);
+    allocator.free(kqueue.changes);
+    kqueue.jobs.deinit(allocator);
 }
 
-pub fn deinit(runner: *anyopaque, allocator: std.mem.Allocator) void {
+pub fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
     const kqueue: *Kqueue = @ptrCast(@alignCast(runner));
     kqueue.inner_deinit(allocator);
 }
 
-pub fn queue_job(runner: *anyopaque, task: usize, job: AsyncIO.Submission) Errors.QueueJob!void {
+pub fn queue_job(
+    runner: *anyopaque,
+    allocator: mem.Allocator,
+    task: usize,
+    job: AsyncIO.Submission,
+) Errors.QueueJob!void {
     const kqueue: *Kqueue = @ptrCast(@alignCast(runner));
 
     (switch (job) {
-        .timer => |inner| queue_timer(kqueue, task, inner),
-        .accept => |inner| queue_accept(kqueue, task, inner.socket, inner.kind),
-        .connect => |inner| queue_connect(kqueue, task, inner.socket, inner.addr, inner.kind),
-        .recv => |inner| queue_recv(kqueue, task, inner.socket, inner.buffer),
-        .send => |inner| queue_send(kqueue, task, inner.socket, inner.buffer),
+        .timer => |timer| kqueue.queue_timer(
+            allocator,
+            task,
+            timer,
+        ),
+        .accept => |accept| kqueue.queue_accept(
+            allocator,
+            task,
+            accept.socket,
+            accept.kind,
+        ),
+        .connect => |connect| kqueue.queue_connect(
+            allocator,
+            task,
+            connect.socket,
+            connect.addr,
+            connect.kind,
+        ),
+        .recv => |recv| kqueue.queue_recv(
+            allocator,
+            task,
+            recv.socket,
+            recv.buffer,
+        ),
+        .send => |send| kqueue.queue_send(
+            allocator,
+            task,
+            send.socket,
+            send.buffer,
+        ),
         .open, .delete, .mkdir, .stat, .read, .write, .close => unreachable,
     }) catch |e| if (e == error.ChangeQueueFull) {
         try submit(runner);
-        try queue_job(runner, task, job);
+        try queue_job(runner, allocator, task, job);
     } else return e;
 }
 
-fn queue_timer(self: *Kqueue, task: usize, duration: Io.Duration) Error!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
-    const item = self.jobs.get_ptr(index);
+fn queue_timer(
+    kqueue: *Kqueue,
+    allocator: mem.Allocator,
+    task: usize,
+    duration: Io.Duration,
+) Error!void {
+    const index = try kqueue.jobs.borrow_hint(allocator, task);
+    errdefer kqueue.jobs.release(index);
+
+    const item = kqueue.jobs.get_ptr(index);
 
     item.* = .{
         .index = index,
@@ -102,9 +137,9 @@ fn queue_timer(self: *Kqueue, task: usize, duration: Io.Duration) Error!void {
     // kqueue uses milliseconds.
     const milliseconds = duration.toMilliseconds();
 
-    if (self.change_count < self.changes.len) {
-        const event = &self.changes[self.change_count];
-        self.change_count += 1;
+    if (kqueue.change_count < kqueue.changes.len) {
+        const event = &kqueue.changes[kqueue.change_count];
+        kqueue.change_count += 1;
 
         event.* = .{
             .ident = index,
@@ -118,14 +153,16 @@ fn queue_timer(self: *Kqueue, task: usize, duration: Io.Duration) Error!void {
 }
 
 fn queue_accept(
-    self: *Kqueue,
+    kqueue: *Kqueue,
+    allocator: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     kind: net.Socket.Kind,
 ) Error!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
-    const item = self.jobs.get_ptr(index);
+    const index = try kqueue.jobs.borrow_hint(allocator, task);
+    errdefer kqueue.jobs.release(index);
+
+    const item = kqueue.jobs.get_ptr(index);
     item.* = .{
         .index = index,
         .type = .{
@@ -138,9 +175,9 @@ fn queue_accept(
         .task = task,
     };
 
-    if (self.change_count < self.changes.len) {
-        const event = &self.changes[self.change_count];
-        self.change_count += 1;
+    if (kqueue.change_count < kqueue.changes.len) {
+        const event = &kqueue.changes[kqueue.change_count];
+        kqueue.change_count += 1;
 
         event.* = .{
             .ident = @intCast(socket),
@@ -154,16 +191,18 @@ fn queue_accept(
 }
 
 fn queue_connect(
-    self: *Kqueue,
+    kqueue: *Kqueue,
+    allocator: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     // TODO: take *const
     addr: net.Socket.Address,
     kind: net.Socket.Kind,
 ) Errors.Connect!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
-    const item = self.jobs.get_ptr(index);
+    const index = try kqueue.jobs.borrow_hint(allocator, task);
+    errdefer kqueue.jobs.release(index);
+
+    const item = kqueue.jobs.get_ptr(index);
     item.* = .{
         .index = index,
         .type = .{
@@ -176,7 +215,7 @@ fn queue_connect(
         .task = task,
     };
 
-    if (self.change_count < self.changes.len) {
+    if (kqueue.change_count < kqueue.changes.len) {
         syscall.connect(
             socket,
             &addr,
@@ -185,8 +224,8 @@ fn queue_connect(
             else => |err| return err,
         };
 
-        const event = &self.changes[self.change_count];
-        self.change_count += 1;
+        const event = &kqueue.changes[kqueue.change_count];
+        kqueue.change_count += 1;
 
         event.* = .{
             .ident = @intCast(socket),
@@ -200,14 +239,16 @@ fn queue_connect(
 }
 
 fn queue_recv(
-    self: *Kqueue,
+    kqueue: *Kqueue,
+    allocator: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     buffer: []u8,
 ) Error!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
-    const item = self.jobs.get_ptr(index);
+    const index = try kqueue.jobs.borrow_hint(allocator, task);
+    errdefer kqueue.jobs.release(index);
+
+    const item = kqueue.jobs.get_ptr(index);
     item.* = .{
         .index = index,
         .type = .{
@@ -219,9 +260,9 @@ fn queue_recv(
         .task = task,
     };
 
-    if (self.change_count < self.changes.len) {
-        const event = &self.changes[self.change_count];
-        self.change_count += 1;
+    if (kqueue.change_count < kqueue.changes.len) {
+        const event = &kqueue.changes[kqueue.change_count];
+        kqueue.change_count += 1;
 
         event.* = .{
             .ident = @intCast(socket),
@@ -235,14 +276,16 @@ fn queue_recv(
 }
 
 fn queue_send(
-    self: *Kqueue,
+    kqueue: *Kqueue,
+    allocator: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     buffer: []const u8,
 ) Error!void {
-    const index = try self.jobs.borrow_hint(task);
-    errdefer self.jobs.release(index);
-    const item = self.jobs.get_ptr(index);
+    const index = try kqueue.jobs.borrow_hint(allocator, task);
+    errdefer kqueue.jobs.release(index);
+
+    const item = kqueue.jobs.get_ptr(index);
     item.* = .{
         .index = index,
         .type = .{
@@ -254,9 +297,9 @@ fn queue_send(
         .task = task,
     };
 
-    if (self.change_count < self.changes.len) {
-        const event = &self.changes[self.change_count];
-        self.change_count += 1;
+    if (kqueue.change_count < kqueue.changes.len) {
+        const event = &kqueue.changes[kqueue.change_count];
+        kqueue.change_count += 1;
 
         event.* = .{
             .ident = @intCast(socket),
@@ -303,6 +346,7 @@ pub fn submit(runner: *anyopaque) Errors.Submit!void {
 
 pub fn reap(
     runner: *anyopaque,
+    _: mem.Allocator,
     completions: []results.Completion,
     wait: bool,
 ) ![]results.Completion {
@@ -342,17 +386,17 @@ pub fn reap(
                         job_complete = false;
                         break :result .wake;
                     },
-                    .timer => |inner| {
+                    .timer => |timer| {
                         debug.assert(event.filter == posix.system.EVFILT.TIMER);
-                        debug.assert(inner == .none);
+                        debug.assert(timer == .none);
                         break :result .none;
                     },
-                    .accept => |*inner| {
+                    .accept => |*accept| {
                         debug.assert(event.filter == posix.system.EVFILT.READ);
 
                         const socket_fd = syscall.accept(
-                            inner.socket,
-                            &inner.addr,
+                            accept.socket,
+                            &accept.addr,
                             0,
                         ) catch |err| break :result .{
                             .accept = .{
@@ -364,8 +408,8 @@ pub fn reap(
                             .accept = .{
                                 .actual = .{
                                     .handle = socket_fd,
-                                    .addr = inner.addr,
-                                    .kind = inner.kind,
+                                    .addr = accept.addr,
+                                    .kind = accept.kind,
                                 },
                             },
                         };
@@ -405,11 +449,11 @@ pub fn reap(
                             .connect = result,
                         };
                     },
-                    .recv => |inner| {
+                    .recv => |recv| {
                         debug.assert(event.filter == posix.system.EVFILT.READ);
                         const rc = syscall.recvfrom(
-                            inner.socket,
-                            inner.buffer,
+                            recv.socket,
+                            recv.buffer,
                             0,
                             null,
                             null,
@@ -432,11 +476,11 @@ pub fn reap(
                                 },
                             };
                     },
-                    .send => |inner| {
+                    .send => |send| {
                         debug.assert(event.filter == posix.system.EVFILT.WRITE);
                         const rc = syscall.send(
-                            inner.socket,
-                            inner.buffer,
+                            send.socket,
+                            send.buffer,
                             0,
                         ) catch |err| {
                             break :result .{
@@ -474,9 +518,9 @@ pub fn reap(
     return completions[0..reaped];
 }
 
-pub fn to_async(self: *Kqueue) AsyncIO {
+pub fn to_async(kqueue: *Kqueue) AsyncIO {
     return .{
-        .runner = self,
+        .runner = kqueue,
         .features = .init(&.{
             .timer,
             .accept,
@@ -507,6 +551,7 @@ const Error = error{ChangeQueueFull} || pool.Error;
 const WAKE_IDENT = 1;
 
 const std = @import("std");
+const mem = std.mem;
 const debug = std.debug;
 const Io = std.Io;
 const posix = std.posix;

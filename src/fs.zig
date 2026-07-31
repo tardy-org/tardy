@@ -13,20 +13,28 @@ pub const Path = union(enum) {
     /// Absolute Path
     abs: [:0]const u8,
 
-    pub fn dupe(self: *const Path, allocator: std.mem.Allocator) !Path {
-        switch (self.*) {
-            .rel => |inner| {
-                const path_dupe = try allocator.dupeSentinel(u8, inner.path, 0x0);
+    pub fn dupe(path: *const Path, allocator: std.mem.Allocator) !Path {
+        switch (path.*) {
+            .rel => |rel| {
+                const path_dupe = try allocator.dupeSentinel(
+                    u8,
+                    rel.path,
+                    0x0,
+                );
                 errdefer allocator.free(path_dupe);
                 return .{
                     .rel = .{
-                        .dir = inner.dir,
+                        .dir = rel.dir,
                         .path = path_dupe,
                     },
                 };
             },
-            .abs => |path| return .{
-                .abs = try allocator.dupeSentinel(u8, path, 0x0),
+            .abs => |abs| return .{
+                .abs = try allocator.dupeSentinel(
+                    u8,
+                    abs,
+                    0x0,
+                ),
             },
         }
     }

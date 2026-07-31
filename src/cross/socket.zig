@@ -1,11 +1,3 @@
-const std = @import("std");
-const builtin = @import("builtin");
-const os = builtin.os.tag;
-
-const tardy = @import("../root.zig");
-const syscall = tardy.AsyncIO.syscall;
-pub const INVALID_SOCKET = @import("fd.zig").INVALID_FD;
-
 /// Ensures that the `std.posix.socket_t` is valid.
 pub fn is_valid(socket: std.posix.socket_t) bool {
     switch (comptime os) {
@@ -53,3 +45,11 @@ pub fn disable_nagle(socket: std.posix.socket_t) !void {
         );
     }
 }
+
+const std = @import("std");
+const builtin = @import("builtin");
+const os = builtin.os.tag;
+
+const tardy = @import("../root.zig");
+const syscall = tardy.AsyncIO.syscall;
+pub const INVALID_SOCKET = @import("fd.zig").INVALID_FD;

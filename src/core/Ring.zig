@@ -1,8 +1,7 @@
 pub fn Ring(comptime T: type) type {
     return struct {
-        const Self = @This();
+        const Ring_t = @This();
 
-        allocator: mem.Allocator,
         items: []T,
         // This is where we will read off of.
         read_index: usize = 0,
@@ -11,62 +10,61 @@ pub fn Ring(comptime T: type) type {
         // Total count of elements.
         count: usize = 0,
 
-        pub fn init(allocator: mem.Allocator, size: usize) !Self {
+        pub fn init(allocator: mem.Allocator, size: usize) !Ring_t {
             debug.assert(size >= 1);
             const items = try allocator.alloc(T, size);
             return .{
-                .allocator = allocator,
                 .items = items,
             };
         }
 
-        pub fn deinit(self: Self) void {
-            self.allocator.free(self.items);
+        pub fn deinit(ring: Ring_t, allocator: mem.Allocator) void {
+            allocator.free(ring.items);
         }
 
-        pub fn full(self: Self) bool {
-            return self.count == self.items.len;
+        pub fn full(ring: Ring_t) bool {
+            return ring.count == ring.items.len;
         }
 
-        pub fn empty(self: Self) bool {
-            return self.count == 0;
+        pub fn empty(ring: Ring_t) bool {
+            return ring.count == 0;
         }
 
-        pub fn push(self: *Self, message: T) !void {
-            if (self.full()) return error.RingFull;
-            self.items[self.write_index] = message;
-            self.write_index = (self.write_index + 1) % self.items.len;
-            self.count += 1;
+        pub fn push(ring: *Ring_t, message: T) !void {
+            if (ring.full()) return error.RingFull;
+            ring.items[ring.write_index] = message;
+            ring.write_index = (ring.write_index + 1) % ring.items.len;
+            ring.count += 1;
         }
 
-        pub fn push_assert(self: *Self, message: T) void {
-            debug.assert(!self.full());
-            self.items[self.write_index] = message;
-            self.write_index = (self.write_index + 1) % self.items.len;
-            self.count += 1;
+        pub fn push_assert(ring: *Ring_t, message: T) void {
+            debug.assert(!ring.full());
+            ring.items[ring.write_index] = message;
+            ring.write_index = (ring.write_index + 1) % ring.items.len;
+            ring.count += 1;
         }
 
-        pub fn pop(self: *Self) !T {
-            if (self.empty()) return error.RingEmpty;
-            const message = self.items[self.read_index];
-            self.read_index = (self.read_index + 1) % self.items.len;
-            self.count -= 1;
+        pub fn pop(ring: *Ring_t) !T {
+            if (ring.empty()) return error.RingEmpty;
+            const message = ring.items[ring.read_index];
+            ring.read_index = (ring.read_index + 1) % ring.items.len;
+            ring.count -= 1;
             return message;
         }
 
-        pub fn pop_assert(self: *Self) T {
-            debug.assert(!self.empty());
-            const message = self.items[self.read_index];
-            self.read_index = (self.read_index + 1) % self.items.len;
-            self.count -= 1;
+        pub fn pop_assert(ring: *Ring_t) T {
+            debug.assert(!ring.empty());
+            const message = ring.items[ring.read_index];
+            ring.read_index = (ring.read_index + 1) % ring.items.len;
+            ring.count -= 1;
             return message;
         }
 
-        pub fn pop_ptr(self: *Self) !*T {
-            if (self.empty()) return error.RingEmpty;
-            const message = &self.items[self.read_index];
-            self.read_index = (self.read_index + 1) % self.items.len;
-            self.count -= 1;
+        pub fn pop_ptr(ring: *Ring_t) !*T {
+            if (ring.empty()) return error.RingEmpty;
+            const message = &ring.items[ring.read_index];
+            ring.read_index = (ring.read_index + 1) % ring.items.len;
+            ring.count -= 1;
             return message;
         }
     };
@@ -75,7 +73,7 @@ pub fn Ring(comptime T: type) type {
 test "Ring Send and Recv" {
     const size: u32 = 100;
     var ring: Ring(usize) = try .init(testing.allocator, size);
-    defer ring.deinit();
+    defer ring.deinit(testing.allocator);
 
     for (0..size) |i| {
         for (0..i) |j| {

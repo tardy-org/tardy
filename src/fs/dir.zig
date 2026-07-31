@@ -3,13 +3,13 @@ pub const Dir = @This();
 handle: std.posix.fd_t,
 
 /// Create a std.fs.Dir from a Dir.
-pub fn to_std(self: Dir) Io.Dir {
-    return .{ .handle = self.handle };
+pub fn to_std(dir: Dir) Io.Dir {
+    return .{ .handle = dir.handle };
 }
 
 /// Create a Dir from the std.fs.Dir
-pub fn from_std(self: Io.Dir) Dir {
-    return .{ .handle = self.handle };
+pub fn from_std(dir: Io.Dir) Dir {
+    return .{ .handle = dir.handle };
 }
 
 /// Get `cwd` as a Dir.
@@ -18,18 +18,20 @@ pub fn cwd() Dir {
 }
 
 /// Close the underlying Handle of this Dir.
-pub fn close(self: Dir, rt: *Runtime) !void {
+pub fn close(dir: Dir, rt: *Runtime) !void {
     if (rt.aio.features.has_capability(.close))
-        try rt.scheduler.io_await(.{ .close = self.handle })
+        try rt.scheduler.io_await(rt.allocator, .{
+            .close = dir.handle,
+        })
     else
         Io.File.close(.{
-            .handle = self.handle,
+            .handle = dir.handle,
             .flags = .{ .nonblocking = true },
         }, rt.io);
 }
 
-pub fn close_blocking(self: Dir) void {
-    syscall.close(self.handle);
+pub fn close_blocking(dir: Dir) void {
+    syscall.close(dir.handle);
 }
 
 /// Open a Directory.
@@ -41,7 +43,7 @@ pub fn open(rt: *Runtime, path: fs.Path) !Dir {
     };
 
     if (rt.aio.features.has_capability(.open)) {
-        try rt.scheduler.io_await(.{
+        try rt.scheduler.io_await(rt.allocator, .{
             .open = .{
                 .path = path,
                 .flags = flags,
@@ -60,10 +62,14 @@ pub fn open(rt: *Runtime, path: fs.Path) !Dir {
     } else {
         const OpenError = results.OpenError;
         switch (path) {
-            .rel => |inner| {
-                const dir: StdDir = .{ .handle = inner.dir };
+            .rel => |rel| {
+                const dir: StdDir = .{ .handle = rel.dir };
 
-                const opened = dir.openDir(rt.io, inner.path, .{ .iterate = true }) catch |e| {
+                const opened = dir.openDir(
+                    rt.io,
+                    rel.path,
+                    .{ .iterate = true },
+                ) catch |e| {
                     return switch (e) {
                         StdDir.OpenError.AccessDenied => OpenError.AccessDenied,
                         else => OpenError.Unexpected,
@@ -72,8 +78,12 @@ pub fn open(rt: *Runtime, path: fs.Path) !Dir {
 
                 return .{ .handle = opened.handle };
             },
-            .abs => |inner| {
-                const opened = Io.Dir.openDirAbsolute(rt.io, inner, .{ .iterate = true }) catch |e| {
+            .abs => |abs| {
+                const opened = Io.Dir.openDirAbsolute(
+                    rt.io,
+                    abs,
+                    .{ .iterate = true },
+                ) catch |e| {
                     return switch (e) {
                         StdDir.OpenError.AccessDenied => OpenError.AccessDenied,
                         else => OpenError.Unexpected,
@@ -89,10 +99,12 @@ pub fn open(rt: *Runtime, path: fs.Path) !Dir {
 /// Creates and opens a Directory.
 pub fn create(rt: *Runtime, path: fs.Path) !Dir {
     if (rt.aio.features.has_capability(.mkdir)) {
-        try rt.scheduler.io_await(.{ .mkdir = .{
-            .path = path,
-            .mode = 0o775,
-        } });
+        try rt.scheduler.io_await(rt.allocator, .{
+            .mkdir = .{
+                .path = path,
+                .mode = 0o775,
+            },
+        });
 
         const index = rt.current_task.?;
         const task = rt.scheduler.tasks.get_ptr(index);
@@ -101,7 +113,7 @@ pub fn create(rt: *Runtime, path: fs.Path) !Dir {
             else => |e| return e,
         };
 
-        return try Dir.open(rt, path);
+        return try .open(rt, path);
     } else {
         switch (path) {
             .rel => |p| {
@@ -113,7 +125,11 @@ pub fn create(rt: *Runtime, path: fs.Path) !Dir {
                 };
             },
             .abs => |p| {
-                Io.Dir.createDirAbsolute(rt.io, p, .default_dir) catch |e| {
+                Io.Dir.createDirAbsolute(
+                    rt.io,
+                    p,
+                    .default_dir,
+                ) catch |e| {
                     return switch (e) {
                         else => results.MkdirError.Unexpected,
                     };
@@ -121,20 +137,20 @@ pub fn create(rt: *Runtime, path: fs.Path) !Dir {
             },
         }
 
-        return try Dir.open(rt, path);
+        return try .open(rt, path);
     }
 }
 
 /// Create a File relative to this Dir.
 pub fn create_file(
-    self: Dir,
+    dir: Dir,
     rt: *Runtime,
     subpath: [:0]const u8,
     flags: fs.File.CreateFlags,
 ) !fs.File {
     return try .create(rt, .{
         .rel = .{
-            .dir = self.handle,
+            .dir = dir.handle,
             .path = subpath,
         },
     }, flags);
@@ -142,51 +158,51 @@ pub fn create_file(
 
 /// Open a File relative to this Dir.
 pub fn open_file(
-    self: Dir,
+    dir: Dir,
     rt: *Runtime,
     subpath: [:0]const u8,
     flags: fs.File.OpenFlags,
 ) !fs.File {
     return try .open(rt, .{
         .rel = .{
-            .dir = self.handle,
+            .dir = dir.handle,
             .path = subpath,
         },
     }, flags);
 }
 
 /// Create a Dir relative to this Dir.
-pub fn create_dir(self: Dir, rt: *Runtime, subpath: [:0]const u8) !Dir {
-    return try Dir.create(rt, .{
+pub fn create_dir(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !Dir {
+    return try .create(rt, .{
         .rel = .{
-            .dir = self.handle,
+            .dir = dir.handle,
             .path = subpath,
         },
     });
 }
 
 /// Open a Dir relative to this Dir.
-pub fn open_dir(self: Dir, rt: *Runtime, subpath: [:0]const u8) !Dir {
-    return try Dir.open(rt, .{
+pub fn open_dir(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !Dir {
+    return try .open(rt, .{
         .rel = .{
-            .dir = self.handle,
+            .dir = dir.handle,
             .path = subpath,
         },
     });
 }
 
 /// Get Stat information of this Dir.
-pub fn stat(self: Dir, rt: *Runtime) !fs.Stat {
+pub fn stat(dir: Dir, rt: *Runtime) !fs.Stat {
     if (rt.aio.features.has_capability(.stat)) {
-        try rt.scheduler.io_await(.{
-            .stat = self.handle,
+        try rt.scheduler.io_await(rt.allocator, .{
+            .stat = dir.handle,
         });
 
         const index = rt.current_task.?;
         const task = rt.scheduler.tasks.get_ptr(index);
         return try task.result.stat.unwrap();
     } else {
-        const std_dir = self.to_std();
+        const std_dir = dir.to_std();
         const dir_stat = std_dir.stat() catch |e| {
             return switch (e) {
                 error.AccessDenied => results.StatError.AccessDenied,
@@ -215,39 +231,45 @@ pub fn stat(self: Dir, rt: *Runtime) !fs.Stat {
 }
 
 /// Delete a File within this Dir.
-pub fn delete_file(self: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
+pub fn delete_file(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
     if (rt.aio.features.has_capability(.delete)) {
-        try rt.scheduler.io_await(.{ .delete = .{
-            .path = .{
-                .rel = .{
-                    .dir = self.handle,
+        try rt.scheduler.io_await(rt.allocator, .{
+            .delete = .{
+                .path = .{ .rel = .{
+                    .dir = dir.handle,
                     .path = subpath,
-                },
+                } },
+                .is_dir = false,
             },
-            .is_dir = false,
-        } });
+        });
     } else {
-        const std_dir = self.to_std();
-        return std_dir.deleteFile(rt.io, subpath) catch |e| switch (e) {
+        const std_dir = dir.to_std();
+        return std_dir.deleteFile(
+            rt.io,
+            subpath,
+        ) catch |e| switch (e) {
             else => results.DeleteError.Unexpected,
         };
     }
 }
 
 /// Delete a Dir within this Dir.
-pub fn delete_dir(self: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
+pub fn delete_dir(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
     if (rt.aio.features.has_capability(.delete)) {
-        try rt.scheduler.io_await(.{
+        try rt.scheduler.io_await(rt.allocator, .{
             .delete = .{ .path = .{
                 .rel = .{
-                    .dir = self.handle,
+                    .dir = dir.handle,
                     .path = subpath,
                 },
             }, .is_dir = true },
         });
     } else {
-        const std_dir = self.to_std();
-        return std_dir.deleteDir(rt.io, subpath) catch |e| switch (e) {
+        const std_dir = dir.to_std();
+        return std_dir.deleteDir(
+            rt.io,
+            subpath,
+        ) catch |e| switch (e) {
             else => results.DeleteError.Unexpected,
         };
     }
@@ -257,8 +279,8 @@ pub fn delete_dir(self: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
 /// deleting all files within it and then deleting the Directory.
 ///
 /// This does allocate within it using the `rt.allocator`.
-pub fn delete_tree(self: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
-    const base_dir = try self.open_dir(rt, subpath);
+pub fn delete_tree(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
+    const base_dir = try dir.open_dir(rt, subpath);
 
     const base_std_dir = base_dir.to_std();
     var walker = try base_std_dir.walk(rt.allocator);
@@ -273,7 +295,7 @@ pub fn delete_tree(self: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
     }
 
     try base_dir.close(rt);
-    try self.delete_dir(rt, subpath);
+    try dir.delete_dir(rt, subpath);
 }
 
 const log = std.log.scoped(.@"tardy/fs/dir");

@@ -41,7 +41,7 @@ pub fn init(
 
 pub fn deinit(rt: *Runtime) void {
     rt.storage.deinit();
-    rt.scheduler.deinit(rt.io);
+    rt.scheduler.deinit(rt.allocator, rt.io);
     rt.allocator.free(rt.aio.completions);
     rt.aio.deinit(rt.allocator, rt.io);
 }
@@ -79,6 +79,7 @@ pub fn spawn(
     stack_size: ?Coroutine.Stack,
 ) !void {
     try rt.scheduler.spawn(
+        rt.allocator,
         coroutine_fn,
         args,
         stack_size,
@@ -98,7 +99,7 @@ fn run_task(rt: *Runtime, task: *Task) !void {
             // so we only hit that condition sometimes in here.
             const index = rt.current_task.?;
             // If the frame is done, clean it up.
-            try rt.scheduler.release(index);
+            try rt.scheduler.release(rt.allocator, index);
             // frees the heap-allocated stack.
             //
             // this should be evaluted as it does have a perf impact but
@@ -112,7 +113,7 @@ fn run_task(rt: *Runtime, task: *Task) !void {
         .errored => {
             const index = rt.current_task.?;
             log.warn("cleaning up failed frame...", .{});
-            try rt.scheduler.release(index);
+            try rt.scheduler.release(rt.allocator, index);
             frame.deinit(rt.allocator);
         },
     }
@@ -171,7 +172,10 @@ pub fn run(rt: *Runtime) !void {
         const wait_for_io = rt.scheduler.runnable == 0;
         log.debug("{d} - Wait for I/O: {}", .{ rt.id, wait_for_io });
 
-        const completions = try rt.aio.reap(wait_for_io);
+        const completions = try rt.aio.reap(
+            rt.allocator,
+            wait_for_io,
+        );
         for (completions) |completion| {
             if (completion.result == .wake) {
                 force_woken = true;
