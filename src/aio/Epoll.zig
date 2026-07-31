@@ -81,35 +81,35 @@ pub fn queue_job(
     const epoll: *Epoll = @ptrCast(@alignCast(runner));
 
     try switch (job) {
-        .timer => |inner| epoll.queue_timer(
+        .timer => |timer| epoll.queue_timer(
             allocator,
             task,
-            inner,
+            timer,
         ),
-        .accept => |inner| epoll.queue_accept(
+        .accept => |accept| epoll.queue_accept(
             allocator,
             task,
-            inner.socket,
-            inner.kind,
+            accept.socket,
+            accept.kind,
         ),
-        .connect => |inner| epoll.queue_connect(
+        .connect => |connect| epoll.queue_connect(
             allocator,
             task,
-            inner.socket,
-            inner.addr,
-            inner.kind,
+            connect.socket,
+            connect.addr,
+            connect.kind,
         ),
-        .recv => |inner| epoll.queue_recv(
+        .recv => |recv| epoll.queue_recv(
             allocator,
             task,
-            inner.socket,
-            inner.buffer,
+            recv.socket,
+            recv.buffer,
         ),
-        .send => |inner| epoll.queue_send(
+        .send => |send| epoll.queue_send(
             allocator,
             task,
-            inner.socket,
-            inner.buffer,
+            send.socket,
+            send.buffer,
         ),
         .open, .delete, .mkdir, .stat, .read, .write, .close => unreachable,
     };
@@ -401,8 +401,8 @@ pub fn reap(
 
                         break :blk .wake;
                     },
-                    .timer => |inner| {
-                        const timer_fd = inner.fd;
+                    .timer => |timer| {
+                        const timer_fd = timer.fd;
                         defer epoll.remove_fd(timer_fd) catch unreachable;
                         debug.assert(event.events & linux.EPOLL.IN != 0);
 
@@ -418,13 +418,13 @@ pub fn reap(
 
                         break :blk .none;
                     },
-                    .accept => |*inner| {
+                    .accept => |*accept| {
                         debug.assert(event.events & linux.EPOLL.IN != 0);
 
                         const result: results.AcceptResult = result: {
                             const handle = syscall.accept(
-                                inner.socket,
-                                &inner.addr,
+                                accept.socket,
+                                &accept.addr,
                                 0,
                             ) catch |e| {
                                 const err = switch (e) {
@@ -440,8 +440,8 @@ pub fn reap(
 
                             break :result .{ .actual = .{
                                 .handle = handle,
-                                .addr = inner.addr,
-                                .kind = inner.kind,
+                                .addr = accept.addr,
+                                .kind = accept.kind,
                             } };
                         };
 
@@ -462,13 +462,13 @@ pub fn reap(
 
                         break :blk .{ .connect = result };
                     },
-                    .recv => |inner| {
+                    .recv => |recv| {
                         debug.assert(event.events & linux.EPOLL.IN != 0);
 
                         const result: results.RecvResult = result: {
                             const length = syscall.recv(
-                                inner.socket,
-                                inner.buffer,
+                                recv.socket,
+                                recv.buffer,
                                 0,
                             ) catch |e| {
                                 const err = switch (e) {
@@ -488,13 +488,13 @@ pub fn reap(
 
                         break :blk .{ .recv = result };
                     },
-                    .send => |inner| {
+                    .send => |send| {
                         debug.assert(event.events & linux.EPOLL.OUT != 0);
 
                         const result: results.SendResult = result: {
                             const length = syscall.send(
-                                inner.socket,
-                                inner.buffer,
+                                send.socket,
+                                send.buffer,
                                 0,
                             ) catch |e| {
                                 const err = switch (e) {

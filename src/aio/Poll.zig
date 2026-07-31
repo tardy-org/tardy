@@ -43,7 +43,7 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Poll {
                 &binded_addr,
                 &binded_size,
             );
-            const bounded_addr = net.Socket.Address.fromAny(&binded_addr);
+            const bounded_addr: net.Socket.Address = .fromAny(&binded_addr);
 
             try syscall.connect(write_end, &bounded_addr);
 
@@ -129,35 +129,35 @@ pub fn queue_job(
     const poll: *Poll = @ptrCast(@alignCast(runner));
 
     try switch (job) {
-        .timer => |inner| poll.queue_timer(
+        .timer => |timer| poll.queue_timer(
             allocator,
             task,
-            inner,
+            timer,
         ),
-        .accept => |inner| poll.queue_accept(
+        .accept => |accept| poll.queue_accept(
             allocator,
             task,
-            inner.socket,
-            inner.kind,
+            accept.socket,
+            accept.kind,
         ),
-        .connect => |inner| poll.queue_connect(
+        .connect => |connect| poll.queue_connect(
             allocator,
             task,
-            inner.socket,
-            inner.addr,
-            inner.kind,
+            connect.socket,
+            connect.addr,
+            connect.kind,
         ),
-        .recv => |inner| poll.queue_recv(
+        .recv => |recv| poll.queue_recv(
             allocator,
             task,
-            inner.socket,
-            inner.buffer,
+            recv.socket,
+            recv.buffer,
         ),
-        .send => |inner| poll.queue_send(
+        .send => |send| poll.queue_send(
             allocator,
             task,
-            inner.socket,
-            inner.buffer,
+            send.socket,
+            send.buffer,
         ),
         .open, .delete, .mkdir, .stat, .read, .write, .close => unreachable,
     };
@@ -370,14 +370,14 @@ pub fn reap(
                         remove = false;
                         break :result .wake;
                     },
-                    .accept => |*inner| {
+                    .accept => |*accept| {
                         debug.assert(pfd.revents & syscall.POLL.IN != 0 or
                             pfd.revents & syscall.POLL.RDNORM != 0);
 
                         const AcceptError = results.AcceptError;
                         const socket = syscall.accept(
-                            inner.socket,
-                            &inner.addr,
+                            accept.socket,
+                            &accept.addr,
                             if (native_os != .windows) posix.SOCK.NONBLOCK else 0,
                         ) catch |e| {
                             const err = switch (e) {
@@ -406,8 +406,8 @@ pub fn reap(
                             .accept = .{
                                 .actual = .{
                                     .handle = socket,
-                                    .addr = inner.addr,
-                                    .kind = inner.kind,
+                                    .addr = accept.addr,
+                                    .kind = accept.kind,
                                 },
                             },
                         };
@@ -425,7 +425,7 @@ pub fn reap(
                             };
                         }
                     },
-                    .recv => |inner| {
+                    .recv => |recv| {
                         if (pfd.revents & syscall.POLL.HUP != 0) break :result .{
                             .recv = .{
                                 .err = results.RecvError.Closed,
@@ -437,8 +437,8 @@ pub fn reap(
 
                         const RecvError = results.RecvError;
                         const count = syscall.recv(
-                            inner.socket,
-                            inner.buffer,
+                            recv.socket,
+                            recv.buffer,
                             0,
                         ) catch |e| {
                             const err = switch (e) {
@@ -468,7 +468,7 @@ pub fn reap(
                             .actual = count,
                         } };
                     },
-                    .send => |inner| {
+                    .send => |send| {
                         const SendError = results.SendError;
                         if (pfd.revents & syscall.POLL.HUP != 0) break :result .{
                             .send = .{
@@ -478,8 +478,8 @@ pub fn reap(
 
                         debug.assert(pfd.revents & syscall.POLL.OUT != 0);
                         const count = syscall.send(
-                            inner.socket,
-                            inner.buffer,
+                            send.socket,
+                            send.buffer,
                             0,
                         ) catch |e| {
                             log.err("send failed with {}", .{e});

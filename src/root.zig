@@ -1,9 +1,9 @@
 pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
     return struct {
         const Tardy_t = @This();
-        aios: std.ArrayList(inner: {
+        aios: std.ArrayList(impl: {
             const AioImpl = selected_aio.Impl();
-            break :inner *AioImpl;
+            break :impl *AioImpl;
         }),
         // TODO: maybe make this an arena
         allocator: mem.Allocator,
@@ -48,16 +48,16 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             defer tardy.mutex.unlock(tardy.io);
 
             var aio: AsyncIO = blk: {
-                var io_inner = try tardy.allocator.create(
+                var io_impl = try tardy.allocator.create(
                     selected_aio.Impl(),
                 );
-                errdefer tardy.allocator.destroy(io_inner);
+                errdefer tardy.allocator.destroy(io_impl);
 
-                io_inner.* = try .init(tardy.allocator, options);
-                errdefer io_inner.inner_deinit(tardy.allocator);
+                io_impl.* = try .init(tardy.allocator, options);
+                errdefer io_impl.inner_deinit(tardy.allocator);
 
-                try tardy.aios.append(tardy.allocator, io_inner);
-                var aio = io_inner.to_async();
+                try tardy.aios.append(tardy.allocator, io_impl);
+                var aio = io_impl.to_async();
 
                 const completions = try tardy.allocator.alloc(
                     results.Completion,

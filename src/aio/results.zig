@@ -193,7 +193,7 @@ pub const SendResult = Resulted(usize, SendError);
 // This is ONLY used internally. This helps us avoid Result enum bloat
 // by encoding multiple possibilities within one Result.
 const OpenResultType = union(enum) { file: fs.File, dir: fs.Dir };
-pub const InnerOpenResult = Resulted(OpenResultType, OpenError);
+pub const OpenResult = Resulted(OpenResultType, OpenError);
 pub const OpenFileResult = Resulted(fs.File, OpenError);
 pub const OpenDirResult = Resulted(fs.Dir, OpenError);
 
@@ -220,7 +220,7 @@ pub const Result = union(enum) {
     connect: ConnectResult,
     recv: RecvResult,
     send: SendResult,
-    open: InnerOpenResult,
+    open: OpenResult,
     mkdir: MkdirResult,
     delete: DeleteResult,
     read: ReadResult,

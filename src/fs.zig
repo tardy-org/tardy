@@ -15,16 +15,16 @@ pub const Path = union(enum) {
 
     pub fn dupe(path: *const Path, allocator: std.mem.Allocator) !Path {
         switch (path.*) {
-            .rel => |inner| {
+            .rel => |rel| {
                 const path_dupe = try allocator.dupeSentinel(
                     u8,
-                    inner.path,
+                    rel.path,
                     0x0,
                 );
                 errdefer allocator.free(path_dupe);
                 return .{
                     .rel = .{
-                        .dir = inner.dir,
+                        .dir = rel.dir,
                         .path = path_dupe,
                     },
                 };

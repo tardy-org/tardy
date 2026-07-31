@@ -92,14 +92,14 @@ pub fn create(rt: *Runtime, path: fs.Path, flags: CreateFlags) !File {
         };
 
         switch (path) {
-            .rel => |inner| {
-                const dir: StdDir = .{ .handle = inner.dir };
+            .rel => |rel| {
+                const dir: StdDir = .{ .handle = rel.dir };
 
                 const OpenError = results.OpenError;
                 const opened: StdFile = blk: while (true) {
                     break :blk dir.createFile(
                         rt.io,
-                        inner.path,
+                        rel.path,
                         std_flags,
                     ) catch |e| return switch (e) {
                         error.WouldBlock => {
@@ -129,12 +129,12 @@ pub fn create(rt: *Runtime, path: fs.Path, flags: CreateFlags) !File {
 
                 return .{ .handle = opened.handle };
             },
-            .abs => |inner| {
+            .abs => |abs| {
                 const OpenError = results.OpenError;
                 const opened: StdFile = blk: while (true) {
                     break :blk Io.Dir.createFileAbsolute(
                         rt.io,
-                        inner,
+                        abs,
                         std_flags,
                     ) catch |e| return switch (e) {
                         error.WouldBlock => {
@@ -197,14 +197,14 @@ pub fn open(rt: *Runtime, path: fs.Path, flags: OpenFlags) !File {
         };
 
         switch (path) {
-            .rel => |inner| {
-                const dir: StdDir = .{ .handle = inner.dir };
+            .rel => |rel| {
+                const dir: StdDir = .{ .handle = rel.dir };
 
                 const OpenError = results.OpenError;
                 const opened: StdFile = blk: while (true) {
                     break :blk dir.openFile(
                         rt.io,
-                        inner.path,
+                        rel.path,
                         std_flags,
                     ) catch |e| return switch (e) {
                         error.WouldBlock => {
@@ -234,12 +234,12 @@ pub fn open(rt: *Runtime, path: fs.Path, flags: OpenFlags) !File {
 
                 return .{ .handle = opened.handle };
             },
-            .abs => |inner| {
+            .abs => |abs| {
                 const OpenError = results.OpenError;
                 const opened: StdFile = blk: while (true) {
                     break :blk Io.Dir.openFileAbsolute(
                         rt.io,
-                        inner,
+                        abs,
                         std_flags,
                     ) catch |e| return switch (e) {
                         error.WouldBlock => {

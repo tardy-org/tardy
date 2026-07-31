@@ -62,12 +62,12 @@ pub fn open(rt: *Runtime, path: fs.Path) !Dir {
     } else {
         const OpenError = results.OpenError;
         switch (path) {
-            .rel => |inner| {
-                const dir: StdDir = .{ .handle = inner.dir };
+            .rel => |rel| {
+                const dir: StdDir = .{ .handle = rel.dir };
 
                 const opened = dir.openDir(
                     rt.io,
-                    inner.path,
+                    rel.path,
                     .{ .iterate = true },
                 ) catch |e| {
                     return switch (e) {
@@ -78,10 +78,10 @@ pub fn open(rt: *Runtime, path: fs.Path) !Dir {
 
                 return .{ .handle = opened.handle };
             },
-            .abs => |inner| {
+            .abs => |abs| {
                 const opened = Io.Dir.openDirAbsolute(
                     rt.io,
-                    inner,
+                    abs,
                     .{ .iterate = true },
                 ) catch |e| {
                     return switch (e) {

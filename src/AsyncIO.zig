@@ -111,12 +111,12 @@ pub const Kind = union(enum) {
             .epoll => Epoll,
             .poll => Poll,
             .kqueue => Kqueue,
-            .custom => |inner| {
-                debug.assert(std.meta.hasMethod(inner, "init"));
-                debug.assert(std.meta.hasMethod(inner, "inner_deinit"));
-                debug.assert(std.meta.hasMethod(inner, "queue_job"));
-                debug.assert(std.meta.hasMethod(inner, "to_async"));
-                return inner;
+            .custom => |custom| {
+                debug.assert(std.meta.hasMethod(custom, "init"));
+                debug.assert(std.meta.hasMethod(custom, "inner_deinit"));
+                debug.assert(std.meta.hasMethod(custom, "queue_job"));
+                debug.assert(std.meta.hasMethod(custom, "to_async"));
+                return custom;
             },
             .auto => continue :sw native(),
         };

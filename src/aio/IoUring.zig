@@ -1,6 +1,6 @@
 pub const IoUring = @This();
 
-inner: *linux.IoUring,
+uring: *linux.IoUring,
 wake_event_fd: posix.fd_t,
 wake_event_buffer: []u8,
 
@@ -59,7 +59,7 @@ pub fn init(
             const parent_uring: *IoUring = @ptrCast(
                 @alignCast(parent.runner),
             );
-            debug.assert(parent_uring.inner.fd >= 0);
+            debug.assert(parent_uring.uring.fd >= 0);
 
             // Initialize using the WQ from the parent ring.
             const flags: u32 = base_flags | linux.IORING_SETUP_ATTACH_WQ;
@@ -67,7 +67,7 @@ pub fn init(
                 linux.io_uring_params,
                 .{
                     .flags = flags,
-                    .wq_fd = @as(u32, @intCast(parent_uring.inner.fd)),
+                    .wq_fd = @as(u32, @intCast(parent_uring.uring.fd)),
                 },
             );
 
@@ -120,7 +120,7 @@ pub fn init(
     errdefer allocator.free(cqes);
 
     return .{
-        .inner = uring,
+        .uring = uring,
         .wake_event_fd = wake_event_fd,
         .wake_event_buffer = wake_event_buffer,
         .jobs = jobs,
@@ -130,11 +130,11 @@ pub fn init(
 
 pub fn inner_deinit(io_uring: *IoUring, allocator: mem.Allocator) void {
     syscall.close(io_uring.wake_event_fd);
-    io_uring.inner.deinit();
+    io_uring.uring.deinit();
     io_uring.jobs.deinit(allocator);
     allocator.free(io_uring.wake_event_buffer);
     allocator.free(io_uring.cqes);
-    allocator.destroy(io_uring.inner);
+    allocator.destroy(io_uring.uring);
 }
 
 fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
@@ -150,77 +150,77 @@ fn queue_job(
 ) Errors.QueueJob!void {
     const uring: *IoUring = @ptrCast(@alignCast(runner));
     (switch (job) {
-        .timer => |inner| uring.queue_timer(
+        .timer => |timer| uring.queue_timer(
             allocator,
             task,
-            inner,
+            timer,
         ),
-        .open => |inner| uring.queue_open(
+        .open => |open| uring.queue_open(
             allocator,
             task,
-            inner.path,
-            inner.flags,
+            open.path,
+            open.flags,
         ),
-        .delete => |inner| uring.queue_delete(
+        .delete => |delete| uring.queue_delete(
             allocator,
             task,
-            inner.path,
-            inner.is_dir,
+            delete.path,
+            delete.is_dir,
         ),
-        .mkdir => |inner| uring.queue_mkdir(
+        .mkdir => |mkdir| uring.queue_mkdir(
             allocator,
             task,
-            inner.path,
-            inner.mode,
+            mkdir.path,
+            mkdir.mode,
         ),
-        .stat => |inner| uring.queue_stat(
+        .stat => |stat| uring.queue_stat(
             allocator,
             task,
-            inner,
+            stat,
         ),
-        .read => |inner| uring.queue_read(
+        .read => |read| uring.queue_read(
             allocator,
             task,
-            inner.fd,
-            inner.buffer,
-            inner.offset,
+            read.fd,
+            read.buffer,
+            read.offset,
         ),
-        .write => |inner| uring.queue_write(
+        .write => |write| uring.queue_write(
             allocator,
             task,
-            inner.fd,
-            inner.buffer,
-            inner.offset,
+            write.fd,
+            write.buffer,
+            write.offset,
         ),
-        .close => |inner| uring.queue_close(
+        .close => |close| uring.queue_close(
             allocator,
             task,
-            inner,
+            close,
         ),
-        .accept => |inner| uring.queue_accept(
+        .accept => |accept| uring.queue_accept(
             allocator,
             task,
-            inner.socket,
-            inner.kind,
+            accept.socket,
+            accept.kind,
         ),
-        .connect => |inner| uring.queue_connect(
+        .connect => |connect| uring.queue_connect(
             allocator,
             task,
-            inner.socket,
-            inner.addr,
-            inner.kind,
+            connect.socket,
+            connect.addr,
+            connect.kind,
         ),
-        .recv => |inner| uring.queue_recv(
+        .recv => |recv| uring.queue_recv(
             allocator,
             task,
-            inner.socket,
-            inner.buffer,
+            recv.socket,
+            recv.buffer,
         ),
-        .send => |inner| uring.queue_send(
+        .send => |send| uring.queue_send(
             allocator,
             task,
-            inner.socket,
-            inner.buffer,
+            send.socket,
+            send.buffer,
         ),
     }) catch |e| switch (e) {
         error.SubmissionQueueFull => {
@@ -257,7 +257,7 @@ fn queue_timer(
     };
     item.timespec = timespec_ptr;
 
-    _ = try io_uring.inner.timeout(
+    _ = try io_uring.uring.timeout(
         index,
         timespec_ptr,
         0,
@@ -312,17 +312,17 @@ fn queue_open(
     const perms = flags.perms orelse 0;
 
     switch (path) {
-        .rel => |inner| _ = try io_uring.inner.openat(
+        .rel => |rel| _ = try io_uring.uring.openat(
             index,
-            inner.dir,
-            inner.path.ptr,
+            rel.dir,
+            rel.path.ptr,
             o_flags,
             @intCast(perms),
         ),
-        .abs => |inner| _ = try io_uring.inner.openat(
+        .abs => |abs| _ = try io_uring.uring.openat(
             index,
             posix.AT.FDCWD,
-            inner.ptr,
+            abs.ptr,
             o_flags,
             @intCast(perms),
         ),
@@ -354,13 +354,13 @@ fn queue_delete(
     const mode: u32 = if (is_dir) posix.AT.REMOVEDIR else 0;
 
     switch (path) {
-        .rel => |rel| _ = try io_uring.inner.unlinkat(
+        .rel => |rel| _ = try io_uring.uring.unlinkat(
             index,
             rel.dir,
             rel.path.ptr,
             mode,
         ),
-        .abs => |abs| _ = try io_uring.inner.unlinkat(
+        .abs => |abs| _ = try io_uring.uring.unlinkat(
             index,
             posix.AT.FDCWD,
             abs.ptr,
@@ -392,13 +392,13 @@ fn queue_mkdir(
     };
 
     switch (path) {
-        .rel => |rel| _ = try io_uring.inner.mkdirat(
+        .rel => |rel| _ = try io_uring.uring.mkdirat(
             index,
             rel.dir,
             rel.path.ptr,
             @intCast(mode),
         ),
-        .abs => |abs| _ = try io_uring.inner.mkdirat(
+        .abs => |abs| _ = try io_uring.uring.mkdirat(
             index,
             posix.AT.FDCWD,
             abs.ptr,
@@ -427,7 +427,7 @@ fn queue_stat(
     errdefer allocator.destroy(statx_ptr);
     item.statx = statx_ptr;
 
-    _ = try io_uring.inner.statx(
+    _ = try io_uring.uring.statx(
         index,
         fd,
         "",
@@ -464,7 +464,7 @@ fn queue_read(
         .task = task,
     };
 
-    _ = try io_uring.inner.read(
+    _ = try io_uring.uring.read(
         index,
         fd,
         .{ .buffer = buffer },
@@ -502,7 +502,7 @@ fn queue_write(
         .task = task,
     };
 
-    _ = try io_uring.inner.write(
+    _ = try io_uring.uring.write(
         index,
         fd,
         buffer,
@@ -529,7 +529,7 @@ fn queue_close(
         .task = task,
     };
 
-    _ = try io_uring.inner.close(index, fd);
+    _ = try io_uring.uring.close(index, fd);
 }
 
 fn queue_accept(
@@ -559,7 +559,7 @@ fn queue_accept(
     };
     var sockaddr, var socklen = item.job.type.accept.addr.toPosix();
 
-    _ = try io_uring.inner.accept(
+    _ = try io_uring.uring.accept(
         index,
         socket,
         &sockaddr,
@@ -596,7 +596,7 @@ fn queue_connect(
     };
     const sockaddr, const socklen = item.job.type.connect.addr.toPosix();
 
-    _ = try io_uring.inner.connect(
+    _ = try io_uring.uring.connect(
         index,
         socket,
         &sockaddr,
@@ -629,7 +629,7 @@ fn queue_recv(
         .task = task,
     };
 
-    _ = try io_uring.inner.recv(
+    _ = try io_uring.uring.recv(
         index,
         socket,
         .{ .buffer = buffer },
@@ -659,7 +659,7 @@ fn queue_send(
         .task = task,
     };
 
-    _ = try io_uring.inner.send(index, socket, buffer, 0);
+    _ = try io_uring.uring.send(index, socket, buffer, 0);
 }
 
 inline fn queue_wake(io_uring: *IoUring, alloator: mem.Allocator) Error!void {
@@ -675,7 +675,7 @@ inline fn queue_wake(io_uring: *IoUring, alloator: mem.Allocator) Error!void {
         .task = undefined,
     };
 
-    _ = try io_uring.inner.read(
+    _ = try io_uring.uring.read(
         index,
         io_uring.wake_event_fd,
         .{ .buffer = io_uring.wake_event_buffer },
@@ -694,7 +694,7 @@ fn submit(runner: *anyopaque) Errors.Submit!void {
     const uring: *IoUring = @ptrCast(@alignCast(runner));
 
     _ = while (true) {
-        break uring.inner.submit() catch |e| switch (e) {
+        break uring.uring.submit() catch |e| switch (e) {
             error.SignalInterrupt => continue,
             else => |err| return err,
         };
@@ -712,7 +712,7 @@ fn reap(
     const uring_nr: u32 = if (wait) 1 else 0;
 
     const count = while (true) {
-        break uring.inner.copy_cqes(uring.cqes[0..], uring_nr) catch |e|
+        break uring.uring.copy_cqes(uring.cqes[0..], uring_nr) catch |e|
             {
                 switch (e) {
                     error.SignalInterrupt => continue,
@@ -743,14 +743,14 @@ fn reap(
                     break :blk .none;
                 },
                 .close => break :blk .close,
-                .accept => |inner| {
-                    if (cqe.res >= 0) switch (inner.kind) {
+                .accept => |accept| {
+                    if (cqe.res >= 0) switch (accept.kind) {
                         .tcp, .unix => break :blk .{
                             .accept = .{
                                 .actual = .{
                                     .handle = cqe.res,
-                                    .addr = inner.addr,
-                                    .kind = inner.kind,
+                                    .addr = accept.addr,
+                                    .kind = accept.kind,
                                 },
                             },
                         },
@@ -971,8 +971,8 @@ fn reap(
 
                     break :blk .{ .mkdir = result };
                 },
-                .open => |inner| {
-                    if (cqe.res >= 0) switch (inner.kind) {
+                .open => |open| {
+                    if (cqe.res >= 0) switch (open.kind) {
                         .file => break :blk .{
                             .open = .{
                                 .actual = .{ .file = .{
@@ -990,7 +990,7 @@ fn reap(
                     };
 
                     const OpenError = results.OpenError;
-                    const result: results.InnerOpenResult = result: {
+                    const result: results.OpenResult = result: {
                         const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (e) {
                             .ACCES, .PERM => .{

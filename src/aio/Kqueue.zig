@@ -80,35 +80,35 @@ pub fn queue_job(
     const kqueue: *Kqueue = @ptrCast(@alignCast(runner));
 
     (switch (job) {
-        .timer => |inner| kqueue.queue_timer(
+        .timer => |timer| kqueue.queue_timer(
             allocator,
             task,
-            inner,
+            timer,
         ),
-        .accept => |inner| kqueue.queue_accept(
+        .accept => |accept| kqueue.queue_accept(
             allocator,
             task,
-            inner.socket,
-            inner.kind,
+            accept.socket,
+            accept.kind,
         ),
-        .connect => |inner| kqueue.queue_connect(
+        .connect => |connect| kqueue.queue_connect(
             allocator,
             task,
-            inner.socket,
-            inner.addr,
-            inner.kind,
+            connect.socket,
+            connect.addr,
+            connect.kind,
         ),
-        .recv => |inner| kqueue.queue_recv(
+        .recv => |recv| kqueue.queue_recv(
             allocator,
             task,
-            inner.socket,
-            inner.buffer,
+            recv.socket,
+            recv.buffer,
         ),
-        .send => |inner| kqueue.queue_send(
+        .send => |send| kqueue.queue_send(
             allocator,
             task,
-            inner.socket,
-            inner.buffer,
+            send.socket,
+            send.buffer,
         ),
         .open, .delete, .mkdir, .stat, .read, .write, .close => unreachable,
     }) catch |e| if (e == error.ChangeQueueFull) {
@@ -386,17 +386,17 @@ pub fn reap(
                         job_complete = false;
                         break :result .wake;
                     },
-                    .timer => |inner| {
+                    .timer => |timer| {
                         debug.assert(event.filter == posix.system.EVFILT.TIMER);
-                        debug.assert(inner == .none);
+                        debug.assert(timer == .none);
                         break :result .none;
                     },
-                    .accept => |*inner| {
+                    .accept => |*accept| {
                         debug.assert(event.filter == posix.system.EVFILT.READ);
 
                         const socket_fd = syscall.accept(
-                            inner.socket,
-                            &inner.addr,
+                            accept.socket,
+                            &accept.addr,
                             0,
                         ) catch |err| break :result .{
                             .accept = .{
@@ -408,8 +408,8 @@ pub fn reap(
                             .accept = .{
                                 .actual = .{
                                     .handle = socket_fd,
-                                    .addr = inner.addr,
-                                    .kind = inner.kind,
+                                    .addr = accept.addr,
+                                    .kind = accept.kind,
                                 },
                             },
                         };
@@ -449,11 +449,11 @@ pub fn reap(
                             .connect = result,
                         };
                     },
-                    .recv => |inner| {
+                    .recv => |recv| {
                         debug.assert(event.filter == posix.system.EVFILT.READ);
                         const rc = syscall.recvfrom(
-                            inner.socket,
-                            inner.buffer,
+                            recv.socket,
+                            recv.buffer,
                             0,
                             null,
                             null,
@@ -476,11 +476,11 @@ pub fn reap(
                                 },
                             };
                     },
-                    .send => |inner| {
+                    .send => |send| {
                         debug.assert(event.filter == posix.system.EVFILT.WRITE);
                         const rc = syscall.send(
-                            inner.socket,
-                            inner.buffer,
+                            send.socket,
+                            send.buffer,
                             0,
                         ) catch |err| {
                             break :result .{

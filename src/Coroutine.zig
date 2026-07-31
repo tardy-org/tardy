@@ -177,7 +177,7 @@ const RegisterFn = *allowzero const fn () callconv(.c) noreturn;
 fn EntryFn(comptime coroutine_fn: anytype, args: anytype) RegisterFn {
     const Args = @TypeOf(args);
     const Fn = struct {
-        fn inner() callconv(.c) noreturn {
+        fn entry() callconv(.c) noreturn {
             const frame_ptr: *Coroutine = active_frame.?;
 
             const args_addr = Frame.alignment.backward(
@@ -193,9 +193,14 @@ fn EntryFn(comptime coroutine_fn: anytype, args: anytype) RegisterFn {
             };
 
             if (builtin.mode == .debug) {
-                log.debug("Coroutine \nfn: `* const {any}`\nUsed {Bi} / {Bi} bytes of stack", .{
-                    @TypeOf(coroutine_fn), frame_ptr.stackUsed(), frame_ptr.stack_mem.len,
-                });
+                log.debug(
+                    "Coroutine \nfn: `* const {any}`\nUsed {Bi} / {Bi} bytes of stack",
+                    .{
+                        @TypeOf(coroutine_fn),
+                        frame_ptr.stackUsed(),
+                        frame_ptr.stack_mem.len,
+                    },
+                );
             }
 
             // When our coroutine is done running, just yield.
@@ -204,7 +209,7 @@ fn EntryFn(comptime coroutine_fn: anytype, args: anytype) RegisterFn {
             unreachable;
         }
     };
-    return Fn.inner;
+    return Fn.entry;
 }
 
 const is_unix = builtin.os.tag != .windows;

@@ -64,8 +64,8 @@ pub fn init(
 
     const path_dupe = try path.dupe(allocator);
     errdefer switch (path_dupe) {
-        .rel => |inner| allocator.free(inner.path),
-        .abs => |p| allocator.free(p),
+        .rel => |rel| allocator.free(rel.path),
+        .abs => |abs| allocator.free(abs),
     };
 
     debug.assert(validate_chain(chain));
@@ -84,8 +84,8 @@ pub fn deinit(file_chain: *FileChain, allocator: mem.Allocator) void {
     defer allocator.free(file_chain.steps);
     defer allocator.free(file_chain.buffer);
     defer switch (file_chain.path) {
-        .rel => |inner| allocator.free(inner.path),
-        .abs => |p| allocator.free(p),
+        .rel => |rel| allocator.free(rel.path),
+        .abs => |abs| allocator.free(abs),
     };
 }
 

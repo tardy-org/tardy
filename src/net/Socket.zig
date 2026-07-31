@@ -238,14 +238,14 @@ pub const Address = union(enum) {
 // TODO: we shouldn't need Io here
 pub fn init(io_: Io, kind: InitKind) !Socket {
     const addr: Address = switch (kind) {
-        .tcp, .udp => |inner| blk: {
+        .tcp, .udp => |hostname| blk: {
             break :blk if (comptime builtin.os.tag == .linux) .{
                 .ip = try .resolve(
                     io_,
-                    inner.host,
-                    inner.port,
+                    hostname.host,
+                    hostname.port,
                 ),
-            } else .{ .ip = try .parse(inner.host, inner.port) };
+            } else .{ .ip = try .parse(hostname.host, hostname.port) };
         },
         // Not supported on Windows at the moment.
         .unix => |path| if (builtin.os.tag == .windows)
