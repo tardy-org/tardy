@@ -8,7 +8,6 @@ pub fn ZeroCopy(comptime T: type) type {
         pub fn init(allocator: mem.Allocator, capacity: usize) !ZeroCopy_t {
             const slice = try allocator.alloc(T, capacity);
             return .{
-                .allocator = allocator,
                 .ptr = slice.ptr,
                 .len = 0,
                 .capacity = capacity,
@@ -136,8 +135,8 @@ test "ZeroCopy: First" {
     defer zc.deinit(testing.allocator);
 
     const write_area = try zc.get_write_area(
-        garbage.len,
         testing.allocator,
+        garbage.len,
     );
     @memcpy(write_area, garbage[0..]);
     zc.mark_written(write_area.len);

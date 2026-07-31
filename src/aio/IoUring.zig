@@ -211,7 +211,6 @@ fn queue_job(
             inner.kind,
         ),
         .recv => |inner| uring.queue_recv(
-            uring,
             allocator,
             task,
             inner.socket,
