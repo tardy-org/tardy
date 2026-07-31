@@ -114,7 +114,7 @@ pub fn Spsc(comptime T: type) type {
             };
         }
 
-        pub fn deinit(spsc: *Spsc_t) void {
+        pub fn deinit(spsc: *Spsc_t, allocator: mem.Allocator) void {
             spsc.producer_open.store(false, .release);
             spsc.consumer_open.store(false, .release);
 
@@ -122,7 +122,7 @@ pub fn Spsc(comptime T: type) type {
                 return; // Someone else is handling deinit
             }
 
-            spsc.ring.deinit();
+            spsc.ring.deinit(allocator);
         }
 
         pub fn producer(spsc: *Spsc_t, runtime: *Runtime) Producer {
@@ -168,6 +168,7 @@ const State = enum(u8) {
 };
 
 const std = @import("std");
+const mem = std.mem;
 const std_atomic = std.atomic;
 
 const tardy = @import("../root.zig");

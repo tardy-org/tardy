@@ -64,7 +64,7 @@ pub fn trigger_await(sched: *Scheduler) void {
 /// Safe to call from a different Runtime.
 pub fn trigger(sched: *Scheduler, index: usize) !void {
     const rt: *Runtime = @fieldParentPtr("scheduler", sched);
-    try sched.triggers.set(rt.io, index);
+    try sched.triggers.set(rt.allocator, rt.io, index);
 }
 
 // This is only safe to call from the Runtime that the Frame is running on.

@@ -44,7 +44,7 @@ fn consumer_frame(rt: *Runtime, consumer: Spsc(usize).Consumer) !void {
 
 pub fn main(init: std.process.Init) !void {
     var channel: Spsc(usize) = try .init(init.gpa, 2);
-    defer channel.deinit();
+    defer channel.deinit(init.gpa);
 
     var td: Tardy = try .init(init.gpa, init.io, .{
         .threading = .{ .multi = 2 },
