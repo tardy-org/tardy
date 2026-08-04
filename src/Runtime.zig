@@ -168,7 +168,8 @@ pub fn run(rt: *Runtime) !void {
         try rt.aio.submit();
 
         // If we don't have any runnable tasks, we just want to wait for an Async I/O.
-        // Otherwise, we want to just reap whatever completion we have and continue running.
+        // Otherwise, we want to just reap whatever completion we have and continue
+        // running.
         const wait_for_io = rt.scheduler.runnable == 0;
         log.debug("{d} - Wait for I/O: {}", .{ rt.id, wait_for_io });
 

@@ -242,7 +242,8 @@ pub const BindError = error{
     AccessDenied,
 } || IpAddress.BindError;
 
-pub fn bind(sock: posix.socket_t, addr: *const Socket.Address) (BindError || afd.BindError)!void {
+pub fn bind(sock: posix.socket_t, addr: *const Socket.Address) (BindError ||
+    afd.BindError)!void {
     const sock_any, const sock_len = addr.toPosix();
     if (native_os == .windows) {
         const rc = ws2.bind(sock, &sock_any, @intCast(sock_len));
@@ -264,7 +265,11 @@ pub fn bind(sock: posix.socket_t, addr: *const Socket.Address) (BindError || afd
         return;
     }
 
-    const rc = system.bind(sock, &sock_any, sock_len);
+    const rc = system.bind(
+        sock,
+        &sock_any,
+        sock_len,
+    );
     switch (posix.errno(rc)) {
         .SUCCESS => return,
         .ACCES, .PERM => return error.AccessDenied,

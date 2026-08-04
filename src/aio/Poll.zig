@@ -540,7 +540,7 @@ pub fn to_async(poll: *Poll) AsyncIO {
             .recv,
             .send,
         }),
-        .vtable = .{
+        .vtable = &.{
             .queue_job = queue_job,
             .deinit = deinit,
             .wake = wake,

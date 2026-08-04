@@ -528,7 +528,7 @@ pub fn to_async(kqueue: *Kqueue) AsyncIO {
             .recv,
             .send,
         }),
-        .vtable = .{
+        .vtable = &.{
             .queue_job = queue_job,
             .deinit = deinit,
             .wake = wake,

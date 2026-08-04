@@ -1296,7 +1296,7 @@ pub fn to_async(io_uring: *IoUring) AsyncIO {
     return .{
         .runner = io_uring,
         .features = .all(),
-        .vtable = .{
+        .vtable = &.{
             .queue_job = queue_job,
             .deinit = deinit,
             .wake = wake,
