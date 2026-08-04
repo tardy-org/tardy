@@ -27,18 +27,17 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                 .io = io,
                 .allocator = allocator,
                 .options = options,
-                .aios = try .initCapacity(
-                    allocator,
-                    0,
-                ),
+                .aios = .empty,
             };
         }
 
         pub fn deinit(tardy: *Tardy_t) void {
-            defer if (comptime builtin.os.tag == .windows)
+            if (comptime builtin.os.tag == .windows)
                 AsyncIO.syscall.ws2.wsaCleanup() catch unreachable;
 
-            for (tardy.aios.items) |aio| tardy.allocator.destroy(aio);
+            for (tardy.aios.items) |aio_impl|
+                tardy.allocator.destroy(aio_impl);
+
             tardy.aios.deinit(tardy.allocator);
         }
 
@@ -48,16 +47,16 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             defer tardy.mutex.unlock(tardy.io);
 
             var aio: AsyncIO = blk: {
-                var io_impl = try tardy.allocator.create(
+                var aio_impl = try tardy.allocator.create(
                     selected_aio.Impl(),
                 );
-                errdefer tardy.allocator.destroy(io_impl);
+                errdefer tardy.allocator.destroy(aio_impl);
 
-                io_impl.* = try .init(tardy.allocator, options);
-                errdefer io_impl.inner_deinit(tardy.allocator);
+                aio_impl.* = try .init(tardy.allocator, options);
+                errdefer aio_impl.inner_deinit(tardy.allocator);
 
-                try tardy.aios.append(tardy.allocator, io_impl);
-                var aio = io_impl.to_async();
+                try tardy.aios.append(tardy.allocator, aio_impl);
+                var aio = aio_impl.to_async();
 
                 const completions = try tardy.allocator.alloc(
                     results.Completion,
@@ -131,20 +130,20 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                 );
                 const handle: std.Thread = try .spawn(.{}, struct {
                     fn thread_init(
-                        tardy_: *Tardy_t,
+                        td: *Tardy_t,
                         parent: *AsyncIO,
                         entry_parameters: @TypeOf(entry_params),
                         count: *atomic.Value(usize),
                         total_count: usize,
                         current_id: usize,
                     ) void {
-                        var thread_rt = tardy_.spawn_runtime(
+                        var thread_rt = td.spawn_runtime(
                             current_id,
                             .{
                                 .parent_async = parent,
-                                .pooling = tardy_.options.pooling,
-                                .size_tasks_initial = tardy_.options.size_tasks_initial,
-                                .size_aio_reap_max = tardy_.options.size_aio_reap_max,
+                                .pooling = td.options.pooling,
+                                .size_tasks_initial = td.options.size_tasks_initial,
+                                .size_aio_reap_max = td.options.size_aio_reap_max,
                             },
                         ) catch |e| {
                             log.err(
@@ -179,7 +178,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                         // others might be checking our running status or attempting to
                         // wake us.
                         _ = count.fetchSub(1, .acquire);
-                        while (count.load(.acquire) > 0) tardy_.io.sleep(
+                        while (count.load(.acquire) > 0) td.io.sleep(
                             .fromSeconds(1),
                             .awake,
                         ) catch unreachable;
