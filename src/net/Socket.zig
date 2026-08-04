@@ -4,11 +4,306 @@ handle: posix.socket_t,
 addr: Address,
 kind: Kind,
 
-// TODO: create a udp/tcp connection without this
-pub const Kind = enum {
-    tcp,
-    udp,
-    unix,
+// TODO: we shouldn't need Io here
+pub fn init(io: Io, kind: Kind) !Socket {
+    const addr: Address = switch (kind) {
+        .tcp, .udp => |config| blk: {
+            break :blk if (comptime builtin.os.tag == .linux) .{
+                .ip = try .resolve(
+                    io,
+                    config.host,
+                    config.port,
+                ),
+            } else .{
+                .ip = try .parse(config.host, config.port),
+            };
+        },
+        // Not supported on Windows at the moment.
+        .unix => |path| if (builtin.os.tag == .windows)
+            unreachable
+        else
+            .{ .unix = try .init(path) },
+    };
+
+    return try init_with_address(kind, addr);
+}
+
+pub fn init_with_address(kind: Kind, addr: Address) !Socket {
+    const sock_type: u32 = switch (kind) {
+        .tcp, .unix => posix.SOCK.STREAM,
+        .udp => posix.SOCK.DGRAM,
+    };
+
+    const protocol: u32 = switch (kind) {
+        .tcp => posix.IPPROTO.TCP,
+        .udp => posix.IPPROTO.UDP,
+        .unix => 0,
+    };
+
+    const family: u32 = switch (addr) {
+        .ip => |ip| switch (ip) {
+            .ip4 => posix.AF.INET,
+            .ip6 => posix.AF.INET6,
+        },
+        .unix => posix.AF.UNIX,
+    };
+    const flags: u32 = if (builtin.os.tag != .windows)
+        sock_type | posix.SOCK.CLOEXEC | posix.SOCK.NONBLOCK
+    else
+        sock_type;
+
+    // TODO: audit these and posix uses across tardy
+    const socket = try syscall.socket(
+        family,
+        flags,
+        protocol,
+    );
+
+    if (kind != .unix) {
+        if (@hasDecl(posix.SO, "REUSEPORT_LB")) {
+            try syscall.setsockopt(
+                socket,
+                posix.SOL.SOCKET,
+                posix.SO.REUSEPORT_LB,
+                &mem.toBytes(@as(u32, 1)),
+            );
+        } else if (@hasDecl(posix.SO, "REUSEPORT")) {
+            try syscall.setsockopt(
+                socket,
+                posix.SOL.SOCKET,
+                posix.SO.REUSEPORT,
+                &mem.toBytes(@as(u32, 1)),
+            );
+        } else {
+            try syscall.setsockopt(
+                socket,
+                posix.SOL.SOCKET,
+                posix.SO.REUSEADDR,
+                &mem.toBytes(@as(u32, 1)),
+            );
+        }
+    }
+
+    return .{ .handle = socket, .addr = addr, .kind = kind };
+}
+
+/// Bind the current Socket
+pub fn bind(sock: *const Socket) !void {
+    try syscall.bind(sock.handle, &sock.addr);
+}
+
+/// Listen on the Current Socket.
+pub fn listen(sock: *const Socket, backlog: usize) !void {
+    debug.assert(sock.kind.listenable());
+    try syscall.listen(sock.handle, @truncate(backlog));
+}
+
+// TODO: rethink the aio to io approach
+pub fn close(sock: *const Socket, rt: *Runtime) !void {
+    if (rt.aio.features.has_capability(.close))
+        try rt.scheduler.io_await(rt.allocator, .{
+            .close = sock.handle,
+        })
+    else
+        syscall.close(sock.handle);
+}
+
+pub fn close_blocking(sock: *const Socket) void {
+    // todo: delete the unix socket if the
+    // server is being closed
+    syscall.close(sock.handle);
+}
+
+pub fn accept(sock: *const Socket, rt: *Runtime) !Socket {
+    debug.assert(sock.kind.listenable());
+    if (rt.aio.features.has_capability(.accept)) {
+        try rt.scheduler.io_await(rt.allocator, .{
+            .accept = .{
+                .socket = sock.handle,
+                .kind = sock.kind,
+            },
+        });
+
+        const index = rt.current_task.?;
+        const task = rt.scheduler.tasks.get(index);
+        return try task.result.accept.unwrap();
+    } else {
+        var addr: Socket.Address = .wildcard;
+
+        const AcceptError = results.AcceptError;
+        const socket: posix.socket_t = blk: while (true) {
+            break :blk syscall.accept(
+                sock.handle,
+                &addr,
+                if (builtin.os.tag != .windows) posix.SOCK.NONBLOCK else 0,
+            ) catch |e| return switch (e) {
+                error.WouldBlock => {
+                    Coroutine.yield();
+                    continue;
+                },
+                error.ConnectionAborted,
+                => AcceptError.ConnectionAborted,
+                error.SocketNotListening => AcceptError.NotListening,
+                error.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
+                error.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
+                else => AcceptError.Unexpected,
+            };
+        };
+
+        return .{
+            .handle = socket,
+            .addr = addr,
+            .kind = sock.kind,
+        };
+    }
+}
+
+pub fn connect(sock: *const Socket, rt: *Runtime) !void {
+    if (rt.aio.features.has_capability(.connect)) {
+        try rt.scheduler.io_await(rt.allocator, .{
+            .connect = .{
+                .socket = sock.handle,
+                .addr = sock.addr,
+                .kind = sock.kind,
+            },
+        });
+
+        const index = rt.current_task.?;
+        const task = rt.scheduler.tasks.get(index);
+        try task.result.connect.unwrap();
+    } else {
+        while (true) {
+            break syscall.connect(
+                sock.handle,
+                &sock.addr,
+            ) catch |e| return switch (e) {
+                error.WouldBlock => {
+                    Coroutine.yield();
+                    continue;
+                },
+                else => results.ConnectError.Unexpected,
+            };
+        }
+    }
+}
+
+pub fn recv(sock: *const Socket, rt: *Runtime, buffer: []u8) !usize {
+    if (rt.aio.features.has_capability(.recv)) {
+        try rt.scheduler.io_await(rt.allocator, .{
+            .recv = .{
+                .socket = sock.handle,
+                .buffer = buffer,
+            },
+        });
+
+        const index = rt.current_task.?;
+        const task = rt.scheduler.tasks.get(index);
+        return try task.result.recv.unwrap();
+    } else {
+        const count: usize = blk: while (true) {
+            break :blk syscall.recv(
+                sock.handle,
+                buffer,
+                0,
+            ) catch |e| return switch (e) {
+                error.WouldBlock => {
+                    Coroutine.yield();
+                    continue;
+                },
+                else => results.RecvError.Unexpected,
+            };
+        };
+
+        if (count == 0) return results.RecvError.Closed;
+        return count;
+    }
+}
+
+pub fn recv_all(sock: *const Socket, rt: *Runtime, buffer: []u8) !usize {
+    var length: usize = 0;
+
+    while (length < buffer.len) {
+        const result = sock.recv(rt, buffer[length..]) catch |e|
+            switch (e) {
+                error.Closed => return length,
+                else => |err| return err,
+            };
+
+        length += result;
+    }
+
+    return length;
+}
+
+pub fn send(sock: *const Socket, rt: *Runtime, buffer: []const u8) !usize {
+    if (rt.aio.features.has_capability(.send)) {
+        try rt.scheduler.io_await(rt.allocator, .{
+            .send = .{
+                .socket = sock.handle,
+                .buffer = buffer,
+            },
+        });
+
+        const index = rt.current_task.?;
+        const task = rt.scheduler.tasks.get(index);
+        return try task.result.send.unwrap();
+    } else {
+        const count: usize = blk: while (true) {
+            break :blk syscall.send(
+                sock.handle,
+                buffer,
+                0,
+            ) catch |e| return switch (e) {
+                error.WouldBlock => {
+                    Coroutine.yield();
+                    continue;
+                },
+                error.ConnectionResetByPeer,
+                error.BrokenPipe,
+                => results.SendError.Closed,
+                else => results.SendError.Unexpected,
+            };
+        };
+
+        return count;
+    }
+}
+
+pub fn send_all(sock: *const Socket, rt: *Runtime, buffer: []const u8) !usize {
+    var length: usize = 0;
+
+    while (length < buffer.len) {
+        const result = sock.send(
+            rt,
+            buffer[length..],
+        ) catch |e| switch (e) {
+            error.Closed => return length,
+            else => |err| return err,
+        };
+        length += result;
+    }
+
+    return length;
+}
+
+pub const Mode = enum(u8) {
+    client,
+    server,
+};
+
+pub const Config = struct {
+    host: []const u8,
+    port: u16,
+    mode: Mode,
+    /// defines the maximum length to which the queue of
+    /// pending connections for the socket may grow
+    backlog: u32 = 4096,
+};
+
+pub const Kind = union(enum) {
+    tcp: Config,
+    udp: Config,
+    unix: []const u8,
 
     pub fn listenable(kind: Kind) bool {
         return switch (kind) {
@@ -16,17 +311,6 @@ pub const Kind = enum {
             else => false,
         };
     }
-};
-
-const HostPort = struct {
-    host: []const u8,
-    port: u16,
-};
-
-pub const InitKind = union(Kind) {
-    tcp: HostPort,
-    udp: HostPort,
-    unix: []const u8,
 };
 
 pub const Native = extern union {
@@ -235,290 +519,14 @@ pub const Address = union(enum) {
     }
 };
 
-// TODO: we shouldn't need Io here
-pub fn init(io_: Io, kind: InitKind) !Socket {
-    const addr: Address = switch (kind) {
-        .tcp, .udp => |hostname| blk: {
-            break :blk if (comptime builtin.os.tag == .linux) .{
-                .ip = try .resolve(
-                    io_,
-                    hostname.host,
-                    hostname.port,
-                ),
-            } else .{ .ip = try .parse(hostname.host, hostname.port) };
-        },
-        // Not supported on Windows at the moment.
-        .unix => |path| if (builtin.os.tag == .windows)
-            unreachable
-        else
-            .{ .unix = try .init(path) },
-    };
-
-    return try init_with_address(kind, addr);
-}
-
-pub fn init_with_address(kind: Kind, addr: Address) !Socket {
-    const sock_type: u32 = switch (kind) {
-        .tcp, .unix => posix.SOCK.STREAM,
-        .udp => posix.SOCK.DGRAM,
-    };
-
-    const protocol: u32 = switch (kind) {
-        .tcp => posix.IPPROTO.TCP,
-        .udp => posix.IPPROTO.UDP,
-        .unix => 0,
-    };
-
-    const family: u32 = switch (addr) {
-        .ip => |ip| switch (ip) {
-            .ip4 => posix.AF.INET,
-            .ip6 => posix.AF.INET6,
-        },
-        .unix => posix.AF.UNIX,
-    };
-    const flags: u32 = if (builtin.os.tag != .windows)
-        sock_type | posix.SOCK.CLOEXEC | posix.SOCK.NONBLOCK
-    else
-        sock_type;
-
-    // TODO: audit these and posix uses across tardy
-    const socket = try syscall.socket(
-        family,
-        flags,
-        protocol,
-    );
-
-    if (kind != .unix) {
-        if (@hasDecl(posix.SO, "REUSEPORT_LB")) {
-            try syscall.setsockopt(
-                socket,
-                posix.SOL.SOCKET,
-                posix.SO.REUSEPORT_LB,
-                &mem.toBytes(@as(u32, 1)),
-            );
-        } else if (@hasDecl(posix.SO, "REUSEPORT")) {
-            try syscall.setsockopt(
-                socket,
-                posix.SOL.SOCKET,
-                posix.SO.REUSEPORT,
-                &mem.toBytes(@as(u32, 1)),
-            );
-        } else {
-            try syscall.setsockopt(
-                socket,
-                posix.SOL.SOCKET,
-                posix.SO.REUSEADDR,
-                &mem.toBytes(@as(u32, 1)),
-            );
-        }
-    }
-
-    return .{ .handle = socket, .addr = addr, .kind = kind };
-}
-
-/// Bind the current Socket
-pub fn bind(sock: Socket) !void {
-    try syscall.bind(sock.handle, &sock.addr);
-}
-
-/// Listen on the Current Socket.
-pub fn listen(sock: Socket, backlog: usize) !void {
-    debug.assert(sock.kind.listenable());
-    try syscall.listen(sock.handle, @truncate(backlog));
-}
-
-// TODO: rethink the aio to io approach
-pub fn close(sock: Socket, rt: *Runtime) !void {
-    if (rt.aio.features.has_capability(.close))
-        try rt.scheduler.io_await(rt.allocator, .{
-            .close = sock.handle,
-        })
-    else
-        syscall.close(sock.handle);
-}
-
-pub fn close_blocking(sock: Socket) void {
-    // todo: delete the unix socket if the
-    // server is being closed
-    syscall.close(sock.handle);
-}
-
-pub fn accept(sock: Socket, rt: *Runtime) !Socket {
-    debug.assert(sock.kind.listenable());
-    if (rt.aio.features.has_capability(.accept)) {
-        try rt.scheduler.io_await(rt.allocator, .{
-            .accept = .{
-                .socket = sock.handle,
-                .kind = sock.kind,
-            },
-        });
-
-        const index = rt.current_task.?;
-        const task = rt.scheduler.tasks.get(index);
-        return try task.result.accept.unwrap();
-    } else {
-        var addr: Socket.Address = .wildcard;
-
-        const AcceptError = results.AcceptError;
-        const socket: posix.socket_t = blk: while (true) {
-            break :blk syscall.accept(
-                sock.handle,
-                &addr,
-                if (builtin.os.tag != .windows) posix.SOCK.NONBLOCK else 0,
-            ) catch |e| return switch (e) {
-                error.WouldBlock => {
-                    Coroutine.yield();
-                    continue;
-                },
-                error.ConnectionAborted,
-                => AcceptError.ConnectionAborted,
-                error.SocketNotListening => AcceptError.NotListening,
-                error.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
-                error.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
-                else => AcceptError.Unexpected,
-            };
-        };
-
-        return .{
-            .handle = socket,
-            .addr = addr,
-            .kind = sock.kind,
-        };
-    }
-}
-
-pub fn connect(sock: Socket, rt: *Runtime) !void {
-    if (rt.aio.features.has_capability(.connect)) {
-        try rt.scheduler.io_await(rt.allocator, .{
-            .connect = .{
-                .socket = sock.handle,
-                .addr = sock.addr,
-                .kind = sock.kind,
-            },
-        });
-
-        const index = rt.current_task.?;
-        const task = rt.scheduler.tasks.get(index);
-        try task.result.connect.unwrap();
-    } else {
-        while (true) {
-            break syscall.connect(
-                sock.handle,
-                &sock.addr,
-            ) catch |e| return switch (e) {
-                error.WouldBlock => {
-                    Coroutine.yield();
-                    continue;
-                },
-                else => results.ConnectError.Unexpected,
-            };
-        }
-    }
-}
-
-pub fn recv(sock: Socket, rt: *Runtime, buffer: []u8) !usize {
-    if (rt.aio.features.has_capability(.recv)) {
-        try rt.scheduler.io_await(rt.allocator, .{
-            .recv = .{
-                .socket = sock.handle,
-                .buffer = buffer,
-            },
-        });
-
-        const index = rt.current_task.?;
-        const task = rt.scheduler.tasks.get(index);
-        return try task.result.recv.unwrap();
-    } else {
-        const count: usize = blk: while (true) {
-            break :blk syscall.recv(sock.handle, buffer, 0) catch |e| return switch (e) {
-                error.WouldBlock => {
-                    Coroutine.yield();
-                    continue;
-                },
-                else => results.RecvError.Unexpected,
-            };
-        };
-
-        if (count == 0) return results.RecvError.Closed;
-        return count;
-    }
-}
-
-pub fn recv_all(sock: Socket, rt: *Runtime, buffer: []u8) !usize {
-    var length: usize = 0;
-
-    while (length < buffer.len) {
-        const result = sock.recv(rt, buffer[length..]) catch |e|
-            switch (e) {
-                error.Closed => return length,
-                else => |err| return err,
-            };
-
-        length += result;
-    }
-
-    return length;
-}
-
-pub fn send(sock: Socket, rt: *Runtime, buffer: []const u8) !usize {
-    if (rt.aio.features.has_capability(.send)) {
-        try rt.scheduler.io_await(rt.allocator, .{
-            .send = .{
-                .socket = sock.handle,
-                .buffer = buffer,
-            },
-        });
-
-        const index = rt.current_task.?;
-        const task = rt.scheduler.tasks.get(index);
-        return try task.result.send.unwrap();
-    } else {
-        const count: usize = blk: while (true) {
-            break :blk syscall.send(
-                sock.handle,
-                buffer,
-                0,
-            ) catch |e| return switch (e) {
-                error.WouldBlock => {
-                    Coroutine.yield();
-                    continue;
-                },
-                error.ConnectionResetByPeer,
-                error.BrokenPipe,
-                => results.SendError.Closed,
-                else => results.SendError.Unexpected,
-            };
-        };
-
-        return count;
-    }
-}
-
-pub fn send_all(sock: Socket, rt: *Runtime, buffer: []const u8) !usize {
-    var length: usize = 0;
-
-    while (length < buffer.len) {
-        const result = sock.send(
-            rt,
-            buffer[length..],
-        ) catch |e| switch (e) {
-            error.Closed => return length,
-            else => |err| return err,
-        };
-        length += result;
-    }
-
-    return length;
-}
-
 pub const Writer = struct {
-    socket: Socket,
+    socket: *const Socket,
     err: ?anyerror = null,
     pos: u64 = 0,
     rt: *Runtime,
     interface: Io.Writer,
 
-    pub fn init(socket: Socket, rt: *Runtime, buffer: []u8) Writer {
+    pub fn init(socket: *const Socket, rt: *Runtime, buffer: []u8) Writer {
         return .{
             .socket = socket,
             .rt = rt,
@@ -580,21 +588,21 @@ pub const Writer = struct {
         file_reader: *Io.File.Reader,
         limit: Io.Limit,
     ) Io.Writer.FileError!usize {
-        _ = io_w; // autofix
-        _ = file_reader; // autofix
-        _ = limit; // autofix
+        _ = io_w;
+        _ = file_reader;
+        _ = limit;
         return error.Unimplemented;
     }
 };
 
 pub const Reader = struct {
-    socket: Socket,
+    socket: *const Socket,
     err: ?anyerror = null,
     pos: u64 = 0,
     rt: *Runtime,
     interface: Io.Reader,
 
-    pub fn init(socket: Socket, rt: *Runtime, buffer: []u8) Reader {
+    pub fn init(socket: *const Socket, rt: *Runtime, buffer: []u8) Reader {
         return .{
             .socket = socket,
             .rt = rt,
@@ -640,11 +648,11 @@ pub const Reader = struct {
     }
 };
 
-pub fn writer(sock: Socket, rt: *Runtime, buffer: []u8) Writer {
+pub fn writer(sock: *const Socket, rt: *Runtime, buffer: []u8) Writer {
     return .init(sock, rt, buffer);
 }
 
-pub fn reader(sock: Socket, rt: *Runtime, buffer: []u8) Reader {
+pub fn reader(sock: *const Socket, rt: *Runtime, buffer: []u8) Reader {
     return .init(sock, rt, buffer);
 }
 
