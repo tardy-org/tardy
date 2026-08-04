@@ -294,7 +294,7 @@ pub const Mode = enum(u8) {
 pub const Config = struct {
     host: []const u8,
     port: u16,
-    mode: Mode,
+    mode: Mode = .server,
     /// defines the maximum length to which the queue of
     /// pending connections for the socket may grow
     backlog: u32 = 4096,
