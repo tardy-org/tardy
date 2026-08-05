@@ -167,7 +167,7 @@ pub const Client = struct {
         defer chain.deinit(rt.allocator);
         errdefer unreachable;
 
-        var socket: net.Socket = try .init(rt.io, .{
+        var socket: net.Socket = try .init(.{
             .tcp = .{ .host = "127.0.0.1", .port = port },
         });
 

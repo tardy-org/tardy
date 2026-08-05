@@ -12,7 +12,7 @@ pub fn start_frame(rt: *Runtime, shared_params: *const e2e.Params) !void {
     );
     log.debug("tcp chain port: {d}", .{port});
 
-    const socket: Socket = try .init(rt.io, .{
+    const socket: Socket = try .init(.{
         .tcp = .{ .host = "127.0.0.1", .port = port },
     });
     try socket.bind();
