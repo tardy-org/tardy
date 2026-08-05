@@ -35,6 +35,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             if (comptime builtin.os.tag == .windows)
                 AsyncIO.syscall.ws2.wsaCleanup() catch unreachable;
 
+            // Other resources are deallocated in `Runtime`
             for (tardy.aios.items) |aio_impl|
                 tardy.allocator.destroy(aio_impl);
 
@@ -79,15 +80,17 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
 
         /// This is the entry into all of the runtimes.
         ///
-        /// The provided func needs to have a signature of (*Runtime, anytype) !void;
-        ///
+        /// The provided `entry_fn` needs to have a signature of
+        /// ```zig
+        /// *const fn (*Runtime, anytype) !void;
+        /// ```
         /// The provided allocator is meant to just initialize any structures that will
         /// exist throughout the lifetime of the runtime. It happens in an arena and is
         /// cleaned up after the runtime terminates.
         pub fn entry(
             tardy: *Tardy_t,
-            entry_params: anytype,
-            comptime entry_func: *const fn (*Runtime, @TypeOf(entry_params)) anyerror!void,
+            params: anytype,
+            comptime entry_fn: *const fn (*Runtime, @TypeOf(params)) anyerror!void,
         ) !void {
             const runtime_count: usize = switch (tardy.options.threading) {
                 .single => 1,
@@ -116,7 +119,10 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                 runtime_count -| 1,
             );
             defer {
-                log.debug("waiting for the remaining threads to terminate", .{});
+                log.debug(
+                    "waiting for the remaining threads to terminate",
+                    .{},
+                );
                 for (threads.items) |thread| thread.join();
                 threads.deinit(tardy.allocator);
             }
@@ -129,15 +135,15 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                     .monotonic,
                 );
                 const handle: std.Thread = try .spawn(.{}, struct {
-                    fn thread_init(
+                    fn init(
                         td: *Tardy_t,
                         parent: *AsyncIO,
-                        entry_parameters: @TypeOf(entry_params),
+                        args: @TypeOf(params),
                         count: *atomic.Value(usize),
                         total_count: usize,
                         current_id: usize,
                     ) void {
-                        var thread_rt = td.spawn_runtime(
+                        var rt = td.spawn_runtime(
                             current_id,
                             .{
                                 .parent_async = parent,
@@ -152,25 +158,25 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                             );
                             return;
                         };
-                        defer thread_rt.deinit();
+                        defer rt.deinit();
 
                         _ = count.fetchAdd(1, .acquire);
                         while (count.load(.acquire) < total_count) {}
 
-                        @call(.auto, entry_func, .{
-                            &thread_rt,
-                            entry_parameters,
+                        @call(.auto, entry_fn, .{
+                            &rt,
+                            args,
                         }) catch |e| {
                             log.err(
                                 "{d} - entry error={t}",
-                                .{ thread_rt.id, e },
+                                .{ rt.id, e },
                             );
-                            thread_rt.stop();
+                            rt.stop();
                         };
 
-                        thread_rt.run() catch |e| log.err(
+                        rt.run() catch |e| log.err(
                             "{d} - runtime error={t}",
-                            .{ thread_rt.id, e },
+                            .{ rt.id, e },
                         );
 
                         // wait for the rest to stop before cleaning ourselves up.
@@ -183,10 +189,10 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                             .awake,
                         ) catch unreachable;
                     }
-                }.thread_init, .{
+                }.init, .{
                     tardy,
                     &runtime.aio,
-                    entry_params,
+                    params,
                     &spawned_count,
                     spawning_count,
                     current_index,
@@ -198,9 +204,9 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             while (spawned_count.load(.acquire) < spawning_count) {}
             log.debug("all runtimes spawned, initalizing...", .{});
 
-            @call(.auto, entry_func, .{
+            @call(.auto, entry_fn, .{
                 &runtime,
-                entry_params,
+                params,
             }) catch |e| {
                 log.err("0 - entry error={t}", .{e});
                 runtime.stop();
@@ -208,22 +214,18 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             runtime.run() catch |e| log.err("0 - runtime error={t}", .{e});
         }
 
-        /// This spawns in and enters into the runtime
-        /// in a new Thread, allowing for more code to
-        /// execute even after the runtime spawns.
+        /// This spawns in and enters into the runtime in a new Thread, allowing for
+        /// more code to execute even after the runtime spawns.
         pub fn entry_in_new_thread(
             tardy: *Tardy_t,
-            entry_params: anytype,
-            comptime entry_func: *const fn (*Runtime, @TypeOf(entry_params)) anyerror!void,
+            params: anytype,
+            comptime entry_fn: *const fn (*Runtime, @TypeOf(params)) anyerror!void,
         ) !void {
             const handle: std.Thread = try .spawn(.{}, struct {
-                fn entry_in_new_thread(tardy_: *Tardy_t, parms: @TypeOf(entry_params)) void {
-                    tardy_.entry(
-                        parms,
-                        entry_func,
-                    ) catch unreachable;
+                fn init(td: *Tardy_t, args: @TypeOf(params)) void {
+                    td.entry(args, entry_fn) catch unreachable;
                 }
-            }.entry_in_new_thread, .{ tardy, entry_params });
+            }.init, .{ tardy, params });
             handle.detach();
         }
     };
@@ -231,7 +233,6 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
 
 const log = std.log.scoped(.tardy);
 
-// Results
 pub const Threading = union(enum) {
     single,
     multi: usize,

@@ -87,7 +87,7 @@ fn stackUsed(frame: *Coroutine) usize {
 pub fn init(
     allocator: mem.Allocator,
     comptime coroutine_fn: anytype,
-    args: anytype,
+    args: meta.ArgsTuple(@TypeOf(coroutine_fn)),
     stack_size: ?Stack,
 ) *Coroutine {
     // Allocate Frame Stack with ABI alignment
@@ -174,7 +174,10 @@ pub fn yield() void {
 }
 
 const RegisterFn = *allowzero const fn () callconv(.c) noreturn;
-fn EntryFn(comptime coroutine_fn: anytype, args: anytype) RegisterFn {
+fn EntryFn(
+    comptime coroutine_fn: anytype,
+    args: meta.ArgsTuple(@TypeOf(coroutine_fn)),
+) RegisterFn {
     const Args = @TypeOf(args);
     const Fn = struct {
         fn entry() callconv(.c) noreturn {
@@ -218,6 +221,7 @@ const log = std.log.scoped(.@"tardy/Coroutine");
 
 const std = @import("std");
 const mem = std.mem;
+const meta = std.meta;
 const debug = std.debug;
 const builtin = @import("builtin");
 

@@ -90,7 +90,7 @@ pub fn spawn(
     sched: *Scheduler,
     allocator: mem.Allocator,
     comptime coroutine_fn: anytype,
-    args: anytype,
+    args: meta.ArgsTuple(@TypeOf(coroutine_fn)),
     stack_size: ?Coroutine.Stack,
 ) !void {
     const index = blk: {
@@ -136,6 +136,7 @@ const TaskWithJob = struct {
 
 const std = @import("std");
 const mem = std.mem;
+const meta = std.meta;
 const debug = std.debug;
 
 const tardy = @import("../root.zig");

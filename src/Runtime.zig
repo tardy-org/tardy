@@ -75,7 +75,7 @@ pub fn stop(rt: *Runtime) void {
 pub fn spawn(
     rt: *Runtime,
     comptime coroutine_fn: anytype,
-    args: anytype,
+    args: meta.ArgsTuple(@TypeOf(coroutine_fn)),
     stack_size: ?Coroutine.Stack,
 ) !void {
     try rt.scheduler.spawn(
@@ -107,7 +107,8 @@ fn run_task(rt: *Runtime, task: *Task) !void {
             // stack allocated within that context, i think it should be ok?
             frame.deinit(rt.allocator);
 
-            // if we have no more tasks, we are done and can set our running status to false.
+            // if we have no more tasks, we are done and can set our running
+            // status to false.
             if (rt.scheduler.tasks.empty()) rt.running = false;
         },
         .errored => {
@@ -211,6 +212,7 @@ const Options = struct {
 
 const std = @import("std");
 const mem = std.mem;
+const meta = std.meta;
 const debug = std.debug;
 
 pub const Scheduler = @import("runtime/Scheduler.zig");
