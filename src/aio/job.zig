@@ -62,7 +62,6 @@ const AcceptJob = struct {
 const ConnectJob = struct {
     socket: net.Socket.Handle,
     addr: net.Socket.Address,
-    // TODO: kind isn't needed anymore as we are using a union
     kind: net.Socket.Kind,
 };
 

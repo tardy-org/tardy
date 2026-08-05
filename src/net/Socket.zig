@@ -4,19 +4,10 @@ handle: posix.socket_t,
 addr: Address,
 kind: Kind,
 
-// TODO: we shouldn't need Io here
-pub fn init(io: Io, kind: Kind) !Socket {
-    const addr: Address = switch (kind) {
-        .tcp, .udp => |config| blk: {
-            break :blk if (comptime builtin.os.tag == .linux) .{
-                .ip = try .resolve(
-                    io,
-                    config.host,
-                    config.port,
-                ),
-            } else .{
-                .ip = try .parse(config.host, config.port),
-            };
+pub fn init(options: Options) !Socket {
+    const addr: Address = switch (options) {
+        .tcp, .udp => |config| .{
+            .ip = try .parse(config.host, config.port),
         },
         // Not supported on Windows at the moment.
         .unix => |path| if (builtin.os.tag == .windows)
@@ -25,19 +16,14 @@ pub fn init(io: Io, kind: Kind) !Socket {
             .{ .unix = try .init(path) },
     };
 
-    return try init_with_address(kind, addr);
+    return try initWithAddress(options, addr);
 }
 
-pub fn init_with_address(kind: Kind, addr: Address) !Socket {
-    const sock_type: u32 = switch (kind) {
-        .tcp, .unix => posix.SOCK.STREAM,
-        .udp => posix.SOCK.DGRAM,
-    };
-
-    const protocol: u32 = switch (kind) {
-        .tcp => posix.IPPROTO.TCP,
-        .udp => posix.IPPROTO.UDP,
-        .unix => 0,
+pub fn initWithAddress(options: Options, addr: Address) !Socket {
+    const sock_type: u32, const protocol: u32 = switch (options) {
+        .tcp => .{ posix.SOCK.STREAM, posix.IPPROTO.TCP },
+        .udp => .{ posix.SOCK.DGRAM, posix.IPPROTO.UDP },
+        .unix => .{ posix.SOCK.STREAM, posix.IPPROTO.IP },
     };
 
     const family: u32 = switch (addr) {
@@ -47,44 +33,51 @@ pub fn init_with_address(kind: Kind, addr: Address) !Socket {
         },
         .unix => posix.AF.UNIX,
     };
+
     const flags: u32 = if (builtin.os.tag != .windows)
         sock_type | posix.SOCK.CLOEXEC | posix.SOCK.NONBLOCK
     else
         sock_type;
 
-    // TODO: audit these and posix uses across tardy
     const socket = try syscall.socket(
         family,
         flags,
         protocol,
     );
 
-    if (kind != .unix) {
-        if (@hasDecl(posix.SO, "REUSEPORT_LB")) {
-            try syscall.setsockopt(
-                socket,
-                posix.SOL.SOCKET,
-                posix.SO.REUSEPORT_LB,
-                &mem.toBytes(@as(u32, 1)),
-            );
-        } else if (@hasDecl(posix.SO, "REUSEPORT")) {
-            try syscall.setsockopt(
-                socket,
-                posix.SOL.SOCKET,
-                posix.SO.REUSEPORT,
-                &mem.toBytes(@as(u32, 1)),
-            );
-        } else {
-            try syscall.setsockopt(
-                socket,
-                posix.SOL.SOCKET,
-                posix.SO.REUSEADDR,
-                &mem.toBytes(@as(u32, 1)),
-            );
-        }
+    switch (options) {
+        else => {
+            if (@hasDecl(posix.SO, "REUSEPORT_LB")) {
+                try syscall.setsockopt(
+                    socket,
+                    posix.SOL.SOCKET,
+                    posix.SO.REUSEPORT_LB,
+                    &mem.toBytes(@as(u32, 1)),
+                );
+            } else if (@hasDecl(posix.SO, "REUSEPORT")) {
+                try syscall.setsockopt(
+                    socket,
+                    posix.SOL.SOCKET,
+                    posix.SO.REUSEPORT,
+                    &mem.toBytes(@as(u32, 1)),
+                );
+            } else {
+                try syscall.setsockopt(
+                    socket,
+                    posix.SOL.SOCKET,
+                    posix.SO.REUSEADDR,
+                    &mem.toBytes(@as(u32, 1)),
+                );
+            }
+        },
+        .unix => {},
     }
 
-    return .{ .handle = socket, .addr = addr, .kind = kind };
+    return .{
+        .handle = socket,
+        .addr = addr,
+        .kind = options.kind(),
+    };
 }
 
 /// Bind the current Socket
@@ -98,7 +91,6 @@ pub fn listen(sock: *const Socket, backlog: usize) !void {
     try syscall.listen(sock.handle, @truncate(backlog));
 }
 
-// TODO: rethink the aio to io approach
 pub fn close(sock: *const Socket, rt: *Runtime) !void {
     if (rt.aio.features.has_capability(.close))
         try rt.scheduler.io_await(rt.allocator, .{
@@ -300,10 +292,20 @@ pub const Config = struct {
     backlog: u32 = 4096,
 };
 
-pub const Kind = union(enum) {
+pub const Options = union(Kind) {
     tcp: Config,
     udp: Config,
     unix: []const u8,
+
+    pub fn kind(options: Options) Kind {
+        return @fromBackingInt(@backingInt(options));
+    }
+};
+
+pub const Kind = enum(u8) {
+    tcp,
+    udp,
+    unix,
 
     pub fn listenable(kind: Kind) bool {
         return switch (kind) {
