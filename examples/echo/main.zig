@@ -54,7 +54,6 @@ pub fn main(init: std.process.Init) !void {
     const port = 9862;
 
     const server: Socket = try .init(
-        init.io,
         .{ .tcp = .{ .host = host, .port = port } },
     );
     try server.bind();

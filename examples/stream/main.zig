@@ -47,7 +47,7 @@ pub fn main(init: std.process.Init) !void {
     const host = "0.0.0.0";
     const port = 9862;
 
-    const server: Socket = try .init(init.io, .{ .tcp = .{ .host = host, .port = port } });
+    const server: Socket = try .init(.{ .tcp = .{ .host = host, .port = port } });
     try server.bind();
     try server.listen(1024);
 
