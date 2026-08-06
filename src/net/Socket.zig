@@ -100,6 +100,31 @@ fn disable_nagle(socket: Socket.Handle) !void {
     }
 }
 
+/// Sets the `std.posix.socket_t` to nonblocking.
+pub fn enable_nonblocking(socket: Socket.Handle) !void {
+    if (comptime builtin.os.tag == .windows) {
+        var mode: u32 = 1;
+        _ = syscall.ws2.ioctlsocket(
+            socket,
+            syscall.ws2.FIONBIO,
+            &mode,
+        );
+    } else {
+        const current_flags = try syscall.fcntl(
+            socket,
+            std.posix.F.GETFL,
+            0,
+        );
+        var new_flags = @as(
+            std.posix.O,
+            @bitCast(@as(u32, @intCast(current_flags))),
+        );
+        new_flags.NONBLOCK = true;
+        const arg: u32 = @bitCast(new_flags);
+        _ = try syscall.fcntl(socket, std.posix.F.SETFL, arg);
+    }
+}
+
 /// Bind the current Socket
 pub fn bind(sock: *const Socket) !void {
     try syscall.bind(sock.handle, &sock.addr);
