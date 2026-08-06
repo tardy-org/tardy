@@ -27,8 +27,6 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Kqueue {
     );
 
     const index = jobs.borrow_assume_unset(0);
-    errdefer jobs.release(index);
-
     const item = jobs.get_ptr(index);
     item.* = .{
         .index = 0,
