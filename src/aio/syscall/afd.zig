@@ -167,7 +167,7 @@ pub fn netListenIpWindows(
 
 pub fn netConnectIpWindows(
     socket: windows.HANDLE,
-    address: *const Socket.Address,
+    addr: *const Socket.Address,
 ) IpAddress.ConnectError!void {
     try setSocketOptionAfd(
         socket,
@@ -192,25 +192,11 @@ pub fn netConnectIpWindows(
         Reserved0: [3]usize = @splat(0),
         Socket: Socket.Native,
     };
-    var storage: Storage = .{ .Socket = undefined };
+    var storage: Storage = .{ .Socket = .{ .any = addr.any } };
 
-    const addr_len: usize = blk: switch (address.*) {
-        .ip => |ip| switch (ip) {
-            .ip4 => {
-                const sock = address.toNative();
-                storage.Socket.in = sock.in;
-                break :blk @sizeOf(ws2_32.sockaddr.in);
-            },
-            .ip6 => {
-                const sock = address.toNative();
-                storage.Socket.in6 = sock.in6;
-                break :blk @sizeOf(ws2_32.sockaddr.in6);
-            },
-        },
-        else => unreachable,
-    };
-
-    const connect_in_opt = @as([]const u8, @ptrCast(&storage))[0 .. @offsetOf(Storage, "Socket") + addr_len];
+    const connect_in_opt = @as([]const u8, @ptrCast(
+        &storage,
+    ))[0 .. @offsetOf(Storage, "Socket") + addr.len];
 
     switch ((try deviceIoControl(&.{
         .file = .{
@@ -318,8 +304,8 @@ fn deferAcceptAfd(listen_handle: net.Socket.Handle, info: windows.AFD.LISTEN_RES
 }
 
 pub fn bindSocketIpAfd(
-    socket_handle: net.Socket.Handle,
-    sock_addr: *const Socket.Address,
+    socket: net.Socket.Handle,
+    addr: *const Socket.Address,
     mode: windows.AFD.BIND_INFO.MODE,
 ) BindError!Socket.Address {
     const Storage = extern struct {
@@ -328,33 +314,19 @@ pub fn bindSocketIpAfd(
     };
     var storage: Storage = .{
         .Info = .{ .Mode = mode },
-        .Socket = undefined,
+        .Socket = .{ .any = addr.any },
     };
 
-    const sock_len: usize = blk: switch (sock_addr.*) {
-        .ip => |addr| switch (addr) {
-            .ip4 => {
-                const sock = sock_addr.toNative();
-                storage.Socket.in = sock.in;
-                break :blk @sizeOf(ws2_32.sockaddr.in);
-            },
-            .ip6 => {
-                const sock = sock_addr.toNative();
-                storage.Socket.in6 = sock.in6;
-                break :blk @sizeOf(ws2_32.sockaddr.in6);
-            },
-        },
-        // unix not supported yet
-        else => unreachable,
-    };
+    const bind_in_opt = @as([]const u8, @ptrCast(&storage))[0 .. @offsetOf(
+        Storage,
+        "Socket",
+    ) + addr.len];
 
-    const bind_in_opt = @as([]const u8, @ptrCast(&storage))[0 .. @offsetOf(Storage, "Socket") + sock_len];
-
-    const bind_out_opt = @as([]u8, @ptrCast(&storage.Socket))[0..sock_len];
+    const bind_out_opt = @as([]u8, @ptrCast(&storage.Socket))[0..addr.len];
 
     switch ((try deviceIoControl(&.{
         .file = .{
-            .handle = socket_handle,
+            .handle = socket,
             .flags = .{ .nonblocking = true },
         },
         .code = windows.IOCTL.AFD.BIND,
@@ -367,7 +339,7 @@ pub fn bindSocketIpAfd(
         .SHARING_VIOLATION => return error.AddressInUse,
         else => |status| return windows.unexpectedStatus(status),
     }
-    return storage.Socket.toAddress();
+    return .{ .any = storage.Socket.any, .len = addr.len };
 }
 
 pub const SetSockError = error{
