@@ -1,6 +1,6 @@
 pub const Socket = @This();
 
-handle: posix.socket_t,
+handle: Socket.Handle,
 addr: Address,
 kind: Kind,
 
@@ -46,7 +46,9 @@ pub fn initWithAddress(options: Options, addr: Address) !Socket {
     );
 
     switch (options) {
-        else => {
+        .tcp, .udp => |config| {
+            if (config.disable_nagle) try disable_nagle(socket);
+
             if (@hasDecl(posix.SO, "REUSEPORT_LB")) {
                 try syscall.setsockopt(
                     socket,
@@ -78,6 +80,19 @@ pub fn initWithAddress(options: Options, addr: Address) !Socket {
         .addr = addr,
         .kind = options.kind(),
     };
+}
+
+fn disable_nagle(socket: Socket.Handle) !void {
+    if (comptime builtin.os.tag != .windows) {
+        try syscall.setsockopt(
+            socket,
+            std.posix.IPPROTO.TCP,
+            std.posix.TCP.NODELAY,
+            &std.mem.toBytes(@as(c_int, 1)),
+        );
+    } else {
+        // TODO: implement TCP.NODELAY on windows
+    }
 }
 
 /// Bind the current Socket
@@ -290,6 +305,10 @@ pub const Config = struct {
     /// defines the maximum length to which the queue of
     /// pending connections for the socket may grow
     backlog: u32 = 4096,
+    /// Set `TCP_NODELAY` which allows segments of data to be sent as soon
+    /// as possible even if there is only a small amount of data
+    /// https://brooker.co.za/blog/2024/05/09/nagle.html
+    disable_nagle: bool = true,
 };
 
 pub const Options = union(Kind) {
