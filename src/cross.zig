@@ -1,6 +1,8 @@
 //! Cross-platform abstractions.
 //! For the `std.posix` interface types.
 
+//TODO: move all fns and modules here to appropriate modules
+
 /// Get the `fd_t` for `stdin`.
 pub fn get_std_in() std.posix.fd_t {
     return File.stdin().handle;

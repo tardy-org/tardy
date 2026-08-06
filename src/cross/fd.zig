@@ -10,7 +10,11 @@ pub fn to_nonblock(fd: std.posix.fd_t) !void {
     if (comptime os == .windows) {
         // windows doesn't have non-blocking I/O w/o overlapped.
     } else {
-        const current_flags = try syscall.fcntl(fd, std.posix.F.GETFL, 0);
+        const current_flags = try syscall.fcntl(
+            fd,
+            std.posix.F.GETFL,
+            0,
+        );
         var new_flags: std.posix.O = @bitCast(@as(u32, @intCast(current_flags)));
         new_flags.NONBLOCK = true;
         const arg: u32 = @bitCast(new_flags);
