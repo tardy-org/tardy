@@ -191,12 +191,15 @@ pub fn socket(domain: u32, socket_type: u32, protocol: u32) SocketError!socket_t
             }
             break rc;
         };
-
         errdefer ws2.closesock(rc) catch unreachable;
 
         // set SOCK.NONBLOCK by default
         var mode: c_ulong = 1; // nonblocking
-        if (ws2.SOCKET_ERROR == ws2.ioctlsocket(rc, ws2.FIONBIO, &mode)) {
+        if (ws2.SOCKET_ERROR == ws2.ioctlsocket(
+            rc,
+            ws2.FIONBIO,
+            &mode,
+        )) {
             switch (ws2.WSAGetLastError()) {
                 // have not identified any error codes that should be handled yet
                 else => unreachable,
@@ -205,12 +208,16 @@ pub fn socket(domain: u32, socket_type: u32, protocol: u32) SocketError!socket_t
         return rc;
     }
 
-    const have_sock_flags = !builtin.target.os.tag.isDarwin() and native_os != .haiku;
+    const have_sock_flags = !builtin.target.os.tag.isDarwin() and
+        native_os != .haiku;
+
     const filtered_sock_type = if (!have_sock_flags)
         socket_type & ~@as(u32, SOCK.NONBLOCK | SOCK.CLOEXEC)
     else
         socket_type;
+
     const rc = system.socket(domain, filtered_sock_type, protocol);
+
     switch (posix.errno(rc)) {
         .SUCCESS => {
             const fd: posix.socket_t = @intCast(rc);
@@ -244,9 +251,8 @@ pub const BindError = error{
 
 pub fn bind(sock: posix.socket_t, addr: *const Socket.Address) (BindError ||
     afd.BindError)!void {
-    const sock_any, const sock_len = addr.toPosix();
     if (native_os == .windows) {
-        const rc = ws2.bind(sock, &sock_any, @intCast(sock_len));
+        const rc = ws2.bind(sock, &addr.any, @intCast(addr.len));
         if (rc == ws2.SOCKET_ERROR) {
             switch (ws2.WSAGetLastError()) {
                 .NOTINITIALISED => unreachable, // not initialized WSA
@@ -267,8 +273,8 @@ pub fn bind(sock: posix.socket_t, addr: *const Socket.Address) (BindError ||
 
     const rc = system.bind(
         sock,
-        &sock_any,
-        sock_len,
+        &addr.any,
+        addr.len,
     );
     switch (posix.errno(rc)) {
         .SUCCESS => return,
@@ -354,17 +360,12 @@ pub fn accept(
     addr: ?*Socket.Address,
     flags: u32,
 ) AcceptError!Socket.Handle {
-    var sockaddr: posix.sockaddr, var addr_len: u32 = blk: {
-        if (addr) |addr_|
-            break :blk addr_.toPosix()
-        else {
-            const sockaddr: posix.sockaddr = undefined;
-            break :blk .{ sockaddr, 0 };
-        }
-    };
-
     if (native_os == .windows) while (true) {
-        const rc = ws2.accept(sock, if (addr_len == 0) null else &sockaddr, if (addr_len == 0) null else @ptrCast(&addr_len));
+        const rc = ws2.accept(
+            sock,
+            if (addr) |address| &address.any else null,
+            if (addr) |address| @ptrCast(&address.len) else null,
+        );
         errdefer ws2.closesock(rc) catch unreachable;
 
         if (rc == ws2.INVALID_SOCKET) {
@@ -386,19 +387,25 @@ pub fn accept(
         }
     };
 
-    const have_accept4 = !(builtin.target.os.tag.isDarwin() or native_os == .windows or native_os == .haiku);
+    const have_accept4 = !(builtin.target.os.tag.isDarwin() or
+        native_os == .windows or native_os == .haiku);
     // Unsupported flag(s)
     debug.assert(0 == (flags & ~@as(u32, SOCK.NONBLOCK | SOCK.CLOEXEC)));
 
-    defer if (addr) |addr_| {
-        addr_.* = Socket.Address.fromAny(&sockaddr);
-    };
-
     const accepted_sock: socket_t = while (true) {
         const rc = if (have_accept4)
-            system.accept4(sock, &sockaddr, &addr_len, flags)
+            system.accept4(
+                sock,
+                if (addr) |address| &address.any else null,
+                if (addr) |address| &address.len else null,
+                flags,
+            )
         else
-            system.accept(sock, &sockaddr, &addr_len);
+            system.accept(
+                sock,
+                if (addr) |address| &address.any else null,
+                if (addr) |address| &address.len else null,
+            );
 
         switch (posix.errno(rc)) {
             .SUCCESS => break @intCast(rc),
@@ -444,7 +451,11 @@ pub const GetSockNameError = error{
 pub fn getsockname(sock: socket_t, addr: *posix.sockaddr, addrlen: *posix.socklen_t) GetSockNameError!void {
     // Add a windows native implemenation
     if (native_os == .windows) {
-        const rc = ws2.getsockname(sock, addr, @ptrCast(addrlen));
+        const rc = ws2.getsockname(
+            sock,
+            addr,
+            @ptrCast(addrlen),
+        );
         if (rc == ws2.SOCKET_ERROR) {
             switch (ws2.WSAGetLastError()) {
                 .NOTINITIALISED => unreachable,
@@ -551,20 +562,41 @@ pub const ConnectError = IpAddress.ConnectError || net.UnixAddress.ConnectError;
 
 pub fn connect(
     sock: socket_t,
-    sock_addr: *const Socket.Address,
+    addr: *const Socket.Address,
 ) ConnectError!void {
     if (native_os == .windows) {
-        return afd.netConnectIpWindows(
+        const rc = ws2.connect(
             sock,
-            sock_addr,
-        ) catch |err| switch (err) {
-            error.Canceled => unreachable,
-            else => |e| return e,
-        };
+            &addr.any,
+            @intCast(addr.len),
+        );
+        if (rc == 0) return;
+        switch (ws2.WSAGetLastError()) {
+            .EADDRNOTAVAIL => return error.AddressUnavailable,
+            .ECONNREFUSED => return error.ConnectionRefused,
+            .ECONNRESET => return error.ConnectionResetByPeer,
+            .ETIMEDOUT => return error.Timeout,
+            // TODO: should we return NetworkUnreachable in this case as well?
+            .EHOSTUNREACH, .ENETUNREACH => return error.NetworkUnreachable,
+            .EWOULDBLOCK => return error.WouldBlock,
+            .ENOBUFS => return error.SystemResources,
+            .EAFNOSUPPORT => return error.AddressFamilyUnsupported,
+            .EADDRINUSE => unreachable,
+            .EFAULT => unreachable,
+            .EINVAL => unreachable,
+            .EISCONN => unreachable,
+            .ENOTSOCK => unreachable,
+            .EACCES => unreachable,
+            else => |err| return ws2.unexpectedWSAError(err),
+        }
+        return;
     }
-    const sock_any, const sock_len = sock_addr.toPosix();
     while (true) {
-        switch (posix.errno(system.connect(sock, &sock_any, sock_len))) {
+        switch (posix.errno(system.connect(
+            sock,
+            &addr.any,
+            addr.len,
+        ))) {
             .SUCCESS => return,
             .ACCES => return error.AccessDenied,
             .PERM => return error.PermissionDenied,
@@ -577,7 +609,7 @@ pub fn connect(
             .CONNRESET => return error.ConnectionResetByPeer,
             .FAULT => unreachable, // The socket structure address is outside the user's address space.
             .INTR => continue,
-            .ISCONN => @panic("AlreadyConnected"), // The socket is already connected.
+            .ISCONN => unreachable, // The socket is already connected.
             .HOSTUNREACH => return error.NetworkUnreachable,
             .NETUNREACH => return error.NetworkUnreachable,
             .NOTSOCK => unreachable, // The file descriptor sockfd does not refer to a socket.
@@ -977,7 +1009,11 @@ fn setSockFlags(sock: socket_t, flags: u32) !void {
             // CLOEXEC matches WSA_FLAG_NO_HANDLE_INHERIT
             // TODO: Find out if this is supported for sockets
         } else {
-            var fd_flags = fcntl(sock, F.GETFD, 0) catch |err| switch (err) {
+            var fd_flags = fcntl(
+                sock,
+                F.GETFD,
+                0,
+            ) catch |err| switch (err) {
                 error.FileBusy => unreachable,
                 error.Locked => unreachable,
                 error.PermissionDenied => unreachable,
@@ -1001,9 +1037,18 @@ fn setSockFlags(sock: socket_t, flags: u32) !void {
         if (native_os == .windows) {
             // AFD-internal option — not the same as the Winsock SO_ values
             const AFD_SO_NONBLOCKING = 0x08; // AFD-level optname
-            try afd.setSocketOptionAfd(sock, windows.ws2_32.SOL.SOCKET, AFD_SO_NONBLOCKING, 1);
+            try afd.setSocketOptionAfd(
+                sock,
+                windows.ws2_32.SOL.SOCKET,
+                AFD_SO_NONBLOCKING,
+                1,
+            );
         } else {
-            var fl_flags = fcntl(sock, F.GETFL, 0) catch |err| switch (err) {
+            var fl_flags = fcntl(
+                sock,
+                F.GETFL,
+                0,
+            ) catch |err| switch (err) {
                 error.FileBusy => unreachable,
                 error.Locked => unreachable,
                 error.PermissionDenied => unreachable,
@@ -1012,14 +1057,15 @@ fn setSockFlags(sock: socket_t, flags: u32) !void {
                 else => |e| return e,
             };
             fl_flags |= 1 << @bitOffsetOf(O, "NONBLOCK");
-            _ = fcntl(sock, F.SETFL, fl_flags) catch |err| switch (err) {
-                error.FileBusy => unreachable,
-                error.Locked => unreachable,
-                error.PermissionDenied => unreachable,
-                error.DeadLock => unreachable,
-                error.LockedRegionLimitExceeded => unreachable,
-                else => |e| return e,
-            };
+            _ = fcntl(sock, F.SETFL, fl_flags) catch |err|
+                switch (err) {
+                    error.FileBusy => unreachable,
+                    error.Locked => unreachable,
+                    error.PermissionDenied => unreachable,
+                    error.DeadLock => unreachable,
+                    error.LockedRegionLimitExceeded => unreachable,
+                    else => |e| return e,
+                };
         }
     }
 }

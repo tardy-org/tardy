@@ -5,7 +5,7 @@ addr: Address,
 kind: Kind,
 
 pub fn init(options: Options) !Socket {
-    const addr: Address = switch (options) {
+    const addr: Address.Config = switch (options) {
         .tcp, .udp => |config| .{
             .ip = try .parse(config.host, config.port),
         },
@@ -19,7 +19,7 @@ pub fn init(options: Options) !Socket {
     return try initWithAddress(options, addr);
 }
 
-pub fn initWithAddress(options: Options, addr: Address) !Socket {
+pub fn initWithAddress(options: Options, addr: Address.Config) !Socket {
     const sock_type: u32, const protocol: u32 = switch (options) {
         .tcp => .{ posix.SOCK.STREAM, posix.IPPROTO.TCP },
         .udp => .{ posix.SOCK.DGRAM, posix.IPPROTO.UDP },
@@ -75,9 +75,14 @@ pub fn initWithAddress(options: Options, addr: Address) !Socket {
         .unix => {},
     }
 
+    const sockaddr, const socklen = addr.toPosix();
+
     return .{
         .handle = socket,
-        .addr = addr,
+        .addr = .{
+            .any = sockaddr,
+            .len = socklen,
+        },
         .kind = options.kind(),
     };
 }
@@ -92,6 +97,31 @@ fn disable_nagle(socket: Socket.Handle) !void {
         );
     } else {
         // TODO: implement TCP.NODELAY on windows
+    }
+}
+
+/// Sets the `std.posix.socket_t` to nonblocking.
+pub fn enable_nonblocking(socket: Socket.Handle) !void {
+    if (comptime builtin.os.tag == .windows) {
+        var mode: u32 = 1;
+        _ = syscall.ws2.ioctlsocket(
+            socket,
+            syscall.ws2.FIONBIO,
+            &mode,
+        );
+    } else {
+        const current_flags = try syscall.fcntl(
+            socket,
+            std.posix.F.GETFL,
+            0,
+        );
+        var new_flags = @as(
+            std.posix.O,
+            @bitCast(@as(u32, @intCast(current_flags))),
+        );
+        new_flags.NONBLOCK = true;
+        const arg: u32 = @bitCast(new_flags);
+        _ = try syscall.fcntl(socket, std.posix.F.SETFL, arg);
     }
 }
 
@@ -135,10 +165,14 @@ pub fn accept(sock: *const Socket, rt: *Runtime) !Socket {
         const task = rt.scheduler.tasks.get(index);
         return try task.result.accept.unwrap();
     } else {
-        var addr: Socket.Address = .wildcard;
+        var addr: Socket.Address = switch (sock.addr.family()) {
+            .ip4 => .wildcard,
+            .ip6 => .wildcard64,
+            else => unreachable,
+        };
 
         const AcceptError = results.AcceptError;
-        const socket: posix.socket_t = blk: while (true) {
+        const new_handle: posix.socket_t = blk: while (true) {
             break :blk syscall.accept(
                 sock.handle,
                 &addr,
@@ -158,7 +192,7 @@ pub fn accept(sock: *const Socket, rt: *Runtime) !Socket {
         };
 
         return .{
-            .handle = socket,
+            .handle = new_handle,
             .addr = addr,
             .kind = sock.kind,
         };
@@ -169,9 +203,7 @@ pub fn connect(sock: *const Socket, rt: *Runtime) !void {
     if (rt.aio.features.has_capability(.connect)) {
         try rt.scheduler.io_await(rt.allocator, .{
             .connect = .{
-                .socket = sock.handle,
-                .addr = sock.addr,
-                .kind = sock.kind,
+                .socket = sock,
             },
         });
 
@@ -339,205 +371,166 @@ pub const Native = extern union {
     in: posix.sockaddr.in,
     in6: posix.sockaddr.in6,
     un: posix.sockaddr.un,
-
-    pub fn toAddress(addr: Native) Address {
-        return switch (addr.any.family) {
-            posix.AF.INET => .{
-                .ip = .{
-                    .ip4 = .{
-                        .port = mem.bigToNative(u16, addr.in.port),
-                        .bytes = @bitCast(addr.in.addr),
-                    },
-                },
-            },
-            posix.AF.INET6 => .{
-                .ip = .{
-                    .ip6 = .{
-                        .port = mem.bigToNative(u16, addr.in6.port),
-                        .bytes = addr.in6.addr,
-                        .flow = addr.in6.flowinfo,
-                        .interface = .{
-                            .index = addr.in6.scope_id,
-                        },
-                    },
-                },
-            },
-            posix.AF.UNIX => .{
-                .unix = .{
-                    .path = mem.sliceTo(&addr.un.path, 0x0),
-                },
-            },
-            else => unreachable,
-        };
-    }
 };
 
-pub const Address = union(enum) {
-    ip: net.IpAddress,
-    unix: net.UnixAddress,
+pub const Address = extern struct {
+    any: posix.sockaddr,
+    len: posix.socklen_t,
 
-    pub const wildcard: Address = .{
-        .ip = .{
-            .ip4 = .{
-                .port = 0,
-                .bytes = @splat(0x0),
-            },
-        },
+    pub const localhost: Address = blk: {
+        const loopback: [4]u8 = .{ 127, 0, 0, 1 };
+        const in: posix.sockaddr.in = .{
+            .addr = @bitCast(loopback),
+            .port = 0,
+        };
+        const addr: posix.sockaddr = @as(
+            *const posix.sockaddr,
+            @ptrCast(@alignCast(&in)),
+        ).*;
+
+        var ip4: Address = mem.zeroes(Address);
+        ip4.len = @sizeOf(posix.sockaddr.in);
+        ip4.any = addr;
+        break :blk ip4;
     };
 
-    pub const wildcard64: Address = .{
-        .ip = .{
-            .ip6 = .{
-                .port = 0,
-                .bytes = @splat(0x0),
-            },
-        },
+    pub const wildcard: Address = blk: {
+        var ip4: Address = mem.zeroes(Address);
+        ip4.any.family = posix.AF.INET;
+        ip4.len = @sizeOf(posix.sockaddr.in);
+        break :blk ip4;
     };
 
-    pub fn format(a: Address, w: *Io.Writer) Io.Writer.Error!void {
-        switch (a) {
-            .ip => |ip| try ip.format(w),
-            .unix => |unix| {
-                try w.print("{s}", .{unix.path});
-            },
-        }
-    }
+    pub const Family = enum(u8) {
+        ip4 = posix.AF.INET,
+        ip6 = posix.AF.INET6,
+        unix = posix.AF.UNIX,
+    };
 
-    pub const Family = enum {
-        ip4,
-        ip6,
-        unix,
+    pub const wildcard64: Address = blk: {
+        var ip6: Address = mem.zeroes(Address);
+        ip6.any.family = posix.AF.INET6;
+        ip6.len = @sizeOf(posix.sockaddr.in6);
+        break :blk ip6;
     };
 
     pub fn family(addr: Address) Family {
-        return switch (addr) {
-            .ip => |ip| switch (ip) {
-                .ip4 => .ip4,
-                .ip6 => .ip6,
-            },
-            .unix => .unix,
+        return switch (addr.any.family) {
+            posix.AF.INET => .ip4,
+            posix.AF.INET6 => .ip6,
+            posix.AF.UNIX => .unix,
+            else => unreachable,
         };
     }
-
-    pub fn toNative(addr: Address) Native {
-        switch (addr) {
-            .ip => |ip| {
-                switch (ip) {
-                    .ip4 => |ip4| {
-                        const saddr: posix.sockaddr.in = .{
-                            .addr = @bitCast(ip4.bytes),
-                            .port = mem.nativeToBig(u16, ip4.port),
-                        };
-                        return .{ .in = saddr };
-                    },
-                    .ip6 => |ip6| {
-                        const saddr: posix.sockaddr.in6 = .{
-                            .addr = ip6.bytes,
-                            .flowinfo = ip6.flow,
-                            .scope_id = ip6.interface.index,
-                            .port = mem.nativeToBig(u16, ip6.port),
-                        };
-                        return .{ .in6 = saddr };
-                    },
-                }
-            },
-            .unix => |unix| {
-                var saddr: posix.sockaddr.un = .{
-                    .path = @splat(0x0),
-                };
-                @memcpy(saddr.path[0..unix.path.len], unix.path[0..]);
-                return .{ .un = saddr };
-            },
-        }
+    pub fn format(addr: Address, w: *Io.Writer) Io.Writer.Error!void {
+        const address: Address.Config = .fromAny(&addr.any);
+        try address.format(w);
     }
 
-    pub fn fromAny(addr: *const posix.sockaddr) Address {
-        switch (addr.family) {
-            posix.AF.INET => {
-                const sock = @as(*const posix.sockaddr.in, @ptrCast(@alignCast(
-                    addr,
-                ))).*;
-                return .{
-                    .ip = .{
-                        .ip4 = .{
-                            .port = mem.bigToNative(u16, sock.port),
-                            .bytes = @bitCast(sock.addr),
+    const Config = union(enum) {
+        ip: net.IpAddress,
+        unix: net.UnixAddress,
+
+        pub fn format(a: Address.Config, w: *Io.Writer) Io.Writer.Error!void {
+            switch (a) {
+                .ip => |ip| try ip.format(w),
+                .unix => |unix| {
+                    try w.print("{s}", .{unix.path});
+                },
+            }
+        }
+
+        pub fn fromAny(addr: *const posix.sockaddr) Address.Config {
+            switch (addr.family) {
+                posix.AF.INET => {
+                    const sock = @as(*const posix.sockaddr.in, @ptrCast(@alignCast(
+                        addr,
+                    ))).*;
+                    return .{
+                        .ip = .{
+                            .ip4 = .{
+                                .port = mem.bigToNative(u16, sock.port),
+                                .bytes = @bitCast(sock.addr),
+                            },
                         },
-                    },
-                };
-            },
-            posix.AF.INET6 => {
-                const sock6 = @as(*const posix.sockaddr.in6, @ptrCast(@alignCast(
-                    addr,
-                ))).*;
-                return .{
-                    .ip = .{
-                        .ip6 = .{
-                            .port = mem.bigToNative(u16, sock6.port),
-                            .flow = sock6.flowinfo,
-                            .interface = .{ .index = sock6.scope_id },
-                            .bytes = sock6.addr,
+                    };
+                },
+                posix.AF.INET6 => {
+                    const sock6 = @as(*const posix.sockaddr.in6, @ptrCast(@alignCast(
+                        addr,
+                    ))).*;
+                    return .{
+                        .ip = .{
+                            .ip6 = .{
+                                .port = mem.bigToNative(u16, sock6.port),
+                                .flow = sock6.flowinfo,
+                                .interface = .{ .index = sock6.scope_id },
+                                .bytes = sock6.addr,
+                            },
                         },
-                    },
-                };
-            },
-            posix.AF.UNIX => {
-                const sockun = @as(*const posix.sockaddr.un, @ptrCast(@alignCast(
-                    addr,
-                ))).*;
-                return .{
-                    .unix = .{
-                        .path = mem.sliceTo(&sockun.path, 0x0),
-                    },
-                };
-            },
-            else => unreachable,
+                    };
+                },
+                posix.AF.UNIX => {
+                    const sockun = @as(*const posix.sockaddr.un, @ptrCast(@alignCast(
+                        addr,
+                    ))).*;
+                    return .{
+                        .unix = .{
+                            .path = mem.sliceTo(&sockun.path, 0x0),
+                        },
+                    };
+                },
+                else => unreachable,
+            }
         }
-    }
 
-    pub fn toPosix(addr: *const Address) struct { posix.sockaddr, posix.socklen_t } {
-        switch (addr.*) {
-            .ip => |ip| {
-                switch (ip) {
-                    .ip4 => |ip4| {
-                        const saddr: posix.sockaddr.in = .{
-                            .addr = @bitCast(ip4.bytes),
-                            .port = mem.nativeToBig(u16, ip4.port),
-                        };
-                        const addr_: posix.sockaddr = @as(
-                            *const posix.sockaddr,
-                            @ptrCast(@alignCast(&saddr)),
-                        ).*;
-                        return .{ addr_, @sizeOf(@TypeOf(saddr)) };
-                    },
-                    .ip6 => |ip6| {
-                        const saddr: posix.sockaddr.in6 = .{
-                            .addr = ip6.bytes,
-                            .flowinfo = ip6.flow,
-                            .scope_id = ip6.interface.index,
-                            .port = mem.nativeToBig(u16, ip6.port),
-                        };
-                        const addr_: posix.sockaddr = @as(
-                            *const posix.sockaddr,
-                            @ptrCast(@alignCast(&saddr)),
-                        ).*;
-                        return .{ addr_, @sizeOf(@TypeOf(saddr)) };
-                    },
-                }
-            },
-            .unix => |unix| {
-                var saddr: posix.sockaddr.un = .{
-                    .path = @splat(0x0),
-                };
-                @memcpy(saddr.path[0..unix.path.len], unix.path[0..]);
-                const addr_: posix.sockaddr = @as(
-                    *const posix.sockaddr,
-                    @ptrCast(@alignCast(&saddr)),
-                ).*;
-                return .{ addr_, @sizeOf(@TypeOf(saddr)) };
-            },
+        pub fn toPosix(addr: *const Address.Config) struct {
+            posix.sockaddr,
+            posix.socklen_t,
+        } {
+            switch (addr.*) {
+                .ip => |ip| {
+                    switch (ip) {
+                        .ip4 => |ip4| {
+                            const saddr: posix.sockaddr.in = .{
+                                .addr = @bitCast(ip4.bytes),
+                                .port = mem.nativeToBig(u16, ip4.port),
+                            };
+                            const addr_: posix.sockaddr = @as(
+                                *const posix.sockaddr,
+                                @ptrCast(@alignCast(&saddr)),
+                            ).*;
+                            return .{ addr_, @sizeOf(@TypeOf(saddr)) };
+                        },
+                        .ip6 => |ip6| {
+                            const saddr: posix.sockaddr.in6 = .{
+                                .addr = ip6.bytes,
+                                .flowinfo = ip6.flow,
+                                .scope_id = ip6.interface.index,
+                                .port = mem.nativeToBig(u16, ip6.port),
+                            };
+                            const addr_: posix.sockaddr = @as(
+                                *const posix.sockaddr,
+                                @ptrCast(@alignCast(&saddr)),
+                            ).*;
+                            return .{ addr_, @sizeOf(@TypeOf(saddr)) };
+                        },
+                    }
+                },
+                .unix => |unix| {
+                    var saddr: posix.sockaddr.un = .{
+                        .path = @splat(0x0),
+                    };
+                    @memcpy(saddr.path[0..unix.path.len], unix.path[0..]);
+                    const addr_: posix.sockaddr = @as(
+                        *const posix.sockaddr,
+                        @ptrCast(@alignCast(&saddr)),
+                    ).*;
+                    return .{ addr_, @sizeOf(@TypeOf(saddr)) };
+                },
+            }
         }
-    }
+    };
 };
 
 pub const Writer = struct {
