@@ -27,6 +27,8 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Kqueue {
     );
 
     const index = jobs.borrow_assume_unset(0);
+    errdefer jobs.release(index);
+
     const item = jobs.get_ptr(index);
     item.* = .{
         .index = 0,
@@ -95,8 +97,6 @@ pub fn queue_job(
             allocator,
             task,
             connect.socket,
-            connect.addr,
-            connect.kind,
         ),
         .recv => |recv| kqueue.queue_recv(
             allocator,
@@ -127,7 +127,6 @@ fn queue_timer(
     errdefer kqueue.jobs.release(index);
 
     const item = kqueue.jobs.get_ptr(index);
-
     item.* = .{
         .index = index,
         .type = .{ .timer = .none },
@@ -167,9 +166,11 @@ fn queue_accept(
         .index = index,
         .type = .{
             .accept = .{
-                .socket = socket,
-                .addr = .wildcard,
-                .kind = kind,
+                .socket = .{
+                    .handle = socket,
+                    .addr = .wildcard,
+                    .kind = kind,
+                },
             },
         },
         .task = task,
@@ -194,10 +195,7 @@ fn queue_connect(
     kqueue: *Kqueue,
     allocator: mem.Allocator,
     task: usize,
-    socket: net.Socket.Handle,
-    // TODO: take *const
-    addr: net.Socket.Address,
-    kind: net.Socket.Kind,
+    socket: *const net.Socket,
 ) Errors.Connect!void {
     const index = try kqueue.jobs.borrow_hint(allocator, task);
     errdefer kqueue.jobs.release(index);
@@ -208,8 +206,6 @@ fn queue_connect(
         .type = .{
             .connect = .{
                 .socket = socket,
-                .addr = addr,
-                .kind = kind,
             },
         },
         .task = task,
@@ -217,8 +213,8 @@ fn queue_connect(
 
     if (kqueue.change_count < kqueue.changes.len) {
         syscall.connect(
-            socket,
-            &addr,
+            socket.handle,
+            &socket.addr,
         ) catch |e| switch (e) {
             error.WouldBlock => {},
             else => |err| return err,
@@ -228,7 +224,7 @@ fn queue_connect(
         kqueue.change_count += 1;
 
         event.* = .{
-            .ident = @intCast(socket),
+            .ident = @intCast(socket.handle),
             .filter = posix.system.EVFILT.WRITE,
             .flags = posix.system.EV.ADD | posix.system.EV.ONESHOT,
             .fflags = 0,
@@ -394,9 +390,9 @@ pub fn reap(
                     .accept => |*accept| {
                         debug.assert(event.filter == posix.system.EVFILT.READ);
 
-                        const socket_fd = syscall.accept(
-                            accept.socket,
-                            &accept.addr,
+                        const new_handle = syscall.accept(
+                            accept.socket.handle,
+                            &accept.socket.addr,
                             0,
                         ) catch |err| break :result .{
                             .accept = .{
@@ -407,9 +403,9 @@ pub fn reap(
                         break :result .{
                             .accept = .{
                                 .actual = .{
-                                    .handle = socket_fd,
-                                    .addr = accept.addr,
-                                    .kind = accept.kind,
+                                    .handle = new_handle,
+                                    .addr = accept.socket.addr,
+                                    .kind = accept.socket.kind,
                                 },
                             },
                         };

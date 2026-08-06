@@ -257,6 +257,12 @@ pub extern "ws2_32" fn accept(
     addrlen: ?*i32,
 ) callconv(.winapi) windows.HANDLE;
 
+pub extern "ws2_32" fn connect(
+    s: windows.HANDLE,
+    name: *const ws2_32.sockaddr,
+    namelen: i32,
+) callconv(.winapi) i32;
+
 extern "ws2_32" fn WSAStartup(
     wVersionRequired: windows.WORD,
     lpWSAData: *WSADATA,

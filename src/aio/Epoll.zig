@@ -96,8 +96,6 @@ pub fn queue_job(
             allocator,
             task,
             connect.socket,
-            connect.addr,
-            connect.kind,
         ),
         .recv => |recv| epoll.queue_recv(
             allocator,
@@ -147,7 +145,9 @@ fn queue_timer(
     );
     item.* = .{
         .index = index,
-        .type = .{ .timer = .{ .fd = timer_fd } },
+        .type = .{
+            .timer = .{ .fd = timer_fd },
+        },
         .task = task,
     };
 
@@ -173,11 +173,11 @@ fn queue_accept(
     item.* = .{
         .index = index,
         .type = .{
-            .accept = .{
-                .socket = socket,
+            .accept = .{ .socket = .{
+                .handle = socket,
                 .kind = kind,
                 .addr = .wildcard,
-            },
+            } },
         },
         .task = task,
     };
@@ -194,10 +194,7 @@ fn queue_connect(
     epoll: *Epoll,
     allocator: mem.Allocator,
     task: usize,
-    socket: net.Socket.Handle,
-    // TODO: take *const
-    addr: net.Socket.Address,
-    kind: net.Socket.Kind,
+    socket: *const net.Socket,
 ) Errors.Connect!void {
     const index = try epoll.jobs.borrow_hint(allocator, task);
     errdefer epoll.jobs.release(index);
@@ -206,18 +203,14 @@ fn queue_connect(
     item.* = .{
         .index = index,
         .type = .{
-            .connect = .{
-                .socket = socket,
-                .addr = addr,
-                .kind = kind,
-            },
+            .connect = .{ .socket = socket },
         },
         .task = task,
     };
 
     syscall.connect(
-        socket,
-        &addr,
+        socket.handle,
+        &socket.addr,
     ) catch |e| switch (e) {
         error.WouldBlock => {},
         else => |err| return err,
@@ -228,7 +221,7 @@ fn queue_connect(
         .data = .{ .u64 = index },
     };
 
-    try epoll.add_or_mod_fd(socket, &event);
+    try epoll.add_or_mod_fd(socket.handle, &event);
 }
 
 fn queue_recv(
@@ -422,9 +415,9 @@ pub fn reap(
                         debug.assert(event.events & linux.EPOLL.IN != 0);
 
                         const result: results.AcceptResult = result: {
-                            const handle = syscall.accept(
-                                accept.socket,
-                                &accept.addr,
+                            const new_handle = syscall.accept(
+                                accept.socket.handle,
+                                &accept.socket.addr,
                                 0,
                             ) catch |e| {
                                 const err = switch (e) {
@@ -439,9 +432,9 @@ pub fn reap(
                             };
 
                             break :result .{ .actual = .{
-                                .handle = handle,
-                                .addr = accept.addr,
-                                .kind = accept.kind,
+                                .handle = new_handle,
+                                .addr = accept.socket.addr,
+                                .kind = accept.socket.kind,
                             } };
                         };
 

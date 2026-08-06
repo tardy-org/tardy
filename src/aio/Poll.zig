@@ -14,41 +14,40 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Poll {
     // 0 is read, 1 is write.
     const pipe: [2]fs.File.Handle = blk: {
         if (comptime native_os == .windows) {
-            const server_socket = try syscall.socket(
+            const server = try syscall.socket(
                 posix.AF.INET,
                 posix.SOCK.STREAM,
-                0,
+                posix.IPPROTO.IP,
             );
-            defer syscall.close(server_socket);
+            defer syscall.close(server);
 
-            const addr: net.Socket.Address = .{
-                .ip = .{ .ip4 = .loopback(0) },
-            };
-            try syscall.bind(server_socket, &addr);
+            var addr: net.Socket.Address = .localhost;
+            try syscall.bind(server, &addr);
+            try syscall.listen(server, 1);
 
-            try syscall.listen(server_socket, 1);
+            // Required to prevent INVALID_ADDRESS_COMPONENT error on AFD
+            try syscall.getsockname(
+                server,
+                &addr.any,
+                &addr.len,
+            );
 
             const write_end = try syscall.socket(
                 posix.AF.INET,
                 posix.SOCK.STREAM,
-                0,
+                posix.IPPROTO.IP,
             );
             errdefer syscall.close(write_end);
 
-            // Required to prevent INVALID_ADDRESS_COMPONENT error on AFD
-            var binded_addr = mem.zeroes(std.posix.sockaddr);
-            var binded_size: std.posix.socklen_t = @sizeOf(std.posix.sockaddr);
-            try syscall.getsockname(
-                server_socket,
-                &binded_addr,
-                &binded_size,
-            );
-            const bounded_addr: net.Socket.Address = .fromAny(&binded_addr);
-
-            try syscall.connect(write_end, &bounded_addr);
+            syscall.connect(write_end, &addr) catch |e| {
+                switch (e) {
+                    error.WouldBlock => {},
+                    else => |err| return err,
+                }
+            };
 
             const read_end = try syscall.accept(
-                server_socket,
+                server,
                 null,
                 0,
             );
@@ -144,8 +143,6 @@ pub fn queue_job(
             allocator,
             task,
             connect.socket,
-            connect.addr,
-            connect.kind,
         ),
         .recv => |recv| poll.queue_recv(
             allocator,
@@ -192,9 +189,11 @@ fn queue_accept(
         .index = 0,
         .type = .{
             .accept = .{
-                .socket = socket,
-                .kind = kind,
-                .addr = .wildcard,
+                .socket = .{
+                    .handle = socket,
+                    .kind = kind,
+                    .addr = .wildcard,
+                },
             },
         },
         .task = task,
@@ -205,31 +204,26 @@ fn queue_connect(
     poll: *Poll,
     allocator: mem.Allocator,
     task: usize,
-    socket: net.Socket.Handle,
-    // TODO: take by *const
-    addr: net.Socket.Address,
-    kind: net.Socket.Kind,
+    socket: *const net.Socket,
 ) Errors.Connect!void {
     syscall.connect(
-        socket,
-        &addr,
+        socket.handle,
+        &socket.addr,
     ) catch |e| switch (e) {
         error.WouldBlock => {},
         else => |err| return err,
     };
 
     try poll.fd_list.append(allocator, .{
-        .fd = socket,
+        .fd = socket.handle,
         .events = syscall.POLL.OUT,
         .revents = 0,
     });
-    try poll.fd_job_map.put(allocator, socket, .{
+    try poll.fd_job_map.put(allocator, socket.handle, .{
         .index = 0,
         .type = .{
             .connect = .{
                 .socket = socket,
-                .addr = addr,
-                .kind = kind,
             },
         },
         .task = task,
@@ -375,10 +369,13 @@ pub fn reap(
                             pfd.revents & syscall.POLL.RDNORM != 0);
 
                         const AcceptError = results.AcceptError;
-                        const socket = syscall.accept(
-                            accept.socket,
-                            &accept.addr,
-                            if (native_os != .windows) posix.SOCK.NONBLOCK else 0,
+                        const new_handle = syscall.accept(
+                            accept.socket.handle,
+                            &accept.socket.addr,
+                            if (native_os != .windows)
+                                posix.SOCK.NONBLOCK
+                            else
+                                0,
                         ) catch |e| {
                             const err = switch (e) {
                                 error.WouldBlock => {
@@ -405,9 +402,9 @@ pub fn reap(
                         break :result .{
                             .accept = .{
                                 .actual = .{
-                                    .handle = socket,
-                                    .addr = accept.addr,
-                                    .kind = accept.kind,
+                                    .handle = new_handle,
+                                    .addr = accept.socket.addr,
+                                    .kind = accept.socket.kind,
                                 },
                             },
                         };

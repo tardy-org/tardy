@@ -207,8 +207,6 @@ fn queue_job(
             allocator,
             task,
             connect.socket,
-            connect.addr,
-            connect.kind,
         ),
         .recv => |recv| uring.queue_recv(
             allocator,
@@ -545,36 +543,37 @@ fn queue_accept(
     ) catch @panic("OOM");
     errdefer io_uring.jobs.release(index);
 
+    var new_conn: net.Socket.Address = .wildcard;
+
+    _ = try io_uring.uring.accept(
+        index,
+        socket,
+        &new_conn.any,
+        &new_conn.len,
+        0,
+    );
+
     const item = io_uring.jobs.get_ptr(index);
     item.job = .{
         .index = index,
         .type = .{
             .accept = .{
-                .socket = socket,
-                .kind = kind,
-                .addr = .wildcard,
+                .socket = .{
+                    .handle = socket,
+                    .kind = kind,
+                    .addr = new_conn,
+                },
             },
         },
         .task = task,
     };
-    var sockaddr, var socklen = item.job.type.accept.addr.toPosix();
-
-    _ = try io_uring.uring.accept(
-        index,
-        socket,
-        &sockaddr,
-        &socklen,
-        0,
-    );
 }
 
 fn queue_connect(
     io_uring: *IoUring,
     allocator: mem.Allocator,
     task: usize,
-    socket: posix.socket_t,
-    addr: net.Socket.Address,
-    kind: net.Socket.Kind,
+    socket: *const net.Socket,
 ) Error!void {
     const index = io_uring.jobs.borrow_hint(
         allocator,
@@ -586,21 +585,17 @@ fn queue_connect(
     item.job = .{
         .index = index,
         .type = .{
-            .connect = .{
-                .socket = socket,
-                .addr = addr,
-                .kind = kind,
-            },
+            .connect = .{ .socket = socket },
         },
         .task = task,
     };
-    const sockaddr, const socklen = item.job.type.connect.addr.toPosix();
 
+    const addr = item.job.type.connect.socket.addr;
     _ = try io_uring.uring.connect(
         index,
-        socket,
-        &sockaddr,
-        socklen,
+        socket.handle,
+        &addr.any,
+        addr.len,
     );
 }
 
@@ -744,13 +739,13 @@ fn reap(
                 },
                 .close => break :blk .close,
                 .accept => |accept| {
-                    if (cqe.res >= 0) switch (accept.kind) {
+                    if (cqe.res >= 0) switch (accept.socket.kind) {
                         .tcp, .unix => break :blk .{
                             .accept = .{
                                 .actual = .{
                                     .handle = cqe.res,
-                                    .addr = accept.addr,
-                                    .kind = accept.kind,
+                                    .addr = accept.socket.addr,
+                                    .kind = accept.socket.kind,
                                 },
                             },
                         },

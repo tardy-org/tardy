@@ -226,9 +226,7 @@ pub const Submission = union(Op) {
         kind: net.Socket.Kind,
     },
     connect: struct {
-        socket: net.Socket.Handle,
-        addr: net.Socket.Address,
-        kind: net.Socket.Kind,
+        socket: *const net.Socket,
     },
     recv: struct {
         socket: net.Socket.Handle,

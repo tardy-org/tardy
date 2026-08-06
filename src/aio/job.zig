@@ -54,15 +54,11 @@ const WriteJob = struct {
 };
 
 const AcceptJob = struct {
-    socket: net.Socket.Handle,
-    addr: net.Socket.Address,
-    kind: net.Socket.Kind,
+    socket: net.Socket,
 };
 
 const ConnectJob = struct {
-    socket: net.Socket.Handle,
-    addr: net.Socket.Address,
-    kind: net.Socket.Kind,
+    socket: *const net.Socket,
 };
 
 const SendJob = struct {
