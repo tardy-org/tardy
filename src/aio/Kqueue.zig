@@ -89,7 +89,6 @@ pub fn queue_job(
             allocator,
             task,
             accept.socket,
-            accept.kind,
         ),
         .connect => |connect| kqueue.queue_connect(
             allocator,
@@ -153,8 +152,7 @@ fn queue_accept(
     kqueue: *Kqueue,
     allocator: mem.Allocator,
     task: usize,
-    socket: net.Socket.Handle,
-    kind: net.Socket.Kind,
+    socket: *const net.Socket,
 ) Error!void {
     const index = try kqueue.jobs.borrow_hint(allocator, task);
     errdefer kqueue.jobs.release(index);
@@ -165,9 +163,9 @@ fn queue_accept(
         .type = .{
             .accept = .{
                 .socket = .{
-                    .handle = socket,
-                    .addr = .wildcard,
-                    .kind = kind,
+                    .handle = socket.handle,
+                    .addr = .init(socket.addr.family()),
+                    .kind = socket.kind,
                 },
             },
         },
@@ -179,7 +177,7 @@ fn queue_accept(
         kqueue.change_count += 1;
 
         event.* = .{
-            .ident = @intCast(socket),
+            .ident = @intCast(socket.handle),
             .filter = posix.system.EVFILT.READ,
             .flags = posix.system.EV.ADD | posix.system.EV.ONESHOT,
             .fflags = 0,
@@ -388,7 +386,7 @@ pub fn reap(
                     .accept => |*accept| {
                         debug.assert(event.filter == posix.system.EVFILT.READ);
 
-                        const new_handle = syscall.accept(
+                        const client_fd = syscall.accept(
                             accept.socket.handle,
                             &accept.socket.addr,
                             0,
@@ -401,7 +399,7 @@ pub fn reap(
                         break :result .{
                             .accept = .{
                                 .actual = .{
-                                    .handle = new_handle,
+                                    .handle = client_fd,
                                     .addr = accept.socket.addr,
                                     .kind = accept.socket.kind,
                                 },

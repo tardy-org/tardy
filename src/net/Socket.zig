@@ -422,6 +422,14 @@ pub const Address = extern struct {
         break :blk ip6;
     };
 
+    pub fn init(af: Family) Address {
+        return switch (af) {
+            .ip4 => .wildcard,
+            .ip6 => .wildcard64,
+            .unix => .unix,
+        };
+    }
+
     pub fn family(addr: Address) Family {
         return switch (addr.any.family) {
             posix.AF.INET => .ip4,
@@ -431,16 +439,16 @@ pub const Address = extern struct {
         };
     }
 
+    pub fn format(addr: *const Address, w: *Io.Writer) Io.Writer.Error!void {
+        const address: Address.Config = .fromAny(&addr.any);
+        try address.format(w);
+    }
+
     pub const Family = enum(u8) {
         ip4 = posix.AF.INET,
         ip6 = posix.AF.INET6,
         unix = posix.AF.UNIX,
     };
-
-    pub fn format(addr: *const Address, w: *Io.Writer) Io.Writer.Error!void {
-        const address: Address.Config = .fromAny(&addr.any);
-        try address.format(w);
-    }
 
     const Config = union(enum) {
         ip: net.IpAddress,
@@ -450,7 +458,7 @@ pub const Address = extern struct {
             switch (a.*) {
                 .ip => |*ip| try ip.format(w),
                 .unix => |*un| {
-                    try w.print("{s}", .{if (un.len == 0)
+                    try w.print("{s}", .{if (un.path.len == 0)
                         "N/A: unix socket"
                     else
                         un.path});

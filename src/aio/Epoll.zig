@@ -90,7 +90,6 @@ pub fn queue_job(
             allocator,
             task,
             accept.socket,
-            accept.kind,
         ),
         .connect => |connect| epoll.queue_connect(
             allocator,
@@ -163,8 +162,7 @@ fn queue_accept(
     epoll: *Epoll,
     allocator: mem.Allocator,
     task: usize,
-    socket: net.Socket.Handle,
-    kind: net.Socket.Kind,
+    socket: *const net.Socket,
 ) Errors.Accept!void {
     const index = try epoll.jobs.borrow_hint(allocator, task);
     errdefer epoll.jobs.release(index);
@@ -174,9 +172,9 @@ fn queue_accept(
         .index = index,
         .type = .{
             .accept = .{ .socket = .{
-                .handle = socket,
-                .kind = kind,
-                .addr = .wildcard,
+                .handle = socket.handle,
+                .kind = socket.kind,
+                .addr = .init(socket.addr.family()),
             } },
         },
         .task = task,
@@ -187,7 +185,7 @@ fn queue_accept(
         .data = .{ .u64 = index },
     };
 
-    try epoll.add_or_mod_fd(socket, &event);
+    try epoll.add_or_mod_fd(socket.handle, &event);
 }
 
 fn queue_connect(
@@ -415,7 +413,7 @@ pub fn reap(
                         debug.assert(event.events & linux.EPOLL.IN != 0);
 
                         const result: results.AcceptResult = result: {
-                            const new_handle = syscall.accept(
+                            const client_fd = syscall.accept(
                                 accept.socket.handle,
                                 &accept.socket.addr,
                                 0,
@@ -432,7 +430,7 @@ pub fn reap(
                             };
 
                             break :result .{ .actual = .{
-                                .handle = new_handle,
+                                .handle = client_fd,
                                 .addr = accept.socket.addr,
                                 .kind = accept.socket.kind,
                             } };

@@ -137,7 +137,6 @@ pub fn queue_job(
             allocator,
             task,
             accept.socket,
-            accept.kind,
         ),
         .connect => |connect| poll.queue_connect(
             allocator,
@@ -177,22 +176,21 @@ fn queue_accept(
     poll: *Poll,
     allocator: mem.Allocator,
     task: usize,
-    socket: net.Socket.Handle,
-    kind: net.Socket.Kind,
+    socket: *const net.Socket,
 ) Errors.Accept!void {
     try poll.fd_list.append(allocator, .{
-        .fd = socket,
+        .fd = socket.handle,
         .events = syscall.POLL.IN,
         .revents = 0,
     });
-    try poll.fd_job_map.put(allocator, socket, .{
+    try poll.fd_job_map.put(allocator, socket.handle, .{
         .index = 0,
         .type = .{
             .accept = .{
                 .socket = .{
-                    .handle = socket,
-                    .kind = kind,
-                    .addr = .wildcard,
+                    .handle = socket.handle,
+                    .kind = socket.kind,
+                    .addr = .init(socket.addr.family()),
                 },
             },
         },
@@ -369,7 +367,7 @@ pub fn reap(
                             pfd.revents & syscall.POLL.RDNORM != 0);
 
                         const AcceptError = results.AcceptError;
-                        const new_handle = syscall.accept(
+                        const client_fd = syscall.accept(
                             accept.socket.handle,
                             &accept.socket.addr,
                             if (native_os != .windows)
@@ -402,7 +400,7 @@ pub fn reap(
                         break :result .{
                             .accept = .{
                                 .actual = .{
-                                    .handle = new_handle,
+                                    .handle = client_fd,
                                     .addr = accept.socket.addr,
                                     .kind = accept.socket.kind,
                                 },

@@ -541,11 +541,7 @@ fn queue_accept(
     ) catch @panic("OOM");
     errdefer io_uring.jobs.release(index);
 
-    var client: net.Socket.Address = switch (socket.addr.family()) {
-        .ip4 => .wildcard,
-        .ip6 => .wildcard64,
-        .unix => .unix,
-    };
+    var client: net.Socket.Address = .init(socket.addr.family());
 
     _ = try io_uring.uring.accept(
         index,
