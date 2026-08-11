@@ -25,11 +25,10 @@ pub fn init(
         options.size_tasks_initial,
         options.pooling,
     );
-    const storage: Storage = .init(allocator);
 
     return .{
         .allocator = allocator,
-        .storage = storage,
+        .storage = .init,
         .scheduler = scheduler,
         .aio = aio,
         .io = io,
@@ -40,7 +39,7 @@ pub fn init(
 }
 
 pub fn deinit(rt: *Runtime) void {
-    rt.storage.deinit();
+    rt.storage.deinit(rt.allocator);
     rt.scheduler.deinit(rt.allocator, rt.io);
     rt.allocator.free(rt.aio.completions);
     rt.aio.deinit(rt.allocator, rt.io);

@@ -1,92 +1,101 @@
 /// Storage is deleteless and clobberless.
 pub const Storage = @This();
 
-// TODO: only store the state
-arena: std.heap.ArenaAllocator,
-map: std.StringHashMapUnmanaged(*anyopaque),
+state: heap.ArenaAllocator.State,
+map: hash_map.String(*anyopaque),
 
-pub fn init(allocator: std.mem.Allocator) Storage {
-    return .{
-        .arena = .init(allocator),
-        .map = .{},
-    };
-}
+pub const init: Storage = .{
+    .state = .init,
+    .map = .empty,
+};
 
-pub fn deinit(storage: *Storage) void {
-    storage.arena.deinit();
+pub fn deinit(storage: *Storage, gpa: mem.Allocator) void {
+    var arena = storage.state.promote(gpa);
+    storage.map.deinit(arena.allocator());
+    arena.deinit();
 }
 
 /// Store a pointer that is not managed.
 /// This will NOT CLONE the item.
 /// This asserts that no other item has the same name.
-pub fn store_ptr(storage: *Storage, name: []const u8, item: anytype) !void {
+pub fn storePtr(
+    storage: *Storage,
+    gpa: mem.Allocator,
+    name: []const u8,
+    item: anytype,
+) !void {
     debug.assert(@typeInfo(@TypeOf(item)) == .Pointer);
+
+    var arena = storage.state.promote(gpa);
+    defer storage.state = arena.state;
+
     try storage.map.putNoClobber(
-        storage.arena.allocator(),
+        arena.allocator(),
         name,
         @ptrCast(item),
     );
 }
 
-pub fn store_alloc_ret(
-    storage: *Storage,
-    name: []const u8,
-    item: anytype,
-) !*@TypeOf(item) {
-    const allocator = storage.arena.allocator();
-    const clone = try allocator.create(@TypeOf(item));
-    errdefer allocator.destroy(clone);
-
-    clone.* = item;
-    try storage.map.putNoClobber(
-        allocator,
-        name,
-        @ptrCast(clone),
-    );
-    return clone;
-}
-
 /// Store a new item in the Storage.
 /// This will CLONE (allocate) the item that you pass in and manage the clone.
 /// This asserts that no other item has the same name.
-pub fn store_alloc(storage: *Storage, name: []const u8, item: anytype) !void {
-    _ = try storage.store_alloc_ret(name, item);
+pub fn store(
+    storage: *Storage,
+    gpa: mem.Allocator,
+    name: []const u8,
+    item: anytype,
+) !void {
+    var arena = storage.state.promote(gpa);
+    defer storage.state = arena.state;
+
+    const arena_alloc = arena.allocator();
+    const clone = try arena_alloc.create(@TypeOf(item));
+    errdefer arena_alloc.destroy(clone);
+
+    clone.* = item;
+
+    try storage.map.putNoClobber(
+        arena_alloc,
+        name,
+        @ptrCast(clone),
+    );
 }
 
 /// Get an item that is within the Storage.
 /// This asserts that the item you are looking for exists.
 pub fn get(storage: *Storage, name: []const u8, comptime T: type) T {
-    return storage.get_ptr(name, T).*;
+    return storage.getPtr(name, T).*;
 }
 
 /// Get a const (immutable) pointer to an item that is within the Storage.
 /// This asserts that the item you are looking for exists.
-pub fn get_const_ptr(storage: *Storage, name: []const u8, comptime T: type) *const T {
+pub fn getConstPtr(storage: *Storage, name: []const u8, comptime T: type) *const T {
     const got = storage.map.get(name).?;
     return @ptrCast(@alignCast(got));
 }
 
 /// Get a (mutable) pointer to an item that is within the Storage.
 /// This asserts that the item you are looking for exists.
-pub fn get_ptr(storage: *Storage, name: []const u8, comptime T: type) *T {
+pub fn getPtr(storage: *Storage, name: []const u8, comptime T: type) *T {
     const got = storage.map.get(name).?;
     return @ptrCast(@alignCast(got));
 }
 
 test "Storage Storing" {
-    var storage: Storage = .init(testing.allocator);
-    defer storage.deinit();
+    const gpa = testing.allocator;
+    var storage: Storage = .init;
+    defer storage.deinit(gpa);
 
     const byte: u8 = 100;
-    try storage.store_alloc("byte", byte);
+    try storage.store(gpa, "byte", byte);
 
     const index: usize = 9447721;
-    try storage.store_alloc("index", index);
+    try storage.store(gpa, "index", index);
 
     const value: u32 = 100;
-    try storage.store_alloc("value", value);
+    try storage.store(gpa, "value", value);
 
-    const value_ptr = storage.get_ptr("value", u32);
+    const value_ptr = storage.getPtr("value", u32);
     try testing.expectEqual(value_ptr.*, 100);
     value_ptr.* += 100;
 
@@ -102,5 +111,8 @@ test "Storage Storing" {
 }
 
 const std = @import("std");
+const heap = std.heap;
+const hash_map = std.array_hash_map;
+const mem = std.mem;
 const debug = std.debug;
 const testing = std.testing;

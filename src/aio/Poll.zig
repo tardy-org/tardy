@@ -2,13 +2,11 @@ pub const Poll = @This();
 
 wake_pipe: [2]fs.File.Handle,
 fd_list: std.ArrayList(syscall.pollfd),
-// TODO: audit all uses of `AutoHashMap` if they can be replaced
-// by array variant
-fd_job_map: std.AutoHashMapUnmanaged(fs.File.Handle, Job),
+fd_job_map: hash_map.Auto(fs.File.Handle, Job),
 
 timers: TimerQueue,
 
-pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Poll {
+pub fn init(gpa: mem.Allocator, options: AsyncIO.Options) !Poll {
     const size = options.size_tasks_initial + 1;
 
     // 0 is read, 1 is write.
@@ -58,35 +56,32 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Poll {
     };
     errdefer for (pipe) |fd| syscall.close(fd);
 
-    var fd_list: std.ArrayList(syscall.pollfd) = try .initCapacity(
-        allocator,
-        size,
-    );
-    errdefer fd_list.deinit(allocator);
+    var fd_list: std.ArrayList(syscall.pollfd) = try .initCapacity(gpa, size);
+    errdefer fd_list.deinit(gpa);
 
-    var fd_job_map: std.AutoHashMapUnmanaged(fs.File.Handle, Job) = .empty;
-    errdefer fd_job_map.deinit(allocator);
+    var fd_job_map: hash_map.Auto(fs.File.Handle, Job) = .empty;
+    errdefer fd_job_map.deinit(gpa);
 
-    try fd_job_map.ensureTotalCapacity(allocator, @intCast(size));
+    try fd_job_map.ensureTotalCapacity(gpa, size);
 
     if (comptime native_os == .windows) {
-        try fd_list.append(allocator, .{
+        try fd_list.append(gpa, .{
             .fd = @ptrCast(pipe[0]),
             .events = syscall.POLL.IN,
             .revents = 0,
         });
-        try fd_job_map.put(allocator, @ptrCast(pipe[0]), .{
+        try fd_job_map.put(gpa, @ptrCast(pipe[0]), .{
             .index = 0,
             .type = .wake,
             .task = 0,
         });
     } else {
-        try fd_list.append(allocator, .{
+        try fd_list.append(gpa, .{
             .fd = pipe[0],
             .events = syscall.POLL.IN,
             .revents = 0,
         });
-        try fd_job_map.put(allocator, pipe[0], .{
+        try fd_job_map.put(gpa, pipe[0], .{
             .index = 0,
             .type = .wake,
             .task = 0,
@@ -94,7 +89,7 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Poll {
     }
 
     const timers: TimerQueue = .empty;
-    errdefer timers.deinit(allocator);
+    errdefer timers.deinit(gpa);
 
     return .{
         .wake_pipe = pipe,
@@ -104,24 +99,25 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Poll {
     };
 }
 
-pub fn inner_deinit(poll: *Poll, allocator: mem.Allocator) void {
-    poll.fd_list.deinit(allocator);
-    poll.fd_job_map.deinit(allocator);
-    poll.timers.deinit(allocator);
+pub fn inner_deinit(poll: *Poll, gpa: mem.Allocator) void {
+    poll.fd_list.deinit(gpa);
+    poll.fd_job_map.deinit(gpa);
+    poll.timers.deinit(gpa);
+
     for (poll.wake_pipe) |fd| if (comptime native_os == .windows)
         syscall.ws2.closesock(fd) catch unreachable
     else
         syscall.close(fd);
 }
 
-fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
+fn deinit(runner: *anyopaque, gpa: mem.Allocator) void {
     const poll: *Poll = @ptrCast(@alignCast(runner));
-    poll.inner_deinit(allocator);
+    poll.inner_deinit(gpa);
 }
 
 pub fn queue_job(
     runner: *anyopaque,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     job: AsyncIO.Submission,
 ) Errors.QueueJob!void {
@@ -129,28 +125,28 @@ pub fn queue_job(
 
     try switch (job) {
         .timer => |timer| poll.queue_timer(
-            allocator,
+            gpa,
             task,
             timer,
         ),
         .accept => |accept| poll.queue_accept(
-            allocator,
+            gpa,
             task,
             accept.socket,
         ),
         .connect => |connect| poll.queue_connect(
-            allocator,
+            gpa,
             task,
             connect.socket,
         ),
         .recv => |recv| poll.queue_recv(
-            allocator,
+            gpa,
             task,
             recv.socket,
             recv.buffer,
         ),
         .send => |send| poll.queue_send(
-            allocator,
+            gpa,
             task,
             send.socket,
             send.buffer,
@@ -161,12 +157,12 @@ pub fn queue_job(
 
 fn queue_timer(
     poll: *Poll,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     duration: Io.Duration,
 ) Errors.Timer!void {
     const current = syscall.now(.real);
-    try poll.timers.push(allocator, .{
+    try poll.timers.push(gpa, .{
         .duration = current.addDuration(duration),
         .task = task,
     });
@@ -174,16 +170,16 @@ fn queue_timer(
 
 fn queue_accept(
     poll: *Poll,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     socket: *const net.Socket,
 ) Errors.Accept!void {
-    try poll.fd_list.append(allocator, .{
+    try poll.fd_list.append(gpa, .{
         .fd = socket.handle,
         .events = syscall.POLL.IN,
         .revents = 0,
     });
-    try poll.fd_job_map.put(allocator, socket.handle, .{
+    try poll.fd_job_map.put(gpa, socket.handle, .{
         .index = 0,
         .type = .{
             .accept = .{
@@ -200,7 +196,7 @@ fn queue_accept(
 
 fn queue_connect(
     poll: *Poll,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     socket: *const net.Socket,
 ) Errors.Connect!void {
@@ -212,12 +208,12 @@ fn queue_connect(
         else => |err| return err,
     };
 
-    try poll.fd_list.append(allocator, .{
+    try poll.fd_list.append(gpa, .{
         .fd = socket.handle,
         .events = syscall.POLL.OUT,
         .revents = 0,
     });
-    try poll.fd_job_map.put(allocator, socket.handle, .{
+    try poll.fd_job_map.put(gpa, socket.handle, .{
         .index = 0,
         .type = .{
             .connect = .{
@@ -230,17 +226,17 @@ fn queue_connect(
 
 fn queue_recv(
     poll: *Poll,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     buffer: []u8,
 ) Errors.Recv!void {
-    try poll.fd_list.append(allocator, .{
+    try poll.fd_list.append(gpa, .{
         .fd = socket,
         .events = syscall.POLL.IN,
         .revents = 0,
     });
-    try poll.fd_job_map.put(allocator, socket, .{
+    try poll.fd_job_map.put(gpa, socket, .{
         .index = 0,
         .type = .{
             .recv = .{
@@ -254,17 +250,17 @@ fn queue_recv(
 
 fn queue_send(
     poll: *Poll,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     buffer: []const u8,
 ) Errors.Send!void {
-    try poll.fd_list.append(allocator, .{
+    try poll.fd_list.append(gpa, .{
         .fd = socket,
         .events = syscall.POLL.OUT,
         .revents = 0,
     });
-    try poll.fd_job_map.put(allocator, socket, .{
+    try poll.fd_job_map.put(gpa, socket, .{
         .index = 0,
         .type = .{
             .send = .{
@@ -344,7 +340,7 @@ pub fn reap(
             var remove: bool = true;
             defer if (remove) {
                 _ = poll.fd_list.swapRemove(index);
-                _ = poll.fd_job_map.remove(pfd.fd);
+                _ = poll.fd_job_map.swapRemove(pfd.fd);
                 ready -= 1;
             };
 
@@ -548,11 +544,11 @@ pub fn to_async(poll: *Poll) AsyncIO {
 const log = std.log.scoped(.@"tardy/aio/Poll");
 
 pub const Errors = struct {
-    pub const Connect = syscall.ConnectError || Error;
-    pub const Timer = Error;
-    pub const Accept = Error;
-    pub const Recv = Error;
-    pub const Send = Error;
+    pub const Connect = syscall.ConnectError || OoM;
+    pub const Timer = OoM;
+    pub const Accept = OoM;
+    pub const Recv = OoM;
+    pub const Send = OoM;
     pub const Wake = syscall.WriteError;
     pub const QueueJob = Connect || Wake || Timer || Accept || Recv || Send;
 };
@@ -576,8 +572,9 @@ const Io = std.Io;
 const debug = std.debug;
 const posix = std.posix;
 const math = std.math;
+const hash_map = std.array_hash_map;
 const mem = std.mem;
-const Error = mem.Allocator.Error;
+const OoM = mem.Allocator.Error;
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 
