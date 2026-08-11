@@ -49,6 +49,14 @@ pub fn initWithAddress(options: Options, addr: Address.Config) !Socket {
         .tcp, .udp => |config| {
             if (config.disable_nagle) try disable_nagle(socket);
 
+            // https://stackoverflow.com/a/14388707
+            try syscall.setsockopt(
+                socket,
+                posix.SOL.SOCKET,
+                posix.SO.REUSEADDR,
+                &mem.toBytes(@as(u32, 1)),
+            );
+
             if (@hasDecl(posix.SO, "REUSEPORT_LB")) {
                 try syscall.setsockopt(
                     socket,
@@ -63,26 +71,21 @@ pub fn initWithAddress(options: Options, addr: Address.Config) !Socket {
                     posix.SO.REUSEPORT,
                     &mem.toBytes(@as(u32, 1)),
                 );
-            } else {
-                try syscall.setsockopt(
-                    socket,
-                    posix.SOL.SOCKET,
-                    posix.SO.REUSEADDR,
-                    &mem.toBytes(@as(u32, 1)),
-                );
             }
         },
         .unix => {},
     }
 
-    const sockaddr, const socklen = addr.toPosix();
-
     return .{
         .handle = socket,
-        .addr = .{
-            .any = sockaddr,
-            .len = socklen,
+        .addr = blk: {
+            const sockaddr, const socklen = addr.toPosix();
+            break :blk .{
+                .any = sockaddr,
+                .len = socklen,
+            };
         },
+
         .kind = options.kind(),
     };
 }
@@ -156,8 +159,7 @@ pub fn accept(sock: *const Socket, rt: *Runtime) !Socket {
     if (rt.aio.features.has_capability(.accept)) {
         try rt.scheduler.io_await(rt.allocator, .{
             .accept = .{
-                .socket = sock.handle,
-                .kind = sock.kind,
+                .socket = sock,
             },
         });
 
@@ -168,7 +170,7 @@ pub fn accept(sock: *const Socket, rt: *Runtime) !Socket {
         var addr: Socket.Address = switch (sock.addr.family()) {
             .ip4 => .wildcard,
             .ip6 => .wildcard64,
-            else => unreachable,
+            .unix => .unix,
         };
 
         const AcceptError = results.AcceptError;
@@ -190,6 +192,11 @@ pub fn accept(sock: *const Socket, rt: *Runtime) !Socket {
                 else => AcceptError.Unexpected,
             };
         };
+
+        log.debug(
+            "new accept client_fd is {} with address ({f})",
+            .{ new_handle, addr },
+        );
 
         return .{
             .handle = new_handle,
@@ -401,10 +408,11 @@ pub const Address = extern struct {
         break :blk ip4;
     };
 
-    pub const Family = enum(u8) {
-        ip4 = posix.AF.INET,
-        ip6 = posix.AF.INET6,
-        unix = posix.AF.UNIX,
+    pub const unix: Address = blk: {
+        var un: Address = mem.zeroes(Address);
+        un.any.family = posix.AF.UNIX;
+        un.len = @sizeOf(posix.sockaddr.un);
+        break :blk un;
     };
 
     pub const wildcard64: Address = blk: {
@@ -422,7 +430,14 @@ pub const Address = extern struct {
             else => unreachable,
         };
     }
-    pub fn format(addr: Address, w: *Io.Writer) Io.Writer.Error!void {
+
+    pub const Family = enum(u8) {
+        ip4 = posix.AF.INET,
+        ip6 = posix.AF.INET6,
+        unix = posix.AF.UNIX,
+    };
+
+    pub fn format(addr: *const Address, w: *Io.Writer) Io.Writer.Error!void {
         const address: Address.Config = .fromAny(&addr.any);
         try address.format(w);
     }
@@ -431,11 +446,14 @@ pub const Address = extern struct {
         ip: net.IpAddress,
         unix: net.UnixAddress,
 
-        pub fn format(a: Address.Config, w: *Io.Writer) Io.Writer.Error!void {
-            switch (a) {
-                .ip => |ip| try ip.format(w),
-                .unix => |unix| {
-                    try w.print("{s}", .{unix.path});
+        pub fn format(a: *const Address.Config, w: *Io.Writer) Io.Writer.Error!void {
+            switch (a.*) {
+                .ip => |*ip| try ip.format(w),
+                .unix => |*un| {
+                    try w.print("{s}", .{if (un.len == 0)
+                        "N/A: unix socket"
+                    else
+                        un.path});
                 },
             }
         }
@@ -443,9 +461,7 @@ pub const Address = extern struct {
         pub fn fromAny(addr: *const posix.sockaddr) Address.Config {
             switch (addr.family) {
                 posix.AF.INET => {
-                    const sock = @as(*const posix.sockaddr.in, @ptrCast(@alignCast(
-                        addr,
-                    ))).*;
+                    const sock: *const posix.sockaddr.in = @ptrCast(@alignCast(addr));
                     return .{
                         .ip = .{
                             .ip4 = .{
@@ -456,24 +472,22 @@ pub const Address = extern struct {
                     };
                 },
                 posix.AF.INET6 => {
-                    const sock6 = @as(*const posix.sockaddr.in6, @ptrCast(@alignCast(
-                        addr,
-                    ))).*;
+                    const sock6: *const posix.sockaddr.in6 = @ptrCast(@alignCast(addr));
                     return .{
                         .ip = .{
                             .ip6 = .{
                                 .port = mem.bigToNative(u16, sock6.port),
                                 .flow = sock6.flowinfo,
-                                .interface = .{ .index = sock6.scope_id },
+                                .interface = .{
+                                    .index = sock6.scope_id,
+                                },
                                 .bytes = sock6.addr,
                             },
                         },
                     };
                 },
                 posix.AF.UNIX => {
-                    const sockun = @as(*const posix.sockaddr.un, @ptrCast(@alignCast(
-                        addr,
-                    ))).*;
+                    const sockun: *const posix.sockaddr.un = @ptrCast(@alignCast(addr));
                     return .{
                         .unix = .{
                             .path = mem.sliceTo(&sockun.path, 0x0),
@@ -496,11 +510,9 @@ pub const Address = extern struct {
                                 .addr = @bitCast(ip4.bytes),
                                 .port = mem.nativeToBig(u16, ip4.port),
                             };
-                            const addr_: posix.sockaddr = @as(
-                                *const posix.sockaddr,
-                                @ptrCast(@alignCast(&saddr)),
-                            ).*;
-                            return .{ addr_, @sizeOf(@TypeOf(saddr)) };
+                            const raw: *const posix.sockaddr =
+                                @ptrCast(@alignCast(&saddr));
+                            return .{ raw.*, @sizeOf(posix.sockaddr.in) };
                         },
                         .ip6 => |ip6| {
                             const saddr: posix.sockaddr.in6 = .{
@@ -509,24 +521,20 @@ pub const Address = extern struct {
                                 .scope_id = ip6.interface.index,
                                 .port = mem.nativeToBig(u16, ip6.port),
                             };
-                            const addr_: posix.sockaddr = @as(
-                                *const posix.sockaddr,
-                                @ptrCast(@alignCast(&saddr)),
-                            ).*;
-                            return .{ addr_, @sizeOf(@TypeOf(saddr)) };
+                            const raw: *const posix.sockaddr =
+                                @ptrCast(@alignCast(&saddr));
+                            return .{ raw.*, @sizeOf(posix.sockaddr.in6) };
                         },
                     }
                 },
-                .unix => |unix| {
+                .unix => |un| {
                     var saddr: posix.sockaddr.un = .{
                         .path = @splat(0x0),
                     };
-                    @memcpy(saddr.path[0..unix.path.len], unix.path[0..]);
-                    const addr_: posix.sockaddr = @as(
-                        *const posix.sockaddr,
-                        @ptrCast(@alignCast(&saddr)),
-                    ).*;
-                    return .{ addr_, @sizeOf(@TypeOf(saddr)) };
+                    @memcpy(saddr.path[0..un.path.len], un.path[0..]);
+                    const raw: *const posix.sockaddr =
+                        @ptrCast(@alignCast(&saddr));
+                    return .{ raw.*, @sizeOf(posix.sockaddr.un) };
                 },
             }
         }
@@ -703,3 +711,4 @@ const results = tardy.results;
 const syscall = tardy.AsyncIO.syscall;
 const Coroutine = tardy.Coroutine;
 const Runtime = tardy.Runtime;
+const log = std.log.scoped(.@"tardy/net/Socket");

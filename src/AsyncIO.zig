@@ -222,8 +222,7 @@ pub const Submission = union(Op) {
     },
     close: net.Socket.Handle,
     accept: struct {
-        socket: net.Socket.Handle,
-        kind: net.Socket.Kind,
+        socket: *const net.Socket,
     },
     connect: struct {
         socket: *const net.Socket,

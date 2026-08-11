@@ -201,7 +201,6 @@ fn queue_job(
             allocator,
             task,
             accept.socket,
-            accept.kind,
         ),
         .connect => |connect| uring.queue_connect(
             allocator,
@@ -534,8 +533,7 @@ fn queue_accept(
     io_uring: *IoUring,
     allocator: mem.Allocator,
     task: usize,
-    socket: posix.socket_t,
-    kind: net.Socket.Kind,
+    socket: *const net.Socket,
 ) Error!void {
     const index = io_uring.jobs.borrow_hint(
         allocator,
@@ -543,13 +541,17 @@ fn queue_accept(
     ) catch @panic("OOM");
     errdefer io_uring.jobs.release(index);
 
-    var new_conn: net.Socket.Address = .wildcard;
+    var client: net.Socket.Address = switch (socket.addr.family()) {
+        .ip4 => .wildcard,
+        .ip6 => .wildcard64,
+        .unix => .unix,
+    };
 
     _ = try io_uring.uring.accept(
         index,
-        socket,
-        &new_conn.any,
-        &new_conn.len,
+        socket.handle,
+        &client.any,
+        &client.len,
         0,
     );
 
@@ -559,9 +561,9 @@ fn queue_accept(
         .type = .{
             .accept = .{
                 .socket = .{
-                    .handle = socket,
-                    .kind = kind,
-                    .addr = new_conn,
+                    .handle = math.maxInt(net.Socket.Handle),
+                    .addr = client,
+                    .kind = socket.kind,
                 },
             },
         },
@@ -739,7 +741,12 @@ fn reap(
                 },
                 .close => break :blk .close,
                 .accept => |accept| {
-                    if (cqe.res >= 0) switch (accept.socket.kind) {
+                    if (cqe.res >= 0) log.debug(
+                        "new accept client_fd is {} with address ({f})",
+                        .{ cqe.res, accept.socket.addr },
+                    );
+
+                    switch (accept.socket.kind) {
                         .tcp, .unix => break :blk .{
                             .accept = .{
                                 .actual = .{
@@ -750,7 +757,7 @@ fn reap(
                             },
                         },
                         .udp => unreachable,
-                    };
+                    }
 
                     const AcceptError = results.AcceptError;
                     const result: results.AcceptResult = result: {
