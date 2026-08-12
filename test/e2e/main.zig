@@ -4,9 +4,7 @@ const Tardy = tardy.Tardy(backend);
 pub const std_options: std.Options = .{ .log_level = .debug };
 
 pub fn main(init: std.process.Init) !void {
-    const io = init.io;
-    const gpa = init.gpa;
-    var args = try init.minimal.args.iterateAllocator(gpa);
+    var args = try init.minimal.args.iterateAllocator(init.gpa);
     defer args.deinit();
 
     _ = args.next().?;
@@ -14,12 +12,12 @@ pub fn main(init: std.process.Init) !void {
     // max u64 is 21 characters long :p
     var maybe_seed_buffer: [21]u8 = undefined;
     const seed_string = args.next() orelse blk: {
-        var stdin_r = Io.File.stdin().reader(io, &.{});
+        var stdin_r = Io.File.stdin().reader(init.io, &.{});
         const bytes = try stdin_r.interface.allocRemaining(
-            gpa,
+            init.gpa,
             .limited(max_stderr_output),
         );
-        defer gpa.free(bytes);
+        defer init.gpa.free(bytes);
 
         var iter = mem.splitScalar(
             u8,
@@ -59,7 +57,7 @@ pub fn main(init: std.process.Init) !void {
         .whitespace = .indent_1,
     })});
 
-    var td: Tardy = try .init(gpa, io, .{
+    var td: Tardy = try .init(init.gpa, init.io, .{
         .threading = .{ .multi = 2 },
         .pooling = .grow,
         .size_tasks_initial = shared.size_tasks_initial,

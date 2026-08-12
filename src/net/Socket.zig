@@ -141,7 +141,7 @@ pub fn listen(sock: *const Socket, backlog: usize) !void {
 
 pub fn close(sock: *const Socket, rt: *Runtime) !void {
     if (rt.aio.features.has_capability(.close))
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .close = sock.handle,
         })
     else
@@ -157,7 +157,7 @@ pub fn close_blocking(sock: *const Socket) void {
 pub fn accept(sock: *const Socket, rt: *Runtime) !Socket {
     debug.assert(sock.kind.listenable());
     if (rt.aio.features.has_capability(.accept)) {
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .accept = .{
                 .socket = sock,
             },
@@ -208,7 +208,7 @@ pub fn accept(sock: *const Socket, rt: *Runtime) !Socket {
 
 pub fn connect(sock: *const Socket, rt: *Runtime) !void {
     if (rt.aio.features.has_capability(.connect)) {
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .connect = .{
                 .socket = sock,
             },
@@ -235,7 +235,7 @@ pub fn connect(sock: *const Socket, rt: *Runtime) !void {
 
 pub fn recv(sock: *const Socket, rt: *Runtime, buffer: []u8) !usize {
     if (rt.aio.features.has_capability(.recv)) {
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .recv = .{
                 .socket = sock.handle,
                 .buffer = buffer,
@@ -283,7 +283,7 @@ pub fn recv_all(sock: *const Socket, rt: *Runtime, buffer: []u8) !usize {
 
 pub fn send(sock: *const Socket, rt: *Runtime, buffer: []const u8) !usize {
     if (rt.aio.features.has_capability(.send)) {
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .send = .{
                 .socket = sock.handle,
                 .buffer = buffer,

@@ -5,13 +5,13 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             const AioImpl = selected_aio.Impl();
             break :impl *AioImpl;
         }),
-        // TODO: maybe make this an arena
-        allocator: mem.Allocator,
+        /// This allocator is what is stored in `Runtime` and used for allocations
+        gpa: mem.Allocator,
         io: std.Io,
         mutex: std.Io.Mutex = .init,
         options: Options,
 
-        pub fn init(allocator: mem.Allocator, io: std.Io, options: Options) !Tardy_t {
+        pub fn init(gpa: mem.Allocator, io: std.Io, options: Options) !Tardy_t {
             if (comptime builtin.os.tag == .windows) AsyncIO.syscall.ws2.wsaStartup(
                 2,
                 2,
@@ -25,7 +25,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
 
             return .{
                 .io = io,
-                .allocator = allocator,
+                .gpa = gpa,
                 .options = options,
                 .aios = .empty,
             };
@@ -37,9 +37,9 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
 
             // Other resources are deallocated in `Runtime`
             for (tardy.aios.items) |aio_impl|
-                tardy.allocator.destroy(aio_impl);
+                tardy.gpa.destroy(aio_impl);
 
-            tardy.aios.deinit(tardy.allocator);
+            tardy.aios.deinit(tardy.gpa);
         }
 
         /// This will spawn a new Runtime.
@@ -48,29 +48,29 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             defer tardy.mutex.unlock(tardy.io);
 
             var aio: AsyncIO = blk: {
-                var aio_impl = try tardy.allocator.create(
+                var aio_impl = try tardy.gpa.create(
                     selected_aio.Impl(),
                 );
-                errdefer tardy.allocator.destroy(aio_impl);
+                errdefer tardy.gpa.destroy(aio_impl);
 
-                aio_impl.* = try .init(tardy.allocator, options);
-                errdefer aio_impl.inner_deinit(tardy.allocator);
+                aio_impl.* = try .init(tardy.gpa, options);
+                errdefer aio_impl.inner_deinit(tardy.gpa);
 
-                try tardy.aios.append(tardy.allocator, aio_impl);
+                try tardy.aios.append(tardy.gpa, aio_impl);
                 var aio = aio_impl.to_async();
 
-                const completions = try tardy.allocator.alloc(
+                const completions = try tardy.gpa.alloc(
                     results.Completion,
                     tardy.options.size_aio_reap_max,
                 );
-                errdefer tardy.allocator.free(completions);
+                errdefer tardy.gpa.free(completions);
 
                 aio.attach(completions);
                 break :blk aio;
             };
-            errdefer aio.deinit(tardy.allocator, tardy.io);
+            errdefer aio.deinit(tardy.gpa, tardy.io);
 
-            return try .init(tardy.allocator, tardy.io, aio, .{
+            return try .init(tardy.gpa, tardy.io, aio, .{
                 .id = id,
                 .pooling = tardy.options.pooling,
                 .size_tasks_initial = tardy.options.size_tasks_initial,
@@ -115,7 +115,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             log.info("thread count: {d}", .{runtime_count});
 
             var threads: std.ArrayList(std.Thread) = try .initCapacity(
-                tardy.allocator,
+                tardy.gpa,
                 runtime_count -| 1,
             );
             defer {
@@ -124,7 +124,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                     .{},
                 );
                 for (threads.items) |thread| thread.join();
-                threads.deinit(tardy.allocator);
+                threads.deinit(tardy.gpa);
             }
             // for in-spawn id assignment
             var spawn_id: atomic.Value(usize) = .init(1);

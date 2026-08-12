@@ -2,7 +2,7 @@ threadlocal var tcp_client_chain_count: usize = 1;
 threadlocal var tcp_server_chain_count: usize = 1;
 
 pub fn start_frame(rt: *Runtime, shared_params: *const e2e.Params) !void {
-    var prng: std.Random.DefaultPrng = .init(shared_params.seed);
+    var prng: Random.DefaultPrng = .init(shared_params.seed);
     const rand = prng.random();
 
     const port: u16 = rand.intRangeLessThan(
@@ -19,21 +19,21 @@ pub fn start_frame(rt: *Runtime, shared_params: *const e2e.Params) !void {
     try socket.listen(128);
 
     const chain = try Server.generate_random_chain(
-        rt.allocator,
+        rt.gpa,
         shared_params.seed,
     );
-    defer rt.allocator.free(chain);
+    defer rt.gpa.free(chain);
 
     log.debug("creating tcp chain... ({d})", .{chain.len});
 
-    const server_chain_ptr = try rt.allocator.create(Server);
-    errdefer rt.allocator.destroy(server_chain_ptr);
+    const server_chain_ptr = try rt.gpa.create(Server);
+    errdefer rt.gpa.destroy(server_chain_ptr);
 
-    const client_chain_ptr = try rt.allocator.create(Client);
-    errdefer rt.allocator.destroy(client_chain_ptr);
+    const client_chain_ptr = try rt.gpa.create(Client);
+    errdefer rt.gpa.destroy(client_chain_ptr);
 
-    server_chain_ptr.* = try .init(rt.allocator, chain, 4096);
-    client_chain_ptr.* = try server_chain_ptr.derive_client_chain(rt.allocator);
+    server_chain_ptr.* = try .init(rt.gpa, chain, 4096);
+    client_chain_ptr.* = try server_chain_ptr.derive_client_chain(rt.gpa);
 
     try rt.spawn(
         Client.chain_frame,
@@ -50,6 +50,7 @@ pub fn start_frame(rt: *Runtime, shared_params: *const e2e.Params) !void {
 const log = std.log.scoped(.@"tardy/e2e/second");
 
 const std = @import("std");
+const Random = std.Random;
 const debug = std.debug;
 
 const tardy = @import("tardy");

@@ -1,19 +1,5 @@
-const std = @import("std");
-
-const options = @import("options");
-const tardy = @import("tardy");
-const Runtime = tardy.Runtime;
-const Spsc = tardy.channel.Spsc;
-const Timer = Runtime.Timer;
-const AsyncIO = tardy.AsyncIO;
-
 const backend: AsyncIO.Kind = .init(options.async_backend);
 const Tardy = tardy.Tardy(backend);
-
-const log = std.log.scoped(.@"tardy/example/channel");
-pub const std_options: std.Options = .{ .log_level = .debug };
-
-const MAX_COUNT = 3;
 
 fn producer_frame(rt: *Runtime, producer: Spsc(usize).Producer) !void {
     defer producer.close();
@@ -75,3 +61,17 @@ pub fn main(init: std.process.Init) !void {
         }.init_fn,
     );
 }
+
+const log = std.log.scoped(.@"tardy/example/channel");
+pub const std_options: std.Options = .{ .log_level = .debug };
+
+const MAX_COUNT = 3;
+
+const std = @import("std");
+
+const options = @import("options");
+const tardy = @import("tardy");
+const Runtime = tardy.Runtime;
+const Spsc = tardy.channel.Spsc;
+const Timer = Runtime.Timer;
+const AsyncIO = tardy.AsyncIO;

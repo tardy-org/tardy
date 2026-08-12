@@ -1,27 +1,21 @@
-const std = @import("std");
-const Io = std.Io;
-
-pub const Dir = @import("fs/dir.zig");
-pub const File = @import("fs/file.zig");
-
 pub const Path = union(enum) {
     /// Relative to given Directory
     rel: struct {
-        dir: std.posix.fd_t,
+        dir: posix.fd_t,
         path: [:0]const u8,
     },
     /// Absolute Path
     abs: [:0]const u8,
 
-    pub fn dupe(path: *const Path, allocator: std.mem.Allocator) !Path {
+    pub fn dupe(path: *const Path, gpa: mem.Allocator) !Path {
         switch (path.*) {
             .rel => |rel| {
-                const path_dupe = try allocator.dupeSentinel(
+                const path_dupe = try gpa.dupeSentinel(
                     u8,
                     rel.path,
                     0x0,
                 );
-                errdefer allocator.free(path_dupe);
+                errdefer gpa.free(path_dupe);
                 return .{
                     .rel = .{
                         .dir = rel.dir,
@@ -30,7 +24,7 @@ pub const Path = union(enum) {
                 };
             },
             .abs => |abs| return .{
-                .abs = try allocator.dupeSentinel(
+                .abs = try gpa.dupeSentinel(
                     u8,
                     abs,
                     0x0,
@@ -47,3 +41,11 @@ pub const Stat = struct {
     modified: ?Io.Timestamp = null,
     changed: ?Io.Timestamp = null,
 };
+
+const std = @import("std");
+const posix = std.posix;
+const mem = std.mem;
+const Io = std.Io;
+
+pub const Dir = @import("fs/dir.zig");
+pub const File = @import("fs/file.zig");

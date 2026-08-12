@@ -5,19 +5,15 @@ pub const Server = struct {
     buffer: []u8,
 
     // Path is expected to remain valid.
-    pub fn init(
-        allocator: mem.Allocator,
-        chain: []const Step,
-        buffer_size: usize,
-    ) !Server {
+    pub fn init(gpa: mem.Allocator, chain: []const Step, buffer_size: usize) !Server {
         debug.assert(chain.len > 0);
 
-        const chain_dupe = try allocator.dupe(Step, chain);
-        errdefer allocator.free(chain_dupe);
+        const chain_dupe = try gpa.dupe(Step, chain);
+        errdefer gpa.free(chain_dupe);
         debug.assert(validate_chain(chain));
 
-        const buffer = try allocator.alloc(u8, buffer_size);
-        errdefer allocator.free(buffer);
+        const buffer = try gpa.alloc(u8, buffer_size);
+        errdefer gpa.free(buffer);
 
         return .{
             .steps = chain_dupe,
@@ -25,9 +21,9 @@ pub const Server = struct {
         };
     }
 
-    pub fn deinit(server: *const Server, allocator: mem.Allocator) void {
-        defer allocator.free(server.steps);
-        defer allocator.free(server.buffer);
+    pub fn deinit(server: *const Server, gpa: mem.Allocator) void {
+        defer gpa.free(server.steps);
+        defer gpa.free(server.buffer);
     }
 
     pub fn next_steps(current: Step) []const Step {
@@ -51,13 +47,13 @@ pub const Server = struct {
         return true;
     }
 
-    pub fn generate_random_chain(allocator: mem.Allocator, seed: u64) ![]Step {
-        var prng: std.Random.DefaultPrng = .init(seed);
+    pub fn generate_random_chain(gpa: mem.Allocator, seed: u64) ![]Step {
+        var prng: Random.DefaultPrng = .init(seed);
         const rand = prng.random();
 
-        var list: std.ArrayList(Step) = try .initCapacity(allocator, 0);
-        defer list.deinit(allocator);
-        try list.append(allocator, .accept);
+        var list: std.ArrayList(Step) = try .initCapacity(gpa, 0);
+        defer list.deinit(gpa);
+        try list.append(gpa, .accept);
 
         while (true) {
             const potentials = next_steps(list.last().?.*);
@@ -67,20 +63,17 @@ pub const Server = struct {
                 0,
                 potentials.len,
             );
-            try list.append(allocator, potentials[potential]);
+            try list.append(gpa, potentials[potential]);
         }
 
-        return try list.toOwnedSlice(allocator);
+        return try list.toOwnedSlice(gpa);
     }
 
-    pub fn derive_client_chain(server: *const Server, allocator: mem.Allocator) !Client {
+    pub fn derive_client_chain(server: *const Server, gpa: mem.Allocator) !Client {
         debug.assert(server.steps.len > 0);
 
-        const client_steps = try allocator.alloc(
-            Client.Step,
-            server.steps.len,
-        );
-        errdefer allocator.free(client_steps);
+        const client_steps = try gpa.alloc(Client.Step, server.steps.len);
+        errdefer gpa.free(client_steps);
 
         for (server.steps, 0..) |step, i| {
             switch (step) {
@@ -91,8 +84,8 @@ pub const Server = struct {
             }
         }
 
-        const buffer = try allocator.alloc(u8, server.buffer.len);
-        errdefer allocator.free(buffer);
+        const buffer = try gpa.alloc(u8, server.buffer.len);
+        errdefer gpa.free(buffer);
 
         return .{
             .steps = client_steps,
@@ -106,8 +99,8 @@ pub const Server = struct {
         counter: *usize,
         server_socket: net.Socket,
     ) !void {
-        defer rt.allocator.destroy(chain);
-        defer chain.deinit(rt.allocator);
+        defer rt.gpa.destroy(chain);
+        defer chain.deinit(rt.gpa);
         errdefer unreachable;
 
         chain: while (chain.index < chain.steps.len) : (chain.index += 1) {
@@ -157,14 +150,14 @@ pub const Client = struct {
     index: usize = 0,
     buffer: []u8,
 
-    pub fn deinit(client: *const Client, allocator: mem.Allocator) void {
-        defer allocator.free(client.steps);
-        defer allocator.free(client.buffer);
+    pub fn deinit(client: *const Client, gpa: mem.Allocator) void {
+        defer gpa.free(client.steps);
+        defer gpa.free(client.buffer);
     }
 
     pub fn chain_frame(chain: *Client, rt: *Runtime, counter: *usize, port: u16) !void {
-        defer rt.allocator.destroy(chain);
-        defer chain.deinit(rt.allocator);
+        defer rt.gpa.destroy(chain);
+        defer chain.deinit(rt.gpa);
         errdefer unreachable;
 
         var socket: net.Socket = try .init(.{
@@ -228,10 +221,10 @@ test "tcp_chain.Server: Validate Random Chain" {
     try std.posix.getrandom(mem.asBytes(&seed));
 
     const chain = try Server.generate_random_chain(
-        testing.allocator,
+        testing.gpa,
         seed,
     );
-    defer testing.allocator.free(chain);
+    defer testing.gpa.free(chain);
 
     errdefer {
         std.debug.print("failed seed: {d}\n", .{seed});
@@ -247,6 +240,7 @@ const std = @import("std");
 const mem = std.mem;
 const debug = std.debug;
 const testing = std.testing;
+const Random = std.Random;
 
 const tardy = @import("tardy");
 const net = tardy.net;

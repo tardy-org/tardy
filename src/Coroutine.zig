@@ -11,11 +11,114 @@ stack_mem: []align(raw_alignment) u8,
 /// Is the Coroutine Frame done?
 status: Status = .in_progress,
 
-const Status = enum(u8) {
-    in_progress,
-    done,
-    errored,
-};
+pub fn init(
+    gpa: mem.Allocator,
+    comptime coroutine_fn: anytype,
+    args: meta.ArgsTuple(@TypeOf(coroutine_fn)),
+    stack_size: ?Stack,
+) *Coroutine {
+    // Allocate Frame Stack with ABI alignment
+    const stack: []align(raw_alignment) u8 = gpa.alignedAlloc(
+        u8,
+        Frame.alignment,
+        size: {
+            const size = if (stack_size) |stack|
+                stack.Usize()
+            else
+                Stack.auto.Usize();
+            // stack_size should be aligned to `Hardware.alignment`
+            debug.assert(Frame.alignment.check(size));
+            break :size size;
+        },
+    ) catch @panic("OOM");
+
+    const stack_base = @intFromPtr(stack.ptr);
+    const stack_top = @intFromPtr(stack.ptr + stack.len);
+
+    // space for the frame pointer
+    const frame_ptr = Frame.alignment.backward(
+        stack_top - @sizeOf(Coroutine),
+    );
+    debug.assert(frame_ptr > stack_base);
+
+    const frame: *Coroutine = @ptrFromInt(frame_ptr);
+
+    const Args = @TypeOf(args);
+    // space for the args pointer
+    const args_ptr = Frame.alignment.backward(
+        frame_ptr - @sizeOf(Args),
+    );
+    debug.assert(args_ptr > stack_base);
+
+    const arg_ptr: *Args = @ptrFromInt(args_ptr);
+    arg_ptr.* = args;
+
+    // setup space for the `Hardware.stack_count` of callee-saved registers
+    const register_ptr = Frame.alignment.backward(
+        args_ptr - (@sizeOf(usize) * Frame.stack_count),
+    );
+    debug.assert(register_ptr > stack_base);
+
+    // address space for the callee-saved registers
+    const register_entries: []RegisterFn = @as([*]RegisterFn, @ptrFromInt(
+        register_ptr,
+    ))[0..Frame.stack_count];
+
+    // A frame pointer of 0x0 denotes the root of the stack for the DWARF unwinder
+    // so it knows where to stop unwinding.
+    register_entries[Frame.frame_ptr] = @ptrFromInt(0x0);
+
+    // return address/instruction pointer we jump to for the execution of fiber's
+    // entry point function after returning from `tardy_swap_frame`
+    register_entries[Frame.entry] = EntryFn(coroutine_fn, args);
+
+    frame.* = .{
+        .caller_sp = undefined,
+        .current_sp = @ptrFromInt(register_ptr),
+        .stack_mem = stack,
+    };
+
+    return frame;
+}
+
+pub fn deinit(frame: *Coroutine, gpa: mem.Allocator) void {
+    gpa.free(frame.stack_mem);
+}
+
+/// This runs/continues a Coroutine Frame.
+pub fn proceed(frame: *Coroutine) void {
+    const old_frame = active_frame;
+    debug.assert(old_frame != frame);
+    active_frame = frame;
+    defer active_frame = old_frame;
+
+    Frame.swap_frame(
+        &frame.caller_sp,
+        &frame.current_sp,
+    );
+}
+
+/// This yields/pauses a Frame.
+pub fn yield() void {
+    const current = active_frame.?;
+    Frame.swap_frame(
+        &current.current_sp,
+        &current.caller_sp,
+    );
+}
+
+fn stackUsed(frame: *Coroutine) usize {
+    if (builtin.mode != .debug) @compileError("only available in Debug mode");
+    // Debug mode fills freed/unused memory with 0xAA
+    const canary_byte: u8 = 0xAA;
+    // Stack grows downward — scan from bottom for the first non-0xAA byte
+    const stack = frame.stack_mem;
+    // We look for the first byte that is NOT our canary.
+    const unused = mem.findNone(u8, stack, &.{
+        canary_byte,
+    }).?;
+    return (stack.len - unused) * @sizeOf(u8);
+}
 
 pub const Stack = enum(u32) {
     @"2KiB" = 2 * unit,
@@ -71,109 +174,6 @@ pub const Stack = enum(u32) {
     }
 };
 
-fn stackUsed(frame: *Coroutine) usize {
-    if (builtin.mode != .debug) @compileError("only available in Debug mode");
-    // Debug mode fills freed/unused memory with 0xAA
-    const canary_byte: u8 = 0xAA;
-    // Stack grows downward — scan from bottom for the first non-0xAA byte
-    const stack = frame.stack_mem;
-    // We look for the first byte that is NOT our canary.
-    const unused = mem.findNone(u8, stack, &.{
-        canary_byte,
-    }).?;
-    return (stack.len - unused) * @sizeOf(u8);
-}
-
-pub fn init(
-    allocator: mem.Allocator,
-    comptime coroutine_fn: anytype,
-    args: meta.ArgsTuple(@TypeOf(coroutine_fn)),
-    stack_size: ?Stack,
-) *Coroutine {
-    // Allocate Frame Stack with ABI alignment
-    const stack: []align(raw_alignment) u8 = allocator.alignedAlloc(u8, Frame.alignment, size: {
-        const size = if (stack_size) |stack| stack.Usize() else Stack.auto.Usize();
-        // stack_size should be aligned to `Hardware.alignment`
-        debug.assert(Frame.alignment.check(size));
-        break :size size;
-    }) catch @panic("OOM");
-
-    const stack_base = @intFromPtr(stack.ptr);
-    const stack_top = @intFromPtr(stack.ptr + stack.len);
-
-    // space for the frame pointer
-    const frame_ptr = Frame.alignment.backward(
-        stack_top - @sizeOf(Coroutine),
-    );
-    debug.assert(frame_ptr > stack_base);
-
-    const frame: *Coroutine = @ptrFromInt(frame_ptr);
-
-    const Args = @TypeOf(args);
-    // space for the args pointer
-    const args_ptr = Frame.alignment.backward(
-        frame_ptr - @sizeOf(Args),
-    );
-    debug.assert(args_ptr > stack_base);
-
-    const arg_ptr: *Args = @ptrFromInt(args_ptr);
-    arg_ptr.* = args;
-
-    // setup space for the `Hardware.stack_count` of callee-saved registers
-    const register_ptr = Frame.alignment.backward(
-        args_ptr - (@sizeOf(usize) * Frame.stack_count),
-    );
-    debug.assert(register_ptr > stack_base);
-
-    // address space for the callee-saved registers
-    const register_entries: []RegisterFn = @as([*]RegisterFn, @ptrFromInt(
-        register_ptr,
-    ))[0..Frame.stack_count];
-
-    // A frame pointer of 0x0 denotes the root of the stack for the DWARF unwinder
-    // so it knows where to stop unwinding.
-    register_entries[Frame.frame_ptr] = @ptrFromInt(0x0);
-
-    // return address/instruction pointer we jump to for the execution of fiber's
-    // entry point function after returning from `tardy_swap_frame`
-    register_entries[Frame.entry] = EntryFn(coroutine_fn, args);
-
-    frame.* = .{
-        .caller_sp = undefined,
-        .current_sp = @ptrFromInt(register_ptr),
-        .stack_mem = stack,
-    };
-
-    return frame;
-}
-
-pub fn deinit(frame: *Coroutine, allocator: mem.Allocator) void {
-    allocator.free(frame.stack_mem);
-}
-
-/// This runs/continues a Coroutine Frame.
-pub fn proceed(frame: *Coroutine) void {
-    const old_frame = active_frame;
-    debug.assert(old_frame != frame);
-    active_frame = frame;
-    defer active_frame = old_frame;
-
-    Frame.swap_frame(
-        &frame.caller_sp,
-        &frame.current_sp,
-    );
-}
-
-/// This yields/pauses a Frame.
-pub fn yield() void {
-    const current = active_frame.?;
-    Frame.swap_frame(
-        &current.current_sp,
-        &current.caller_sp,
-    );
-}
-
-const RegisterFn = *allowzero const fn () callconv(.c) noreturn;
 fn EntryFn(
     comptime coroutine_fn: anytype,
     args: meta.ArgsTuple(@TypeOf(coroutine_fn)),
@@ -214,6 +214,14 @@ fn EntryFn(
     };
     return Fn.entry;
 }
+
+const Status = enum(u8) {
+    in_progress,
+    done,
+    errored,
+};
+
+const RegisterFn = *allowzero const fn () callconv(.c) noreturn;
 
 const is_unix = builtin.os.tag != .windows;
 

@@ -33,10 +33,7 @@ const base_flags = blk: {
     break :blk flags;
 };
 
-pub fn init(
-    allocator: mem.Allocator,
-    options: AsyncIO.Options,
-) (mem.Allocator.Error || Errors.Init)!IoUring {
+pub fn init(gpa: mem.Allocator, options: AsyncIO.Options) (OoM || Errors.Init)!IoUring {
     // Extra job for the wake event_fd.
     const size = options.size_tasks_initial + 1;
 
@@ -45,8 +42,8 @@ pub fn init(
     );
     errdefer syscall.close(wake_event_fd);
 
-    const wake_event_buffer = try allocator.alloc(u8, 8);
-    errdefer allocator.free(wake_event_buffer);
+    const wake_event_buffer = try gpa.alloc(u8, 8);
+    errdefer gpa.free(wake_event_buffer);
 
     const submit_size: u16 = @min(
         // 4096 is the max uring submit size.
@@ -71,8 +68,8 @@ pub fn init(
                 },
             );
 
-            const uring = try allocator.create(linux.IoUring);
-            errdefer allocator.destroy(uring);
+            const uring = try gpa.create(linux.IoUring);
+            errdefer gpa.destroy(uring);
 
             uring.* = try .init_params(submit_size, &params);
             errdefer uring.deinit();
@@ -80,8 +77,8 @@ pub fn init(
             break :blk uring;
         } else {
             // Initalize IO Uring
-            const uring = try allocator.create(linux.IoUring);
-            errdefer allocator.destroy(uring);
+            const uring = try gpa.create(linux.IoUring);
+            errdefer gpa.destroy(uring);
 
             uring.* = try .init(submit_size, base_flags);
             errdefer uring.deinit();
@@ -89,15 +86,15 @@ pub fn init(
             break :blk uring;
         }
     };
-    errdefer allocator.destroy(uring);
+    errdefer gpa.destroy(uring);
     errdefer uring.deinit();
 
     var jobs: pool.Pool(JobBundle) = try .init(
-        allocator,
+        gpa,
         size,
         options.pooling,
     );
-    errdefer jobs.deinit(allocator);
+    errdefer jobs.deinit(gpa);
 
     const index = jobs.borrow_assume_unset(0);
     const item = jobs.get_ptr(index);
@@ -113,11 +110,11 @@ pub fn init(
         0,
     );
 
-    const cqes = try allocator.alloc(
+    const cqes = try gpa.alloc(
         linux.io_uring_cqe,
         options.size_aio_reap_max,
     );
-    errdefer allocator.free(cqes);
+    errdefer gpa.free(cqes);
 
     return .{
         .uring = uring,
@@ -128,93 +125,93 @@ pub fn init(
     };
 }
 
-pub fn inner_deinit(io_uring: *IoUring, allocator: mem.Allocator) void {
+pub fn inner_deinit(io_uring: *IoUring, gpa: mem.Allocator) void {
     syscall.close(io_uring.wake_event_fd);
     io_uring.uring.deinit();
-    io_uring.jobs.deinit(allocator);
-    allocator.free(io_uring.wake_event_buffer);
-    allocator.free(io_uring.cqes);
-    allocator.destroy(io_uring.uring);
+    io_uring.jobs.deinit(gpa);
+    gpa.free(io_uring.wake_event_buffer);
+    gpa.free(io_uring.cqes);
+    gpa.destroy(io_uring.uring);
 }
 
-fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
+fn deinit(runner: *anyopaque, gpa: mem.Allocator) void {
     const uring: *IoUring = @ptrCast(@alignCast(runner));
-    uring.inner_deinit(allocator);
+    uring.inner_deinit(gpa);
 }
 
 fn queue_job(
     runner: *anyopaque,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     job: AsyncIO.Submission,
 ) Errors.QueueJob!void {
     const uring: *IoUring = @ptrCast(@alignCast(runner));
     (switch (job) {
         .timer => |timer| uring.queue_timer(
-            allocator,
+            gpa,
             task,
             timer,
         ),
         .open => |open| uring.queue_open(
-            allocator,
+            gpa,
             task,
             open.path,
             open.flags,
         ),
         .delete => |delete| uring.queue_delete(
-            allocator,
+            gpa,
             task,
             delete.path,
             delete.is_dir,
         ),
         .mkdir => |mkdir| uring.queue_mkdir(
-            allocator,
+            gpa,
             task,
             mkdir.path,
             mkdir.mode,
         ),
         .stat => |stat| uring.queue_stat(
-            allocator,
+            gpa,
             task,
             stat,
         ),
         .read => |read| uring.queue_read(
-            allocator,
+            gpa,
             task,
             read.fd,
             read.buffer,
             read.offset,
         ),
         .write => |write| uring.queue_write(
-            allocator,
+            gpa,
             task,
             write.fd,
             write.buffer,
             write.offset,
         ),
         .close => |close| uring.queue_close(
-            allocator,
+            gpa,
             task,
             close,
         ),
         .accept => |accept| uring.queue_accept(
-            allocator,
+            gpa,
             task,
             accept.socket,
         ),
         .connect => |connect| uring.queue_connect(
-            allocator,
+            gpa,
             task,
             connect.socket,
         ),
         .recv => |recv| uring.queue_recv(
-            allocator,
+            gpa,
             task,
             recv.socket,
             recv.buffer,
         ),
         .send => |send| uring.queue_send(
-            allocator,
+            gpa,
             task,
             send.socket,
             send.buffer,
@@ -222,7 +219,7 @@ fn queue_job(
     }) catch |e| switch (e) {
         error.SubmissionQueueFull => {
             try submit(runner);
-            try queue_job(runner, allocator, task, job);
+            try queue_job(runner, gpa, task, job);
         },
         else => |err| return err,
     };
@@ -230,11 +227,11 @@ fn queue_job(
 
 fn queue_timer(
     io_uring: *IoUring,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     duration: Io.Duration,
 ) Error!void {
-    const index = try io_uring.jobs.borrow_hint(allocator, task);
+    const index = try io_uring.jobs.borrow_hint(gpa, task);
     errdefer io_uring.jobs.release(index);
 
     const item = io_uring.jobs.get_ptr(index);
@@ -245,8 +242,8 @@ fn queue_timer(
     };
 
     // TODO: make copierble types none pointers
-    const timespec_ptr = try allocator.create(linux.kernel_timespec);
-    errdefer allocator.destroy(timespec_ptr);
+    const timespec_ptr = try gpa.create(linux.kernel_timespec);
+    errdefer gpa.destroy(timespec_ptr);
 
     timespec_ptr.* = .{
         .sec = @intCast(@divFloor(duration.nanoseconds, std.time.ns_per_s)),
@@ -264,12 +261,12 @@ fn queue_timer(
 
 fn queue_open(
     io_uring: *IoUring,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     path: fs.Path,
     flags: AsyncIO.OpenFlags,
 ) Error!void {
-    const index = try io_uring.jobs.borrow_hint(allocator, task);
+    const index = try io_uring.jobs.borrow_hint(gpa, task);
     errdefer io_uring.jobs.release(index);
 
     const item = io_uring.jobs.get_ptr(index);
@@ -328,12 +325,12 @@ fn queue_open(
 
 fn queue_delete(
     io_uring: *IoUring,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     path: fs.Path,
     is_dir: bool,
 ) Error!void {
-    const index = try io_uring.jobs.borrow_hint(allocator, task);
+    const index = try io_uring.jobs.borrow_hint(gpa, task);
     errdefer io_uring.jobs.release(index);
 
     const item = io_uring.jobs.get_ptr(index);
@@ -368,12 +365,12 @@ fn queue_delete(
 
 fn queue_mkdir(
     io_uring: *IoUring,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     path: fs.Path,
     mode: isize,
 ) Error!void {
-    const index = try io_uring.jobs.borrow_hint(allocator, task);
+    const index = try io_uring.jobs.borrow_hint(gpa, task);
     errdefer io_uring.jobs.release(index);
 
     const item = io_uring.jobs.get_ptr(index);
@@ -406,11 +403,11 @@ fn queue_mkdir(
 
 fn queue_stat(
     io_uring: *IoUring,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     fd: posix.fd_t,
 ) Error!void {
-    const index = try io_uring.jobs.borrow_hint(allocator, task);
+    const index = try io_uring.jobs.borrow_hint(gpa, task);
     errdefer io_uring.jobs.release(index);
 
     const item = io_uring.jobs.get_ptr(index);
@@ -420,8 +417,8 @@ fn queue_stat(
         .task = task,
     };
 
-    const statx_ptr = try allocator.create(linux.Statx);
-    errdefer allocator.destroy(statx_ptr);
+    const statx_ptr = try gpa.create(linux.Statx);
+    errdefer gpa.destroy(statx_ptr);
     item.statx = statx_ptr;
 
     _ = try io_uring.uring.statx(
@@ -436,13 +433,13 @@ fn queue_stat(
 
 fn queue_read(
     io_uring: *IoUring,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     fd: posix.fd_t,
     buffer: []u8,
     offset: ?usize,
 ) Error!void {
-    const index = try io_uring.jobs.borrow_hint(allocator, task);
+    const index = try io_uring.jobs.borrow_hint(gpa, task);
     errdefer io_uring.jobs.release(index);
 
     // If we don't have an offset, set it as -1.
@@ -471,14 +468,14 @@ fn queue_read(
 
 fn queue_write(
     io_uring: *IoUring,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     fd: posix.fd_t,
     buffer: []const u8,
     offset: ?usize,
 ) Error!void {
     const index = io_uring.jobs.borrow_hint(
-        allocator,
+        gpa,
         task,
     ) catch @panic("OOM");
     errdefer io_uring.jobs.release(index);
@@ -509,12 +506,12 @@ fn queue_write(
 
 fn queue_close(
     io_uring: *IoUring,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     fd: posix.fd_t,
 ) Error!void {
     const index = io_uring.jobs.borrow_hint(
-        allocator,
+        gpa,
         task,
     ) catch @panic("OOM");
     errdefer io_uring.jobs.release(index);
@@ -531,12 +528,12 @@ fn queue_close(
 
 fn queue_accept(
     io_uring: *IoUring,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     socket: *const net.Socket,
 ) Error!void {
     const index = io_uring.jobs.borrow_hint(
-        allocator,
+        gpa,
         task,
     ) catch @panic("OOM");
     errdefer io_uring.jobs.release(index);
@@ -569,12 +566,12 @@ fn queue_accept(
 
 fn queue_connect(
     io_uring: *IoUring,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     socket: *const net.Socket,
 ) Error!void {
     const index = io_uring.jobs.borrow_hint(
-        allocator,
+        gpa,
         task,
     ) catch @panic("OOM");
     errdefer io_uring.jobs.release(index);
@@ -599,13 +596,13 @@ fn queue_connect(
 
 fn queue_recv(
     io_uring: *IoUring,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     socket: posix.socket_t,
     buffer: []u8,
 ) Error!void {
     const index = io_uring.jobs.borrow_hint(
-        allocator,
+        gpa,
         task,
     ) catch @panic("OOM");
     errdefer io_uring.jobs.release(index);
@@ -632,12 +629,12 @@ fn queue_recv(
 
 fn queue_send(
     io_uring: *IoUring,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     socket: posix.socket_t,
     buffer: []const u8,
 ) Error!void {
-    const index = try io_uring.jobs.borrow_hint(allocator, task);
+    const index = try io_uring.jobs.borrow_hint(gpa, task);
     errdefer io_uring.jobs.release(index);
 
     const item = io_uring.jobs.get_ptr(index);
@@ -655,8 +652,8 @@ fn queue_send(
     _ = try io_uring.uring.send(index, socket, buffer, 0);
 }
 
-inline fn queue_wake(io_uring: *IoUring, alloator: mem.Allocator) Error!void {
-    const index = try io_uring.jobs.borrow(alloator);
+fn queue_wake(io_uring: *IoUring, gpa: mem.Allocator) Error!void {
+    const index = try io_uring.jobs.borrow(gpa);
     errdefer io_uring.jobs.release(index);
 
     if (io_uring.wake_event_fd == cross.fd.INVALID_FD) return;
@@ -696,7 +693,7 @@ fn submit(runner: *anyopaque) Errors.Submit!void {
 
 fn reap(
     runner: *anyopaque,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     completions: []results.Completion,
     wait: bool,
 ) Errors.Reap![]results.Completion {
@@ -728,11 +725,11 @@ fn reap(
             }
             switch (job.type) {
                 .wake => {
-                    try uring.queue_wake(allocator);
+                    try uring.queue_wake(gpa);
                     break :blk .wake;
                 },
                 .timer => {
-                    defer allocator.destroy(job_with_data.timespec);
+                    defer gpa.destroy(job_with_data.timespec);
                     break :blk .none;
                 },
                 .close => break :blk .close,
@@ -1217,7 +1214,7 @@ fn reap(
                     break :blk .{ .write = result };
                 },
                 .stat => {
-                    defer allocator.destroy(job_with_data.statx);
+                    defer gpa.destroy(job_with_data.statx);
 
                     if (cqe.res == 0) {
                         const statx = job_with_data.statx;
@@ -1371,6 +1368,7 @@ const JobBundle = struct {
 
 const std = @import("std");
 const debug = std.debug;
+const OoM = mem.Allocator.Error;
 const linux = std.os.linux;
 const math = std.math;
 const Io = std.Io;

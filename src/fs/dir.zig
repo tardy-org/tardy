@@ -20,7 +20,7 @@ pub fn cwd() Dir {
 /// Close the underlying Handle of this Dir.
 pub fn close(dir: Dir, rt: *Runtime) !void {
     if (rt.aio.features.has_capability(.close))
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .close = dir.handle,
         })
     else
@@ -43,7 +43,7 @@ pub fn open(rt: *Runtime, path: fs.Path) !Dir {
     };
 
     if (rt.aio.features.has_capability(.open)) {
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .open = .{
                 .path = path,
                 .flags = flags,
@@ -99,7 +99,7 @@ pub fn open(rt: *Runtime, path: fs.Path) !Dir {
 /// Creates and opens a Directory.
 pub fn create(rt: *Runtime, path: fs.Path) !Dir {
     if (rt.aio.features.has_capability(.mkdir)) {
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .mkdir = .{
                 .path = path,
                 .mode = 0o775,
@@ -194,7 +194,7 @@ pub fn open_dir(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !Dir {
 /// Get Stat information of this Dir.
 pub fn stat(dir: Dir, rt: *Runtime) !fs.Stat {
     if (rt.aio.features.has_capability(.stat)) {
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .stat = dir.handle,
         });
 
@@ -233,7 +233,7 @@ pub fn stat(dir: Dir, rt: *Runtime) !fs.Stat {
 /// Delete a File within this Dir.
 pub fn delete_file(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
     if (rt.aio.features.has_capability(.delete)) {
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .delete = .{
                 .path = .{ .rel = .{
                     .dir = dir.handle,
@@ -256,7 +256,7 @@ pub fn delete_file(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
 /// Delete a Dir within this Dir.
 pub fn delete_dir(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
     if (rt.aio.features.has_capability(.delete)) {
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .delete = .{ .path = .{
                 .rel = .{
                     .dir = dir.handle,
@@ -278,12 +278,12 @@ pub fn delete_dir(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
 /// This will iterate through the Directory at the path given,
 /// deleting all files within it and then deleting the Directory.
 ///
-/// This does allocate within it using the `rt.allocator`.
+/// This does allocate within it using the `rt.gpa`.
 pub fn delete_tree(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
     const base_dir = try dir.open_dir(rt, subpath);
 
     const base_std_dir = base_dir.to_std();
-    var walker = try base_std_dir.walk(rt.allocator);
+    var walker = try base_std_dir.walk(rt.gpa);
     defer walker.deinit();
 
     while (try walker.next(rt.io)) |entry| {

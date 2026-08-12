@@ -14,9 +14,9 @@ pub fn Spsc(comptime T: type) type {
 
         state: std_atomic.Value(State) align(std_atomic.cache_line),
 
-        pub fn init(allocator: std.mem.Allocator, size: usize) !Spsc_t {
+        pub fn init(gpa: mem.Allocator, size: usize) !Spsc_t {
             return .{
-                .ring = try .init(allocator, size),
+                .ring = try .init(gpa, size),
 
                 .producer_rt = .{ .raw = null },
                 .producer_index = .{ .raw = 0 },
@@ -29,7 +29,7 @@ pub fn Spsc(comptime T: type) type {
             };
         }
 
-        pub fn deinit(spsc: *Spsc_t, allocator: mem.Allocator) void {
+        pub fn deinit(spsc: *Spsc_t, gpa: mem.Allocator) void {
             spsc.producer_open.store(false, .release);
             spsc.consumer_open.store(false, .release);
 
@@ -42,7 +42,7 @@ pub fn Spsc(comptime T: type) type {
                 return; // Someone else is handling deinit
             }
 
-            spsc.ring.deinit(allocator);
+            spsc.ring.deinit(gpa);
         }
 
         pub fn producer(spsc: *Spsc_t, runtime: *Runtime) Producer {

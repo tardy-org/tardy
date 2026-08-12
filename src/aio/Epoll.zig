@@ -6,7 +6,7 @@ events: []linux.epoll_event,
 
 jobs: pool.Pool(Job),
 
-pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Epoll {
+pub fn init(gpa: mem.Allocator, options: AsyncIO.Options) !Epoll {
     const size = options.size_tasks_initial + 1;
     const epoll_fd = try syscall.epoll_create1(0);
     debug.assert(epoll_fd > -1);
@@ -18,18 +18,18 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Epoll {
     );
     errdefer syscall.close(wake_event_fd);
 
-    const events = try allocator.alloc(
+    const events = try gpa.alloc(
         linux.epoll_event,
         options.size_aio_reap_max,
     );
-    errdefer allocator.free(events);
+    errdefer gpa.free(events);
 
     var jobs: pool.Pool(Job) = try .init(
-        allocator,
+        gpa,
         size,
         options.pooling,
     );
-    errdefer jobs.deinit(allocator);
+    errdefer jobs.deinit(gpa);
 
     // Queue the wake task.
     const index = jobs.borrow_assume_unset(0);
@@ -60,21 +60,21 @@ pub fn init(allocator: mem.Allocator, options: AsyncIO.Options) !Epoll {
     };
 }
 
-pub fn inner_deinit(epoll: *Epoll, allocator: mem.Allocator) void {
+pub fn inner_deinit(epoll: *Epoll, gpa: mem.Allocator) void {
     syscall.close(epoll.epoll_fd);
-    allocator.free(epoll.events);
-    epoll.jobs.deinit(allocator);
+    gpa.free(epoll.events);
+    epoll.jobs.deinit(gpa);
     syscall.close(epoll.wake_event_fd);
 }
 
-fn deinit(runner: *anyopaque, allocator: mem.Allocator) void {
+fn deinit(runner: *anyopaque, gpa: mem.Allocator) void {
     const epoll: *Epoll = @ptrCast(@alignCast(runner));
-    epoll.inner_deinit(allocator);
+    epoll.inner_deinit(gpa);
 }
 
 pub fn queue_job(
     runner: *anyopaque,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     job: AsyncIO.Submission,
 ) Errors.QueueJob!void {
@@ -82,28 +82,28 @@ pub fn queue_job(
 
     try switch (job) {
         .timer => |timer| epoll.queue_timer(
-            allocator,
+            gpa,
             task,
             timer,
         ),
         .accept => |accept| epoll.queue_accept(
-            allocator,
+            gpa,
             task,
             accept.socket,
         ),
         .connect => |connect| epoll.queue_connect(
-            allocator,
+            gpa,
             task,
             connect.socket,
         ),
         .recv => |recv| epoll.queue_recv(
-            allocator,
+            gpa,
             task,
             recv.socket,
             recv.buffer,
         ),
         .send => |send| epoll.queue_send(
-            allocator,
+            gpa,
             task,
             send.socket,
             send.buffer,
@@ -114,11 +114,11 @@ pub fn queue_job(
 
 fn queue_timer(
     epoll: *Epoll,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     duration: Io.Duration,
 ) Errors.Timer!void {
-    const index = try epoll.jobs.borrow_hint(allocator, task);
+    const index = try epoll.jobs.borrow_hint(gpa, task);
     errdefer epoll.jobs.release(index);
 
     const item = epoll.jobs.get_ptr(index);
@@ -160,11 +160,11 @@ fn queue_timer(
 
 fn queue_accept(
     epoll: *Epoll,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     socket: *const net.Socket,
 ) Errors.Accept!void {
-    const index = try epoll.jobs.borrow_hint(allocator, task);
+    const index = try epoll.jobs.borrow_hint(gpa, task);
     errdefer epoll.jobs.release(index);
 
     const item = epoll.jobs.get_ptr(index);
@@ -190,11 +190,11 @@ fn queue_accept(
 
 fn queue_connect(
     epoll: *Epoll,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     socket: *const net.Socket,
 ) Errors.Connect!void {
-    const index = try epoll.jobs.borrow_hint(allocator, task);
+    const index = try epoll.jobs.borrow_hint(gpa, task);
     errdefer epoll.jobs.release(index);
 
     const item = epoll.jobs.get_ptr(index);
@@ -224,12 +224,12 @@ fn queue_connect(
 
 fn queue_recv(
     epoll: *Epoll,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     buffer: []u8,
 ) Errors.Recv!void {
-    const index = try epoll.jobs.borrow_hint(allocator, task);
+    const index = try epoll.jobs.borrow_hint(gpa, task);
     errdefer epoll.jobs.release(index);
 
     const item = epoll.jobs.get_ptr(index);
@@ -254,12 +254,12 @@ fn queue_recv(
 
 fn queue_send(
     epoll: *Epoll,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     socket: net.Socket.Handle,
     buffer: []const u8,
 ) Errors.Send!void {
-    const index = try epoll.jobs.borrow_hint(allocator, task);
+    const index = try epoll.jobs.borrow_hint(gpa, task);
     errdefer epoll.jobs.release(index);
 
     const item = epoll.jobs.get_ptr(index);

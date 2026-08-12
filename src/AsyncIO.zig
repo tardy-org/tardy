@@ -20,22 +20,22 @@ pub fn attach(async_io: *AsyncIO, completions: []results.Completion) void {
     async_io.attached = true;
 }
 
-pub fn deinit(async_io: *AsyncIO, allocator: mem.Allocator, io: Io) void {
+pub fn deinit(async_io: *AsyncIO, gpa: mem.Allocator, io: Io) void {
     async_io.mutex.lockUncancelable(io);
     defer async_io.mutex.unlock(io);
 
-    async_io.vtable.deinit(async_io.runner, allocator);
+    async_io.vtable.deinit(async_io.runner, gpa);
 }
 
 pub fn queue_job(
     async_io: *AsyncIO,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     task: usize,
     sub: Submission,
 ) QueueJobError!void {
     debug.assert(async_io.attached);
     log.debug("queuing up job={t} at index={d}", .{ sub, task });
-    try async_io.vtable.queue_job(async_io.runner, allocator, task, sub);
+    try async_io.vtable.queue_job(async_io.runner, gpa, task, sub);
 }
 
 pub fn wake(async_io: *AsyncIO, io: Io) !void {
@@ -48,14 +48,14 @@ pub fn wake(async_io: *AsyncIO, io: Io) !void {
 
 pub fn reap(
     async_io: *AsyncIO,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     wait: bool,
 ) ![]results.Completion {
     debug.assert(async_io.attached);
 
     return try async_io.vtable.reap(
         async_io.runner,
-        allocator,
+        gpa,
         async_io.completions,
         wait,
     );

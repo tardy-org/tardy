@@ -10,16 +10,16 @@ pub fn Ring(comptime T: type) type {
         // Total count of elements.
         count: usize = 0,
 
-        pub fn init(allocator: mem.Allocator, size: usize) !Ring_t {
+        pub fn init(gpa: mem.Allocator, size: usize) !Ring_t {
             debug.assert(size >= 1);
-            const items = try allocator.alloc(T, size);
+            const items = try gpa.alloc(T, size);
             return .{
                 .items = items,
             };
         }
 
-        pub fn deinit(ring: Ring_t, allocator: mem.Allocator) void {
-            allocator.free(ring.items);
+        pub fn deinit(ring: Ring_t, gpa: mem.Allocator) void {
+            gpa.free(ring.items);
         }
 
         pub fn full(ring: Ring_t) bool {
@@ -71,9 +71,11 @@ pub fn Ring(comptime T: type) type {
 }
 
 test "Ring Send and Recv" {
+    const gpa = testing.allocator;
+
     const size: u32 = 100;
-    var ring: Ring(usize) = try .init(testing.allocator, size);
-    defer ring.deinit(testing.allocator);
+    var ring: Ring(usize) = try .init(gpa, size);
+    defer ring.deinit(gpa);
 
     for (0..size) |i| {
         for (0..i) |j| {

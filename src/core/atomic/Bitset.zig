@@ -6,13 +6,13 @@ lock: std.Io.RwLock,
 /// Not safe to access. Use `get_bit_length`.
 bit_length: usize,
 
-pub fn init(allocator: mem.Allocator, size: usize, default: bool) !Bitset {
+pub fn init(gpa: mem.Allocator, size: usize, default: bool) !Bitset {
     const word_count = @divCeil(size, @bitSizeOf(usize));
-    const words = try allocator.alloc(
+    const words = try gpa.alloc(
         atomic.Value(usize),
         word_count,
     );
-    errdefer allocator.free(words);
+    errdefer gpa.free(words);
 
     const value: usize = if (default) math.maxInt(usize) else 0;
     for (words) |*word| word.* = .{ .raw = value };
@@ -24,16 +24,16 @@ pub fn init(allocator: mem.Allocator, size: usize, default: bool) !Bitset {
     };
 }
 
-pub fn deinit(bitset: *Bitset, allocator: mem.Allocator, io: std.Io) void {
+pub fn deinit(bitset: *Bitset, gpa: mem.Allocator, io: std.Io) void {
     bitset.lock.lockUncancelable(io);
     defer bitset.lock.unlock(io);
 
-    allocator.free(bitset.words);
+    gpa.free(bitset.words);
 }
 
 fn resize(
     bitset: *Bitset,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     io: std.Io,
     new_size: usize,
     default: bool,
@@ -46,13 +46,14 @@ fn resize(
 
     const value: usize = if (default) math.maxInt(usize) else 0;
     const old_words = bitset.words;
-    if (allocator.resize(bitset.words, new_word_count)) {
+
+    if (gpa.resize(bitset.words, new_word_count)) {
         for (bitset.words[old_words.len..]) |*word| word.* = .{
             .raw = value,
         };
     } else {
-        defer allocator.free(old_words);
-        const new_words = try allocator.alloc(
+        defer gpa.free(old_words);
+        const new_words = try gpa.alloc(
             atomic.Value(usize),
             new_word_count,
         );
@@ -80,7 +81,7 @@ pub fn get_bit_length(bitset: *Bitset, io: std.Io) usize {
     return bitset.bit_length;
 }
 
-pub fn set(bitset: *Bitset, allocator: mem.Allocator, io: std.Io, index: usize) !void {
+pub fn set(bitset: *Bitset, gpa: mem.Allocator, io: std.Io, index: usize) !void {
     bitset.lock.lockSharedUncancelable(io);
     defer bitset.lock.unlockShared(io);
 
@@ -89,7 +90,7 @@ pub fn set(bitset: *Bitset, allocator: mem.Allocator, io: std.Io, index: usize) 
         defer bitset.lock.lockSharedUncancelable(io);
 
         try bitset.resize(
-            allocator,
+            gpa,
             io,
             try math.ceilPowerOfTwo(usize, index),
             false,

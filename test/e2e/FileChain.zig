@@ -6,35 +6,52 @@ steps: []Step,
 index: usize = 0,
 buffer: []u8,
 
-pub fn next_steps(current: Step) []const Step {
-    switch (current) {
-        .create, .open, .read, .write, .stat => return &.{ .read, .write, .stat, .close },
-        .close => return &.{ .open, .delete },
-        .delete => return &.{},
-    }
+// Path is expected to remain valid.
+pub fn init(
+    gpa: mem.Allocator,
+    chain: []const Step,
+    path: fs.Path,
+    buffer_size: usize,
+) !FileChain {
+    debug.assert(chain.len > 0);
+
+    const chain_dupe = try gpa.dupe(Step, chain);
+    errdefer gpa.free(chain_dupe);
+
+    const path_dupe = try path.dupe(gpa);
+    errdefer switch (path_dupe) {
+        .rel => |rel| gpa.free(rel.path),
+        .abs => |abs| gpa.free(abs),
+    };
+
+    debug.assert(validate_chain(chain));
+
+    const buffer = try gpa.alloc(u8, buffer_size);
+    errdefer gpa.free(buffer);
+
+    return .{
+        .steps = chain_dupe,
+        .path = path_dupe,
+        .buffer = buffer,
+    };
 }
 
-pub fn validate_chain(chain: []const Step) bool {
-    if (chain.len < 3) return false;
-    if (chain[0] != .create) return false;
-    if (chain[chain.len - 1] != .delete) return false;
-
-    chain: for (chain[0 .. chain.len - 1], chain[1..]) |prev, curr| {
-        const steps = next_steps(prev);
-        for (steps[0..]) |step| if (curr == step) continue :chain;
-        return false;
-    }
-
-    return true;
+pub fn deinit(file_chain: *FileChain, gpa: mem.Allocator) void {
+    defer gpa.free(file_chain.steps);
+    defer gpa.free(file_chain.buffer);
+    defer switch (file_chain.path) {
+        .rel => |rel| gpa.free(rel.path),
+        .abs => |abs| gpa.free(abs),
+    };
 }
 
-pub fn generate_random_chain(allocator: mem.Allocator, seed: u64) ![]Step {
+pub fn generate_random_chain(gpa: mem.Allocator, seed: u64) ![]Step {
     var prng: std.Random.DefaultPrng = .init(seed);
     const rand = prng.random();
 
-    var list: std.ArrayList(Step) = try .initCapacity(allocator, 0);
-    defer list.deinit(allocator);
-    try list.append(allocator, .create);
+    var list: std.ArrayList(Step) = try .initCapacity(gpa, 0);
+    defer list.deinit(gpa);
+    try list.append(gpa, .create);
 
     while (true) {
         const potentials = next_steps(list.last().?.*);
@@ -44,49 +61,10 @@ pub fn generate_random_chain(allocator: mem.Allocator, seed: u64) ![]Step {
             0,
             potentials.len,
         );
-        try list.append(allocator, potentials[potential]);
+        try list.append(gpa, potentials[potential]);
     }
 
-    return try list.toOwnedSlice(allocator);
-}
-
-// Path is expected to remain valid.
-pub fn init(
-    allocator: mem.Allocator,
-    chain: []const Step,
-    path: fs.Path,
-    buffer_size: usize,
-) !FileChain {
-    debug.assert(chain.len > 0);
-
-    const chain_dupe = try allocator.dupe(Step, chain);
-    errdefer allocator.free(chain_dupe);
-
-    const path_dupe = try path.dupe(allocator);
-    errdefer switch (path_dupe) {
-        .rel => |rel| allocator.free(rel.path),
-        .abs => |abs| allocator.free(abs),
-    };
-
-    debug.assert(validate_chain(chain));
-
-    const buffer = try allocator.alloc(u8, buffer_size);
-    errdefer allocator.free(buffer);
-
-    return .{
-        .steps = chain_dupe,
-        .path = path_dupe,
-        .buffer = buffer,
-    };
-}
-
-pub fn deinit(file_chain: *FileChain, allocator: mem.Allocator) void {
-    defer allocator.free(file_chain.steps);
-    defer allocator.free(file_chain.buffer);
-    defer switch (file_chain.path) {
-        .rel => |rel| allocator.free(rel.path),
-        .abs => |abs| allocator.free(abs),
-    };
+    return try list.toOwnedSlice(gpa);
 }
 
 pub fn chain_frame(
@@ -95,8 +73,8 @@ pub fn chain_frame(
     counter: *usize,
     seed_string: [:0]const u8,
 ) !void {
-    defer rt.allocator.destroy(chain);
-    defer chain.deinit(rt.allocator);
+    defer rt.gpa.destroy(chain);
+    defer chain.deinit(rt.gpa);
 
     var read_head: usize = 0;
     var write_head: usize = 0;
@@ -150,6 +128,28 @@ pub fn chain_frame(
         log.debug("deleting the e2e tree...", .{});
         try fs.Dir.cwd().delete_tree(rt, seed_string);
     }
+}
+
+pub fn next_steps(current: Step) []const Step {
+    switch (current) {
+        .create, .open, .read, .write, .stat => return &.{ .read, .write, .stat, .close },
+        .close => return &.{ .open, .delete },
+        .delete => return &.{},
+    }
+}
+
+pub fn validate_chain(chain: []const Step) bool {
+    if (chain.len < 3) return false;
+    if (chain[0] != .create) return false;
+    if (chain[chain.len - 1] != .delete) return false;
+
+    chain: for (chain[0 .. chain.len - 1], chain[1..]) |prev, curr| {
+        const steps = next_steps(prev);
+        for (steps[0..]) |step| if (curr == step) continue :chain;
+        return false;
+    }
+
+    return true;
 }
 
 test "FileChain: Invalid Exists" {
@@ -214,16 +214,17 @@ test "FileChain: Verify Double Close" {
 }
 
 test "FileChain: Validate Random Chain" {
+    const gpa = testing.allocator;
     // Actually generates and tests a random FileChain :)
     var seed: u64 = undefined;
     try std.posix.getrandom(mem.asBytes(&seed));
     errdefer std.debug.print("failed seed: {d}\n", .{seed});
 
     const chain = try FileChain.generate_random_chain(
-        testing.allocator,
+        gpa,
         seed,
     );
-    defer testing.allocator.free(chain);
+    defer gpa.free(chain);
 
     try testing.expect(FileChain.validate_chain(chain));
 }

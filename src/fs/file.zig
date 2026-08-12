@@ -49,7 +49,7 @@ pub fn std_err() File {
 
 pub fn close(file: File, rt: *Runtime) !void {
     if (rt.aio.features.has_capability(.close))
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .close = file.handle,
         })
     else
@@ -71,7 +71,7 @@ pub fn create(rt: *Runtime, path: fs.Path, flags: CreateFlags) !File {
     };
 
     if (rt.aio.features.has_capability(.open)) {
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .open = .{ .path = path, .flags = aio_flags },
         });
 
@@ -175,7 +175,7 @@ pub fn open(rt: *Runtime, path: fs.Path, flags: OpenFlags) !File {
             .directory = false,
         };
 
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .open = .{ .path = path, .flags = aio_flags },
         });
 
@@ -274,7 +274,7 @@ pub fn open(rt: *Runtime, path: fs.Path, flags: OpenFlags) !File {
 
 pub fn read(file: File, rt: *Runtime, buffer: []u8, offset: ?usize) !usize {
     if (rt.aio.features.has_capability(.read)) {
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .read = .{
                 .fd = file.handle,
                 .buffer = buffer,
@@ -363,7 +363,7 @@ pub fn write(
     offset: ?usize,
 ) results.WriteError!usize {
     if (rt.aio.features.has_capability(.write)) {
-        rt.scheduler.io_await(rt.allocator, .{
+        rt.scheduler.ioAwait(rt.gpa, .{
             .write = .{
                 .fd = file.handle,
                 .buffer = buffer,
@@ -456,7 +456,7 @@ pub fn write_all(
 
 pub fn stat(file: File, rt: *Runtime) !fs.Stat {
     if (rt.aio.features.has_capability(.stat)) {
-        try rt.scheduler.io_await(rt.allocator, .{
+        try rt.scheduler.ioAwait(rt.gpa, .{
             .stat = file.handle,
         });
 

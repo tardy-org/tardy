@@ -2,7 +2,7 @@
 /// Every thread should have an independent Runtime.
 pub const Runtime = @This();
 
-allocator: mem.Allocator,
+gpa: mem.Allocator,
 storage: Storage,
 scheduler: Scheduler,
 // TODO: audit if this is needed, or all request can go through `aio`
@@ -12,22 +12,22 @@ id: usize,
 running: bool,
 
 // The currently running Task's index.
-current_task: ?usize = null,
+current_task: ?usize,
 
 pub fn init(
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     io: std.Io,
     aio: AsyncIO,
     options: Options,
 ) !Runtime {
     const scheduler: Scheduler = try .init(
-        allocator,
+        gpa,
         options.size_tasks_initial,
         options.pooling,
     );
 
     return .{
-        .allocator = allocator,
+        .gpa = gpa,
         .storage = .init,
         .scheduler = scheduler,
         .aio = aio,
@@ -39,10 +39,10 @@ pub fn init(
 }
 
 pub fn deinit(rt: *Runtime) void {
-    rt.storage.deinit(rt.allocator);
-    rt.scheduler.deinit(rt.allocator, rt.io);
-    rt.allocator.free(rt.aio.completions);
-    rt.aio.deinit(rt.allocator, rt.io);
+    rt.storage.deinit(rt.gpa);
+    rt.scheduler.deinit(rt.gpa, rt.io);
+    rt.gpa.free(rt.aio.completions);
+    rt.aio.deinit(rt.gpa, rt.io);
 }
 
 /// Wake the given Runtime.
@@ -56,7 +56,7 @@ pub fn wake(rt: *Runtime) !void {
 pub fn trigger(rt: *Runtime, index: usize) !void {
     if (rt.running) {
         log.debug("{d} - triggering {d}", .{ rt.id, index });
-        try rt.scheduler.trigger(index);
+        try rt.scheduler.trigger(rt.gpa, rt.io, index);
         try rt.wake();
     }
 }
@@ -78,7 +78,7 @@ pub fn spawn(
     stack_size: ?Coroutine.Stack,
 ) !void {
     try rt.scheduler.spawn(
-        rt.allocator,
+        rt.gpa,
         coroutine_fn,
         args,
         stack_size,
@@ -92,19 +92,18 @@ fn run_task(rt: *Runtime, task: *Task) !void {
     frame.proceed();
 
     switch (frame.status) {
-        else => {},
         .done => {
             // remember: task is invalid IF it resizes.
             // so we only hit that condition sometimes in here.
             const index = rt.current_task.?;
             // If the frame is done, clean it up.
-            try rt.scheduler.release(rt.allocator, index);
+            try rt.scheduler.release(rt.gpa, index);
             // frees the heap-allocated stack.
             //
             // this should be evaluted as it does have a perf impact but
             // if frames are long lived (as they should be) and most data is
             // stack allocated within that context, i think it should be ok?
-            frame.deinit(rt.allocator);
+            frame.deinit(rt.gpa);
 
             // if we have no more tasks, we are done and can set our running
             // status to false.
@@ -113,15 +112,16 @@ fn run_task(rt: *Runtime, task: *Task) !void {
         .errored => {
             const index = rt.current_task.?;
             log.warn("cleaning up failed frame...", .{});
-            try rt.scheduler.release(rt.allocator, index);
-            frame.deinit(rt.allocator);
+            try rt.scheduler.release(rt.gpa, index);
+            frame.deinit(rt.gpa);
         },
+        else => {},
     }
 }
 
 pub fn run(rt: *Runtime) !void {
-    defer rt.running = false;
     rt.running = true;
+    defer rt.running = false;
 
     while (true) {
         var force_woken = false;
@@ -174,7 +174,7 @@ pub fn run(rt: *Runtime) !void {
         log.debug("{d} - Wait for I/O: {}", .{ rt.id, wait_for_io });
 
         const completions = try rt.aio.reap(
-            rt.allocator,
+            rt.gpa,
             wait_for_io,
         );
         for (completions) |completion| {
