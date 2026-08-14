@@ -2,7 +2,7 @@ pub const Poll = @This();
 
 wake_pipe: [2]fs.File.Handle,
 fd_list: std.ArrayList(syscall.pollfd),
-fd_job_map: hash_map.Auto(fs.File.Handle, Job),
+fd_job_map: array_hash_map.Auto(fs.File.Handle, Job),
 
 timers: TimerQueue,
 
@@ -59,7 +59,7 @@ pub fn init(gpa: mem.Allocator, options: AsyncIO.Options) !Poll {
     var fd_list: std.ArrayList(syscall.pollfd) = try .initCapacity(gpa, size);
     errdefer fd_list.deinit(gpa);
 
-    var fd_job_map: hash_map.Auto(fs.File.Handle, Job) = .empty;
+    var fd_job_map: array_hash_map.Auto(fs.File.Handle, Job) = .empty;
     errdefer fd_job_map.deinit(gpa);
 
     try fd_job_map.ensureTotalCapacity(gpa, size);
@@ -572,7 +572,7 @@ const Io = std.Io;
 const debug = std.debug;
 const posix = std.posix;
 const math = std.math;
-const hash_map = std.array_hash_map;
+const array_hash_map = std.array_hash_map;
 const mem = std.mem;
 const OoM = mem.Allocator.Error;
 const builtin = @import("builtin");

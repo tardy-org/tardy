@@ -2,7 +2,7 @@
 pub const Storage = @This();
 
 state: heap.ArenaAllocator.State,
-map: hash_map.String(*anyopaque),
+map: array_hash_map.String(*anyopaque),
 
 pub const init: Storage = .{
     .state = .init,
@@ -112,7 +112,7 @@ test "Storage Storing" {
 
 const std = @import("std");
 const heap = std.heap;
-const hash_map = std.array_hash_map;
+const array_hash_map = std.array_hash_map;
 const mem = std.mem;
 const debug = std.debug;
 const testing = std.testing;
