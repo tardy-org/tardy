@@ -30,8 +30,7 @@ pub fn start_frame(rt: *Runtime, shared_params: *const e2e.Params) !void {
         );
         defer rt.gpa.free(sub_chain);
 
-        const subpath = try fmt.allocPrintSentinel(
-            rt.gpa,
+        const subpath = try rt.gpa.printSentinel(
             "{s}-{d}",
             .{ shared_params.seed_string, i },
             0x0,
@@ -59,7 +58,6 @@ const is_unix = builtin.os.tag != .windows;
 const log = std.log.scoped(.@"tardy/e2e/first");
 
 const std = @import("std");
-const fmt = std.fmt;
 const Random = std.Random;
 const builtin = @import("builtin");
 
