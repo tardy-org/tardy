@@ -56,7 +56,7 @@ pub const Server = struct {
         try list.append(gpa, .accept);
 
         while (true) {
-            const potentials = next_steps(list.last().?.*);
+            const potentials = next_steps(list.last().?);
             if (potentials.len == 0) break;
             const potential = rand.intRangeLessThan(
                 usize,

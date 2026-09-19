@@ -54,7 +54,7 @@ pub fn generate_random_chain(gpa: mem.Allocator, seed: u64) ![]Step {
     try list.append(gpa, .create);
 
     while (true) {
-        const potentials = next_steps(list.last().?.*);
+        const potentials = next_steps(list.last().?);
         if (potentials.len == 0) break;
         const potential = rand.intRangeLessThan(
             usize,
