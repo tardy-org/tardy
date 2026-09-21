@@ -286,7 +286,7 @@ fn add_or_mod_fd(
     epoll: *Epoll,
     fd: posix.fd_t,
     event: *linux.epoll_event,
-) syscall.EpollCtlError!void {
+) syscall.Errors.EpollCtl!void {
     epoll.add_fd(fd, event) catch |e| switch (e) {
         error.FileDescriptorAlreadyPresentInSet => {
             try epoll.mod_fd(fd, event);
@@ -299,7 +299,7 @@ fn add_fd(
     epoll: *Epoll,
     fd: posix.fd_t,
     event: *linux.epoll_event,
-) syscall.EpollCtlError!void {
+) syscall.Errors.EpollCtl!void {
     try syscall.epoll_ctl(
         epoll.epoll_fd,
         linux.EPOLL.CTL_ADD,
@@ -312,7 +312,7 @@ fn mod_fd(
     epoll: *Epoll,
     fd: posix.fd_t,
     event: *linux.epoll_event,
-) syscall.EpollCtlError!void {
+) syscall.Errors.EpollCtl!void {
     try syscall.epoll_ctl(
         epoll.epoll_fd,
         linux.EPOLL.CTL_MOD,
@@ -321,7 +321,7 @@ fn mod_fd(
     );
 }
 
-fn remove_fd(epoll: *Epoll, fd: posix.fd_t) syscall.EpollCtlError!void {
+fn remove_fd(epoll: *Epoll, fd: posix.fd_t) syscall.Errors.EpollCtl!void {
     try syscall.epoll_ctl(
         epoll.epoll_fd,
         linux.EPOLL.CTL_DEL,
@@ -330,7 +330,7 @@ fn remove_fd(epoll: *Epoll, fd: posix.fd_t) syscall.EpollCtlError!void {
     );
 }
 
-pub fn wake(runner: *anyopaque) syscall.WriteError!void {
+pub fn wake(runner: *anyopaque) syscall.Errors.Write!void {
     const epoll: *Epoll = @ptrCast(@alignCast(runner));
 
     const bytes: []const u8 = "00000000";

@@ -543,6 +543,7 @@ pub const Errors = struct {
     pub const Accept = Error;
     pub const Recv = Error;
     pub const Timer = Error;
+    pub const Send = Error;
 };
 
 const WAKE_IDENT = 1;
