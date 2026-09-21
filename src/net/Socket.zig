@@ -153,12 +153,10 @@ pub fn close(sock: *const Socket, rt: *Runtime) !void {
 }
 
 pub fn close_blocking(sock: *const Socket) void {
-    // todo: delete the unix socket if the
-    // server is being closed
     syscall.close(sock.handle);
 }
 
-pub fn accept(sock: *const Socket, rt: *Runtime) !Socket {
+pub fn accept(sock: *const Socket, rt: *Runtime) Errors.Accept!Socket {
     debug.assert(sock.kind.listenable());
     if (rt.aio.features.has_capability(.accept)) {
         try rt.scheduler.ioAwait(rt.gpa, .{
@@ -182,7 +180,7 @@ pub fn accept(sock: *const Socket, rt: *Runtime) !Socket {
                 sock.handle,
                 &addr,
                 if (builtin.os.tag != .windows) posix.SOCK.NONBLOCK else 0,
-            ) catch |e| return switch (e) {
+            ) catch |err| return switch (err) {
                 error.WouldBlock => {
                     Coroutine.yield();
                     continue;
@@ -209,7 +207,7 @@ pub fn accept(sock: *const Socket, rt: *Runtime) !Socket {
     }
 }
 
-pub fn connect(sock: *const Socket, rt: *Runtime) !void {
+pub fn connect(sock: *const Socket, rt: *Runtime) Errors.Connect!void {
     if (rt.aio.features.has_capability(.connect)) {
         try rt.scheduler.ioAwait(rt.gpa, .{
             .connect = .{
@@ -225,7 +223,7 @@ pub fn connect(sock: *const Socket, rt: *Runtime) !void {
             break syscall.connect(
                 sock.handle,
                 &sock.addr,
-            ) catch |e| return switch (e) {
+            ) catch |err| return switch (err) {
                 error.WouldBlock => {
                     Coroutine.yield();
                     continue;
@@ -236,7 +234,7 @@ pub fn connect(sock: *const Socket, rt: *Runtime) !void {
     }
 }
 
-pub fn recv(sock: *const Socket, rt: *Runtime, buffer: []u8) !usize {
+pub fn recv(sock: *const Socket, rt: *Runtime, buffer: []u8) Errors.Recv!usize {
     if (rt.aio.features.has_capability(.recv)) {
         try rt.scheduler.ioAwait(rt.gpa, .{
             .recv = .{
@@ -254,7 +252,7 @@ pub fn recv(sock: *const Socket, rt: *Runtime, buffer: []u8) !usize {
                 sock.handle,
                 buffer,
                 0,
-            ) catch |e| return switch (e) {
+            ) catch |err| return switch (err) {
                 error.WouldBlock => {
                     Coroutine.yield();
                     continue;
@@ -268,7 +266,7 @@ pub fn recv(sock: *const Socket, rt: *Runtime, buffer: []u8) !usize {
     }
 }
 
-pub fn recv_all(sock: *const Socket, rt: *Runtime, buffer: []u8) !usize {
+pub fn recv_all(sock: *const Socket, rt: *Runtime, buffer: []u8) Errors.Recv!usize {
     var length: usize = 0;
 
     while (length < buffer.len) {
@@ -283,7 +281,7 @@ pub fn recv_all(sock: *const Socket, rt: *Runtime, buffer: []u8) !usize {
     return length;
 }
 
-pub fn send(sock: *const Socket, rt: *Runtime, buffer: []const u8) !usize {
+pub fn send(sock: *const Socket, rt: *Runtime, buffer: []const u8) Errors.Send!usize {
     if (rt.aio.features.has_capability(.send)) {
         try rt.scheduler.ioAwait(rt.gpa, .{
             .send = .{
@@ -301,7 +299,7 @@ pub fn send(sock: *const Socket, rt: *Runtime, buffer: []const u8) !usize {
                 sock.handle,
                 buffer,
                 0,
-            ) catch |e| return switch (e) {
+            ) catch |err| return switch (err) {
                 error.WouldBlock => {
                     Coroutine.yield();
                     continue;
@@ -317,7 +315,11 @@ pub fn send(sock: *const Socket, rt: *Runtime, buffer: []const u8) !usize {
     }
 }
 
-pub fn send_all(sock: *const Socket, rt: *Runtime, buffer: []const u8) !usize {
+pub fn send_all(
+    sock: *const Socket,
+    rt: *Runtime,
+    buffer: []const u8,
+) Errors.Send!usize {
     var length: usize = 0;
 
     while (length < buffer.len) {
@@ -697,13 +699,20 @@ pub fn stream_to(from: Socket, to_w: *Io.Writer, rt: *Runtime) !void {
             file_r,
             to_w,
             .limited(to_w.buffer.len),
-        ) catch |e| switch (e) {
+        ) catch |err| switch (err) {
             error.EndOfStream => break,
-            else => |err| return err,
+            else => |e| return e,
         };
         _ = to_w.vtable.drain(to_w, &.{}, 0) catch break;
     }
 }
+
+const Errors = struct {
+    const Accept = AsyncIO.Errors.QueueJob || results.Errors.Accept;
+    const Recv = AsyncIO.Errors.QueueJob || results.Errors.Recv;
+    const Send = AsyncIO.Errors.QueueJob || results.Errors.Send;
+    const Connect = AsyncIO.Errors.QueueJob || results.Errors.Connect;
+};
 
 const std = @import("std");
 const debug = std.debug;
@@ -715,7 +724,9 @@ pub const Handle = net.Socket.Handle;
 const builtin = @import("builtin");
 
 const tardy = @import("../root.zig");
-const syscall = tardy.AsyncIO.syscall;
+const results = tardy.results;
+const AsyncIO = tardy.AsyncIO;
+const syscall = AsyncIO.syscall;
 const Coroutine = tardy.Coroutine;
 const Runtime = tardy.Runtime;
 const log = std.log.scoped(.@"tardy/net/Socket");

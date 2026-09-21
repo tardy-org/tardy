@@ -81,7 +81,7 @@ pub fn get_bit_length(bitset: *Bitset, io: std.Io) usize {
     return bitset.bit_length;
 }
 
-pub fn set(bitset: *Bitset, gpa: mem.Allocator, io: std.Io, index: usize) !void {
+pub fn set(bitset: *Bitset, gpa: mem.Allocator, io: std.Io, index: usize) OoM!void {
     bitset.lock.lockSharedUncancelable(io);
     defer bitset.lock.unlockShared(io);
 
@@ -136,6 +136,7 @@ pub fn unset_all(bitset: *Bitset, io: std.Io) void {
 
 const std = @import("std");
 const mem = std.mem;
+const OoM = mem.Allocator.Error;
 const math = std.math;
 const debug = std.debug;
 const atomic = std.atomic;

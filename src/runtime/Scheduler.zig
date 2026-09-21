@@ -62,12 +62,21 @@ pub fn trigger_await(sched: *Scheduler) void {
 
 // NOTE: This can spuriously trigger a Task later in the Run Loop.
 /// Safe to call from a different Runtime.
-pub fn trigger(sched: *Scheduler, gpa: mem.Allocator, io: std.Io, index: usize) !void {
+pub fn trigger(
+    sched: *Scheduler,
+    gpa: mem.Allocator,
+    io: std.Io,
+    index: usize,
+) OoM!void {
     try sched.triggers.set(gpa, io, index);
 }
 
 // This is only safe to call from the Runtime that the Frame is running on.
-pub fn ioAwait(sched: *Scheduler, gpa: mem.Allocator, job: AsyncIO.Submission) !void {
+pub fn ioAwait(
+    sched: *Scheduler,
+    gpa: mem.Allocator,
+    job: AsyncIO.Submission,
+) AsyncIO.Errors.QueueJob!void {
     const rt: *Runtime = @fieldParentPtr("scheduler", sched);
     const index = rt.current_task.?;
     const task = sched.tasks.get_ptr(index);
@@ -131,6 +140,7 @@ const TaskWithJob = struct {
 
 const std = @import("std");
 const mem = std.mem;
+const OoM = mem.Allocator.Error;
 const meta = std.meta;
 const debug = std.debug;
 
