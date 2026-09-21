@@ -92,7 +92,7 @@ pub fn set(bitset: *Bitset, gpa: mem.Allocator, io: std.Io, index: usize) OoM!vo
         try bitset.resize(
             gpa,
             io,
-            try math.ceilPowerOfTwo(usize, index),
+            math.ceilPowerOfTwo(usize, index) catch unreachable,
             false,
         );
     }
