@@ -19,212 +19,217 @@ pub fn Resulted(comptime T: type, comptime E: type) type {
     };
 }
 
-pub const AcceptError = error{
-    WouldBlock,
-    InvalidFd,
-    ConnectionAborted,
-    InvalidAddress,
-    Interrupted,
-    NotListening,
-    ProcessFdQuotaExceeded,
-    SystemFdQuotaExceeded,
-    OutOfMemory,
-    SystemResources,
-    SocketNotListening,
-    BlockedByFirewall,
-    ProtocolFailure,
-    Unexpected,
+pub const Errors = struct {
+    pub const Accept = error{
+        WouldBlock,
+        InvalidFd,
+        ConnectionAborted,
+        InvalidAddress,
+        Interrupted,
+        NotListening,
+        ProcessFdQuotaExceeded,
+        SystemFdQuotaExceeded,
+        OutOfMemory,
+        SystemResources,
+        SocketNotListening,
+        BlockedByFirewall,
+        ProtocolFailure,
+        Unexpected,
+    };
+
+    pub const Connect = error{
+        AccessDenied,
+        AddressInUse,
+        AddressNotAvailable,
+        AddressFamilyNotSupported,
+        WouldBlock,
+        InvalidFd,
+        ConnectionRefused,
+        InvalidAddress,
+        Interrupted,
+        AlreadyConnected,
+        NetworkUnreachable,
+        NotASocket,
+        ProtocolFamilyNotSupported,
+        TimedOut,
+        Unexpected,
+    };
+
+    pub const Recv = error{
+        Closed,
+        WouldBlock,
+        SocketNotConnected,
+        SystemResources,
+        ConnectionRefused,
+        ConnectionResetByPeer,
+        BrokenPipe,
+        ConnectionTimedOut,
+        MessageTooBig,
+        Unexpected,
+    };
+
+    pub const Send = error{
+        Closed,
+        AccessDenied,
+        WouldBlock,
+        // TODO: remove after finding out why secsock
+        // sometimes returns InvalidFd on send
+        InvalidFd,
+        FastOpenAlreadyInProgress,
+        ConnectionRefused,
+        ConnectionResetByPeer,
+        MessageOversize,
+        SystemResources,
+        BrokenPipe,
+        NetworkDown,
+        Unexpected,
+    };
+
+    pub const Open = error{
+        AccessDenied,
+        InvalidFd,
+        Busy,
+        DiskQuotaExceeded,
+        AlreadyExists,
+        InvalidAddress,
+        FileTooBig,
+        Interrupted,
+        InvalidArguments,
+        IsDirectory,
+        Loop,
+        ProcessFdQuotaExceeded,
+        NameTooLong,
+        SystemFdQuotaExceeded,
+        DeviceNotFound,
+        NotFound,
+        OutOfMemory,
+        NoSpace,
+        NotADirectory,
+        OperationNotSupported,
+        ReadOnlyFileSystem,
+        FileLocked,
+        WouldBlock,
+        Unexpected,
+    };
+
+    pub const Read = error{
+        AccessDenied,
+        EndOfFile,
+        WouldBlock,
+        InvalidFd,
+        InvalidAddress,
+        Interrupted,
+        InvalidArguments,
+        IoError,
+        IsDirectory,
+        Unexpected,
+    };
+
+    pub const Write = error{
+        WouldBlock,
+        InvalidFd,
+        NoDestinationAddress,
+        DiskQuotaExceeded,
+        InvalidAddress,
+        FileTooBig,
+        Interrupted,
+        IoError,
+        NoSpace,
+        AccessDenied,
+        BrokenPipe,
+        Unexpected,
+    };
+
+    pub const Stat = error{
+        AccessDenied,
+        InvalidFd,
+        InvalidAddress,
+        InvalidArguments,
+        Loop,
+        NameTooLong,
+        NotFound,
+        OutOfMemory,
+        NotADirectory,
+        Unexpected,
+        PermissionDenied,
+    };
+
+    pub const Mkdir = error{
+        AccessDenied,
+        AlreadyExists,
+        Loop,
+        NameTooLong,
+        NotFound,
+        NoSpace,
+        NotADirectory,
+        ReadOnlyFileSystem,
+        Unexpected,
+    };
+
+    pub const Delete = error{
+        AccessDenied,
+        Busy,
+        InvalidAddress,
+        IoError,
+        IsDirectory,
+        Loop,
+        NameTooLong,
+        NotFound,
+        OutOfMemory,
+        IsNotDirectory,
+        ReadOnlyFileSystem,
+        InvalidArguments,
+        NotEmpty,
+        InvalidFd,
+        Unexpected,
+    };
+
+    pub const CreateDir = Errors.Mkdir || Errors.Open || error{InternalFailure};
+    pub const DeleteTree = Errors.Open || Errors.Delete || error{InternalFailure};
 };
 
-pub const ConnectError = error{
-    AccessDenied,
-    AddressInUse,
-    AddressNotAvailable,
-    AddressFamilyNotSupported,
-    WouldBlock,
-    InvalidFd,
-    ConnectionRefused,
-    InvalidAddress,
-    Interrupted,
-    AlreadyConnected,
-    NetworkUnreachable,
-    NotASocket,
-    ProtocolFamilyNotSupported,
-    TimedOut,
-    Unexpected,
+pub const Results = struct {
+    pub const Accept = Resulted(Socket, Errors.Accept);
+
+    pub const Connect = Resulted(void, Errors.Connect);
+    pub const Recv = Resulted(usize, Errors.Recv);
+
+    pub const Send = Resulted(usize, Errors.Send);
+
+    pub const Open = Resulted(
+        union(enum) { file: fs.File, dir: fs.Dir },
+        Errors.Open,
+    );
+    pub const OpenFile = Resulted(fs.File, Errors.Open);
+    pub const OpenDir = Resulted(fs.Dir, Errors.Open);
+
+    pub const Mkdir = Resulted(void, Errors.Mkdir);
+    pub const CreateDir = Resulted(fs.Dir, Errors.CreateDir);
+
+    pub const Delete = Resulted(void, Errors.Delete);
+    pub const DeleteTree = Resulted(void, Errors.DeleteTree);
+
+    pub const Read = Resulted(usize, Errors.Read);
+    pub const Write = Resulted(usize, Errors.Write);
+
+    pub const Stat = Resulted(fs.Stat, Errors.Stat);
 };
-
-pub const RecvError = error{
-    Closed,
-    WouldBlock,
-    SocketNotConnected,
-    SystemResources,
-    ConnectionRefused,
-    ConnectionResetByPeer,
-    BrokenPipe,
-    ConnectionTimedOut,
-    MessageTooBig,
-    Unexpected,
-};
-
-pub const SendError = error{
-    Closed,
-    AccessDenied,
-    WouldBlock,
-    // TODO: remove after finding out why secsock
-    // sometimes returns InvalidFd on send
-    InvalidFd,
-    FastOpenAlreadyInProgress,
-    ConnectionRefused,
-    ConnectionResetByPeer,
-    MessageOversize,
-    SystemResources,
-    BrokenPipe,
-    NetworkDown,
-    Unexpected,
-};
-
-pub const OpenError = error{
-    AccessDenied,
-    InvalidFd,
-    Busy,
-    DiskQuotaExceeded,
-    AlreadyExists,
-    InvalidAddress,
-    FileTooBig,
-    Interrupted,
-    InvalidArguments,
-    IsDirectory,
-    Loop,
-    ProcessFdQuotaExceeded,
-    NameTooLong,
-    SystemFdQuotaExceeded,
-    DeviceNotFound,
-    NotFound,
-    OutOfMemory,
-    NoSpace,
-    NotADirectory,
-    OperationNotSupported,
-    ReadOnlyFileSystem,
-    FileLocked,
-    WouldBlock,
-    Unexpected,
-};
-
-pub const ReadError = error{
-    AccessDenied,
-    EndOfFile,
-    WouldBlock,
-    InvalidFd,
-    InvalidAddress,
-    Interrupted,
-    InvalidArguments,
-    IoError,
-    IsDirectory,
-    Unexpected,
-};
-
-pub const WriteError = error{
-    WouldBlock,
-    InvalidFd,
-    NoDestinationAddress,
-    DiskQuotaExceeded,
-    InvalidAddress,
-    FileTooBig,
-    Interrupted,
-    IoError,
-    NoSpace,
-    AccessDenied,
-    BrokenPipe,
-    Unexpected,
-};
-
-pub const StatError = error{
-    AccessDenied,
-    InvalidFd,
-    InvalidAddress,
-    InvalidArguments,
-    Loop,
-    NameTooLong,
-    NotFound,
-    OutOfMemory,
-    NotADirectory,
-    Unexpected,
-    PermissionDenied,
-};
-
-pub const MkdirError = error{
-    AccessDenied,
-    AlreadyExists,
-    Loop,
-    NameTooLong,
-    NotFound,
-    NoSpace,
-    NotADirectory,
-    ReadOnlyFileSystem,
-    Unexpected,
-};
-
-pub const DeleteError = error{
-    AccessDenied,
-    Busy,
-    InvalidAddress,
-    IoError,
-    IsDirectory,
-    Loop,
-    NameTooLong,
-    NotFound,
-    OutOfMemory,
-    IsNotDirectory,
-    ReadOnlyFileSystem,
-    InvalidArguments,
-    NotEmpty,
-    InvalidFd,
-    Unexpected,
-};
-
-pub const AcceptResult = Resulted(Socket, AcceptError);
-
-pub const ConnectResult = Resulted(void, ConnectError);
-pub const RecvResult = Resulted(usize, RecvError);
-
-pub const SendResult = Resulted(usize, SendError);
-
-// This is ONLY used internally. This helps us avoid Result enum bloat
-// by encoding multiple possibilities within one Result.
-const OpenResultType = union(enum) { file: fs.File, dir: fs.Dir };
-pub const OpenResult = Resulted(OpenResultType, OpenError);
-pub const OpenFileResult = Resulted(fs.File, OpenError);
-pub const OpenDirResult = Resulted(fs.Dir, OpenError);
-
-pub const MkdirResult = Resulted(void, MkdirError);
-pub const CreateDirError = MkdirError || OpenError || error{InternalFailure};
-pub const CreateDirResult = Resulted(fs.Dir, CreateDirError);
-
-pub const DeleteResult = Resulted(void, DeleteError);
-pub const DeleteTreeError = OpenError || DeleteError || error{InternalFailure};
-pub const DeleteTreeResult = Resulted(void, DeleteTreeError);
-
-pub const ReadResult = Resulted(usize, ReadError);
-pub const WriteResult = Resulted(usize, WriteError);
-
-pub const StatResult = Resulted(fs.Stat, StatError);
 
 pub const Result = union(enum) {
     none,
     /// If we want to wake the runtime up.
     wake,
     /// If we have returned a stat object.
-    stat: StatResult,
-    accept: AcceptResult,
-    connect: ConnectResult,
-    recv: RecvResult,
-    send: SendResult,
-    open: OpenResult,
-    mkdir: MkdirResult,
-    delete: DeleteResult,
-    read: ReadResult,
-    write: WriteResult,
+    stat: Results.Stat,
+    accept: Results.Accept,
+    connect: Results.Connect,
+    recv: Results.Recv,
+    send: Results.Send,
+    open: Results.Open,
+    mkdir: Results.Mkdir,
+    delete: Results.Delete,
+    read: Results.Read,
+    write: Results.Write,
     close,
     /// If we have returned a ptr.
     ptr: ?*anyopaque,

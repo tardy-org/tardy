@@ -362,7 +362,6 @@ pub fn reap(
                         debug.assert(pfd.revents & syscall.POLL.IN != 0 or
                             pfd.revents & syscall.POLL.RDNORM != 0);
 
-                        const AcceptError = results.AcceptError;
                         const client_fd = syscall.accept(
                             accept.socket.handle,
                             &accept.socket.addr,
@@ -381,11 +380,11 @@ pub fn reap(
                                     continue;
                                 },
                                 error.ConnectionAborted,
-                                => AcceptError.ConnectionAborted,
-                                error.SocketNotListening => AcceptError.NotListening,
-                                error.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
-                                error.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
-                                else => AcceptError.Unexpected,
+                                => error.ConnectionAborted,
+                                error.SocketNotListening => error.NotListening,
+                                error.ProcessFdQuotaExceeded => error.ProcessFdQuotaExceeded,
+                                error.SystemFdQuotaExceeded => error.SystemFdQuotaExceeded,
+                                else => error.Unexpected,
                             };
 
                             break :result .{ .accept = .{
@@ -408,7 +407,7 @@ pub fn reap(
 
                         if (pfd.revents & syscall.POLL.ERR != 0) {
                             break :result .{ .connect = .{
-                                .err = results.ConnectError.Unexpected,
+                                .err = error.Unexpected,
                             } };
                         } else {
                             break :result .{
@@ -419,14 +418,13 @@ pub fn reap(
                     .recv => |recv| {
                         if (pfd.revents & syscall.POLL.HUP != 0) break :result .{
                             .recv = .{
-                                .err = results.RecvError.Closed,
+                                .err = error.Closed,
                             },
                         };
 
                         debug.assert(pfd.revents & syscall.POLL.IN != 0 or
                             pfd.revents & syscall.POLL.RDNORM != 0);
 
-                        const RecvError = results.RecvError;
                         const count = syscall.recv(
                             recv.socket,
                             recv.buffer,
@@ -441,8 +439,8 @@ pub fn reap(
                                     remove = false;
                                     continue;
                                 },
-                                error.ConnectionResetByPeer => RecvError.Closed,
-                                else => RecvError.Unexpected,
+                                error.ConnectionResetByPeer => error.Closed,
+                                else => error.Unexpected,
                             };
 
                             break :result .{ .recv = .{
@@ -452,7 +450,7 @@ pub fn reap(
 
                         if (count == 0) break :result .{
                             .recv = .{
-                                .err = RecvError.Closed,
+                                .err = error.Closed,
                             },
                         };
                         break :result .{ .recv = .{
@@ -460,14 +458,14 @@ pub fn reap(
                         } };
                     },
                     .send => |send| {
-                        const SendError = results.SendError;
                         if (pfd.revents & syscall.POLL.HUP != 0) break :result .{
                             .send = .{
-                                .err = SendError.Closed,
+                                .err = error.Closed,
                             },
                         };
 
                         debug.assert(pfd.revents & syscall.POLL.OUT != 0);
+
                         const count = syscall.send(
                             send.socket,
                             send.buffer,
@@ -485,8 +483,8 @@ pub fn reap(
                                 },
                                 error.ConnectionResetByPeer,
                                 error.BrokenPipe,
-                                => SendError.Closed,
-                                else => SendError.Unexpected,
+                                => error.Closed,
+                                else => error.Unexpected,
                             };
 
                             break :result .{ .send = .{

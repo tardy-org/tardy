@@ -32,7 +32,7 @@ pub fn queue_job(
     gpa: mem.Allocator,
     task: usize,
     sub: Submission,
-) QueueJobError!void {
+) Errors.QueueJob!void {
     debug.assert(async_io.attached);
     log.debug("queuing up job={t} at index={d}", .{ sub, task });
     try async_io.vtable.queue_job(async_io.runner, gpa, task, sub);
@@ -267,9 +267,11 @@ pub const OpenFlags = struct {
     directory: bool = false,
 };
 
-pub const QueueJobError = IoUring.Errors.QueueJob ||
-    Poll.Errors.QueueJob || Epoll.Errors.QueueJob ||
-    Kqueue.Errors.QueueJob;
+pub const Errors = struct {
+    pub const QueueJob = IoUring.Errors.QueueJob ||
+        Poll.Errors.QueueJob || Epoll.Errors.QueueJob ||
+        Kqueue.Errors.QueueJob;
+};
 
 const VTable = struct {
     queue_job: *const fn (
@@ -277,7 +279,7 @@ const VTable = struct {
         mem.Allocator,
         usize,
         Submission,
-    ) QueueJobError!void,
+    ) Errors.QueueJob!void,
     deinit: *const fn (*anyopaque, mem.Allocator) void,
     wake: *const fn (*anyopaque) anyerror!void,
     reap: *const fn (

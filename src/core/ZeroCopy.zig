@@ -136,6 +136,7 @@ test "ZeroCopy: Multiple Writes" {
     var zc: ZeroCopy(u8) = try .init(gpa, hello.len + world.len);
     defer zc.deinit(gpa);
 
+    // proper usage
     {
         defer zc.clear_retaining_capacity();
 
@@ -154,8 +155,8 @@ test "ZeroCopy: Multiple Writes" {
         );
     }
 
+    // without `mark_written`, the same area gets overwritten
     {
-        // without `mark_written`, the same area gets overwritten
         const area1 = try zc.get_write_area(gpa, hello.len);
         @memcpy(area1, hello);
 

@@ -53,14 +53,13 @@ pub fn open(rt: *Runtime, path: fs.Path) !Dir {
         const index = rt.current_task.?;
         const task = rt.scheduler.tasks.get_ptr(index);
 
-        const result: results.OpenDirResult = switch (task.result.open) {
+        const result: results.Results.OpenDir = switch (task.result.open) {
             .actual => |actual| .{ .actual = actual.dir },
             .err => |err| .{ .err = err },
         };
 
         return try result.unwrap();
     } else {
-        const OpenError = results.OpenError;
         switch (path) {
             .rel => |rel| {
                 const dir: StdDir = .{ .handle = rel.dir };
@@ -71,8 +70,8 @@ pub fn open(rt: *Runtime, path: fs.Path) !Dir {
                     .{ .iterate = true },
                 ) catch |e| {
                     return switch (e) {
-                        StdDir.OpenError.AccessDenied => OpenError.AccessDenied,
-                        else => OpenError.Unexpected,
+                        error.AccessDenied => error.AccessDenied,
+                        else => error.Unexpected,
                     };
                 };
 
@@ -85,8 +84,8 @@ pub fn open(rt: *Runtime, path: fs.Path) !Dir {
                     .{ .iterate = true },
                 ) catch |e| {
                     return switch (e) {
-                        StdDir.OpenError.AccessDenied => OpenError.AccessDenied,
-                        else => OpenError.Unexpected,
+                        error.AccessDenied => error.AccessDenied,
+                        else => error.Unexpected,
                     };
                 };
 
@@ -120,7 +119,7 @@ pub fn create(rt: *Runtime, path: fs.Path) !Dir {
                 const dir: StdDir = .{ .handle = p.dir };
                 dir.createDirPath(rt.io, p.path) catch |e| {
                     return switch (e) {
-                        else => results.MkdirError.Unexpected,
+                        else => error.Unexpected,
                     };
                 };
             },
@@ -131,7 +130,7 @@ pub fn create(rt: *Runtime, path: fs.Path) !Dir {
                     .default_dir,
                 ) catch |e| {
                     return switch (e) {
-                        else => results.MkdirError.Unexpected,
+                        else => error.Unexpected,
                     };
                 };
             },
@@ -216,15 +215,15 @@ pub fn stat(dir: Dir, rt: *Runtime) !fs.Stat {
             .mode = dir_stat.mode,
             .changed = .{
                 .seconds = @intCast(@divTrunc(dir_stat.ctime, std.time.ns_per_s)),
-                .nanos = @intCast(@mod(dir_stat.ctime, std.time.ns_per_s)),
+                .nanos = @intCast(@rem(dir_stat.ctime, std.time.ns_per_s)),
             },
             .modified = .{
                 .seconds = @intCast(@divTrunc(dir_stat.mtime, std.time.ns_per_s)),
-                .nanos = @intCast(@mod(dir_stat.mtime, std.time.ns_per_s)),
+                .nanos = @intCast(@rem(dir_stat.mtime, std.time.ns_per_s)),
             },
             .accessed = .{
                 .seconds = @intCast(@divTrunc(dir_stat.atime, std.time.ns_per_s)),
-                .nanos = @intCast(@mod(dir_stat.atime, std.time.ns_per_s)),
+                .nanos = @intCast(@rem(dir_stat.atime, std.time.ns_per_s)),
             },
         };
     }
@@ -248,7 +247,7 @@ pub fn delete_file(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
             rt.io,
             subpath,
         ) catch |e| switch (e) {
-            else => results.DeleteError.Unexpected,
+            else => error.Unexpected,
         };
     }
 }
@@ -270,7 +269,7 @@ pub fn delete_dir(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
             rt.io,
             subpath,
         ) catch |e| switch (e) {
-            else => results.DeleteError.Unexpected,
+            else => error.Unexpected,
         };
     }
 }

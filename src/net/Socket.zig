@@ -177,7 +177,6 @@ pub fn accept(sock: *const Socket, rt: *Runtime) !Socket {
             .unix => .unix,
         };
 
-        const AcceptError = results.AcceptError;
         const new_handle: posix.socket_t = blk: while (true) {
             break :blk syscall.accept(
                 sock.handle,
@@ -189,11 +188,11 @@ pub fn accept(sock: *const Socket, rt: *Runtime) !Socket {
                     continue;
                 },
                 error.ConnectionAborted,
-                => AcceptError.ConnectionAborted,
-                error.SocketNotListening => AcceptError.NotListening,
-                error.ProcessFdQuotaExceeded => AcceptError.ProcessFdQuotaExceeded,
-                error.SystemFdQuotaExceeded => AcceptError.SystemFdQuotaExceeded,
-                else => AcceptError.Unexpected,
+                => error.ConnectionAborted,
+                error.SocketNotListening => error.NotListening,
+                error.ProcessFdQuotaExceeded => error.ProcessFdQuotaExceeded,
+                error.SystemFdQuotaExceeded => error.SystemFdQuotaExceeded,
+                else => error.Unexpected,
             };
         };
 
@@ -231,7 +230,7 @@ pub fn connect(sock: *const Socket, rt: *Runtime) !void {
                     Coroutine.yield();
                     continue;
                 },
-                else => results.ConnectError.Unexpected,
+                else => error.Unexpected,
             };
         }
     }
@@ -260,11 +259,11 @@ pub fn recv(sock: *const Socket, rt: *Runtime, buffer: []u8) !usize {
                     Coroutine.yield();
                     continue;
                 },
-                else => results.RecvError.Unexpected,
+                else => error.Unexpected,
             };
         };
 
-        if (count == 0) return results.RecvError.Closed;
+        if (count == 0) return error.Closed;
         return count;
     }
 }
@@ -273,13 +272,12 @@ pub fn recv_all(sock: *const Socket, rt: *Runtime, buffer: []u8) !usize {
     var length: usize = 0;
 
     while (length < buffer.len) {
-        const result = sock.recv(rt, buffer[length..]) catch |e|
-            switch (e) {
+        const count = sock.recv(rt, buffer[length..]) catch |err|
+            switch (err) {
                 error.Closed => return length,
-                else => |err| return err,
+                else => |e| return e,
             };
-
-        length += result;
+        defer length += count;
     }
 
     return length;
@@ -310,8 +308,8 @@ pub fn send(sock: *const Socket, rt: *Runtime, buffer: []const u8) !usize {
                 },
                 error.ConnectionResetByPeer,
                 error.BrokenPipe,
-                => results.SendError.Closed,
-                else => results.SendError.Unexpected,
+                => error.Closed,
+                else => error.Unexpected,
             };
         };
 
@@ -323,14 +321,12 @@ pub fn send_all(sock: *const Socket, rt: *Runtime, buffer: []const u8) !usize {
     var length: usize = 0;
 
     while (length < buffer.len) {
-        const result = sock.send(
-            rt,
-            buffer[length..],
-        ) catch |e| switch (e) {
-            error.Closed => return length,
-            else => |err| return err,
-        };
-        length += result;
+        const count = sock.send(rt, buffer[length..]) catch |err|
+            switch (err) {
+                error.Closed => return length,
+                else => |e| return e,
+            };
+        defer length += count;
     }
 
     return length;
@@ -719,7 +715,6 @@ pub const Handle = net.Socket.Handle;
 const builtin = @import("builtin");
 
 const tardy = @import("../root.zig");
-const results = tardy.results;
 const syscall = tardy.AsyncIO.syscall;
 const Coroutine = tardy.Coroutine;
 const Runtime = tardy.Runtime;

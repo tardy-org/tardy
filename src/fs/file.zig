@@ -78,7 +78,7 @@ pub fn create(rt: *Runtime, path: fs.Path, flags: CreateFlags) !File {
         const index = rt.current_task.?;
         const task = rt.scheduler.tasks.get(index);
 
-        const result: results.OpenFileResult = switch (task.result.open) {
+        const result: results.Results.OpenFile = switch (task.result.open) {
             .actual => |actual| .{ .actual = actual.file },
             .err => |err| .{ .err = err },
         };
@@ -95,7 +95,6 @@ pub fn create(rt: *Runtime, path: fs.Path, flags: CreateFlags) !File {
             .rel => |rel| {
                 const dir: StdDir = .{ .handle = rel.dir };
 
-                const OpenError = results.OpenError;
                 const opened: StdFile = blk: while (true) {
                     break :blk dir.createFile(
                         rt.io,
@@ -106,23 +105,23 @@ pub fn create(rt: *Runtime, path: fs.Path, flags: CreateFlags) !File {
                             Coroutine.yield();
                             continue;
                         },
-                        error.AccessDenied => OpenError.AccessDenied,
-                        error.BadPathName => OpenError.InvalidArguments,
-                        error.DeviceBusy => OpenError.Busy,
-                        error.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
-                        error.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
-                        error.FileNotFound => OpenError.NotFound,
-                        error.PipeBusy => OpenError.Busy,
-                        error.FileTooBig => OpenError.FileTooBig,
-                        error.IsDir => OpenError.IsDirectory,
-                        error.NameTooLong => OpenError.NameTooLong,
-                        error.NoDevice => OpenError.DeviceNotFound,
-                        error.NoSpaceLeft => OpenError.NoSpace,
-                        error.NotDir => OpenError.NotADirectory,
-                        error.PathAlreadyExists => OpenError.AlreadyExists,
-                        error.SymLinkLoop => OpenError.Loop,
-                        error.SystemResources => OpenError.OutOfMemory,
-                        else => OpenError.Unexpected,
+                        error.AccessDenied => error.AccessDenied,
+                        error.BadPathName => error.InvalidArguments,
+                        error.DeviceBusy => error.Busy,
+                        error.SystemFdQuotaExceeded => error.SystemFdQuotaExceeded,
+                        error.ProcessFdQuotaExceeded => error.ProcessFdQuotaExceeded,
+                        error.FileNotFound => error.NotFound,
+                        error.PipeBusy => error.Busy,
+                        error.FileTooBig => error.FileTooBig,
+                        error.IsDir => error.IsDirectory,
+                        error.NameTooLong => error.NameTooLong,
+                        error.NoDevice => error.DeviceNotFound,
+                        error.NoSpaceLeft => error.NoSpace,
+                        error.NotDir => error.NotADirectory,
+                        error.PathAlreadyExists => error.AlreadyExists,
+                        error.SymLinkLoop => error.Loop,
+                        error.SystemResources => error.OutOfMemory,
+                        else => error.Unexpected,
                     };
                 };
                 try cross.fd.to_nonblock(opened.handle);
@@ -130,7 +129,6 @@ pub fn create(rt: *Runtime, path: fs.Path, flags: CreateFlags) !File {
                 return .{ .handle = opened.handle };
             },
             .abs => |abs| {
-                const OpenError = results.OpenError;
                 const opened: StdFile = blk: while (true) {
                     break :blk Io.Dir.createFileAbsolute(
                         rt.io,
@@ -141,22 +139,22 @@ pub fn create(rt: *Runtime, path: fs.Path, flags: CreateFlags) !File {
                             Coroutine.yield();
                             continue;
                         },
-                        error.AccessDenied => OpenError.AccessDenied,
-                        error.BadPathName => OpenError.InvalidArguments,
-                        error.DeviceBusy, error.PipeBusy => OpenError.Busy,
-                        error.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
-                        error.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
-                        error.FileNotFound => OpenError.NotFound,
-                        error.FileTooBig => OpenError.FileTooBig,
-                        error.IsDir => OpenError.IsDirectory,
-                        error.NameTooLong => OpenError.NameTooLong,
-                        error.NoDevice => OpenError.DeviceNotFound,
-                        error.NoSpaceLeft => OpenError.NoSpace,
-                        error.NotDir => OpenError.NotADirectory,
-                        error.PathAlreadyExists => OpenError.AlreadyExists,
-                        error.SymLinkLoop => OpenError.Loop,
-                        error.SystemResources => OpenError.OutOfMemory,
-                        else => OpenError.Unexpected,
+                        error.AccessDenied => error.AccessDenied,
+                        error.BadPathName => error.InvalidArguments,
+                        error.DeviceBusy, error.PipeBusy => error.Busy,
+                        error.SystemFdQuotaExceeded => error.SystemFdQuotaExceeded,
+                        error.ProcessFdQuotaExceeded => error.ProcessFdQuotaExceeded,
+                        error.FileNotFound => error.NotFound,
+                        error.FileTooBig => error.FileTooBig,
+                        error.IsDir => error.IsDirectory,
+                        error.NameTooLong => error.NameTooLong,
+                        error.NoDevice => error.DeviceNotFound,
+                        error.NoSpaceLeft => error.NoSpace,
+                        error.NotDir => error.NotADirectory,
+                        error.PathAlreadyExists => error.AlreadyExists,
+                        error.SymLinkLoop => error.Loop,
+                        error.SystemResources => error.OutOfMemory,
+                        else => error.Unexpected,
                     };
                 };
                 try cross.fd.to_nonblock(opened.handle);
@@ -181,7 +179,7 @@ pub fn open(rt: *Runtime, path: fs.Path, flags: OpenFlags) !File {
 
         const index = rt.current_task.?;
         const task = rt.scheduler.tasks.get(index);
-        const result: results.OpenFileResult = switch (task.result.open) {
+        const result: results.Results.OpenFile = switch (task.result.open) {
             .actual => |actual| .{ .actual = actual.file },
             .err => |err| .{ .err = err },
         };
@@ -200,7 +198,6 @@ pub fn open(rt: *Runtime, path: fs.Path, flags: OpenFlags) !File {
             .rel => |rel| {
                 const dir: StdDir = .{ .handle = rel.dir };
 
-                const OpenError = results.OpenError;
                 const opened: StdFile = blk: while (true) {
                     break :blk dir.openFile(
                         rt.io,
@@ -211,23 +208,23 @@ pub fn open(rt: *Runtime, path: fs.Path, flags: OpenFlags) !File {
                             Coroutine.yield();
                             continue;
                         },
-                        error.AccessDenied => OpenError.AccessDenied,
-                        error.BadPathName => OpenError.InvalidArguments,
-                        error.DeviceBusy => OpenError.Busy,
-                        error.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
-                        error.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
-                        error.FileNotFound => OpenError.NotFound,
-                        error.PipeBusy => OpenError.Busy,
-                        error.FileTooBig => OpenError.FileTooBig,
-                        error.IsDir => OpenError.IsDirectory,
-                        error.NameTooLong => OpenError.NameTooLong,
-                        error.NoDevice => OpenError.DeviceNotFound,
-                        error.NoSpaceLeft => OpenError.NoSpace,
-                        error.NotDir => OpenError.NotADirectory,
-                        error.PathAlreadyExists => OpenError.AlreadyExists,
-                        error.SymLinkLoop => OpenError.Loop,
-                        error.SystemResources => OpenError.OutOfMemory,
-                        else => OpenError.Unexpected,
+                        error.AccessDenied => error.AccessDenied,
+                        error.BadPathName => error.InvalidArguments,
+                        error.DeviceBusy => error.Busy,
+                        error.SystemFdQuotaExceeded => error.SystemFdQuotaExceeded,
+                        error.ProcessFdQuotaExceeded => error.ProcessFdQuotaExceeded,
+                        error.FileNotFound => error.NotFound,
+                        error.PipeBusy => error.Busy,
+                        error.FileTooBig => error.FileTooBig,
+                        error.IsDir => error.IsDirectory,
+                        error.NameTooLong => error.NameTooLong,
+                        error.NoDevice => error.DeviceNotFound,
+                        error.NoSpaceLeft => error.NoSpace,
+                        error.NotDir => error.NotADirectory,
+                        error.PathAlreadyExists => error.AlreadyExists,
+                        error.SymLinkLoop => error.Loop,
+                        error.SystemResources => error.OutOfMemory,
+                        else => error.Unexpected,
                     };
                 };
                 try cross.fd.to_nonblock(opened.handle);
@@ -235,7 +232,6 @@ pub fn open(rt: *Runtime, path: fs.Path, flags: OpenFlags) !File {
                 return .{ .handle = opened.handle };
             },
             .abs => |abs| {
-                const OpenError = results.OpenError;
                 const opened: StdFile = blk: while (true) {
                     break :blk Io.Dir.openFileAbsolute(
                         rt.io,
@@ -246,22 +242,22 @@ pub fn open(rt: *Runtime, path: fs.Path, flags: OpenFlags) !File {
                             Coroutine.yield();
                             continue;
                         },
-                        error.AccessDenied => OpenError.AccessDenied,
-                        error.BadPathName => OpenError.InvalidArguments,
-                        error.DeviceBusy, error.PipeBusy => OpenError.Busy,
-                        error.SystemFdQuotaExceeded => OpenError.SystemFdQuotaExceeded,
-                        error.ProcessFdQuotaExceeded => OpenError.ProcessFdQuotaExceeded,
-                        error.FileNotFound => OpenError.NotFound,
-                        error.FileTooBig => OpenError.FileTooBig,
-                        error.IsDir => OpenError.IsDirectory,
-                        error.NameTooLong => OpenError.NameTooLong,
-                        error.NoDevice => OpenError.DeviceNotFound,
-                        error.NoSpaceLeft => OpenError.NoSpace,
-                        error.NotDir => OpenError.NotADirectory,
-                        error.PathAlreadyExists => OpenError.AlreadyExists,
-                        error.SymLinkLoop => OpenError.Loop,
-                        error.SystemResources => OpenError.OutOfMemory,
-                        else => OpenError.Unexpected,
+                        error.AccessDenied => error.AccessDenied,
+                        error.BadPathName => error.InvalidArguments,
+                        error.DeviceBusy, error.PipeBusy => error.Busy,
+                        error.SystemFdQuotaExceeded => error.SystemFdQuotaExceeded,
+                        error.ProcessFdQuotaExceeded => error.ProcessFdQuotaExceeded,
+                        error.FileNotFound => error.NotFound,
+                        error.FileTooBig => error.FileTooBig,
+                        error.IsDir => error.IsDirectory,
+                        error.NameTooLong => error.NameTooLong,
+                        error.NoDevice => error.DeviceNotFound,
+                        error.NoSpaceLeft => error.NoSpace,
+                        error.NotDir => error.NotADirectory,
+                        error.PathAlreadyExists => error.AlreadyExists,
+                        error.SymLinkLoop => error.Loop,
+                        error.SystemResources => error.OutOfMemory,
+                        else => error.Unexpected,
                     };
                 };
                 try cross.fd.to_nonblock(opened.handle);
@@ -288,7 +284,6 @@ pub fn read(file: File, rt: *Runtime, buffer: []u8, offset: ?usize) !usize {
     } else {
         const std_file = file.to_std();
 
-        const ReadError = results.ReadError;
         const count = blk: {
             if (offset) |o| {
                 while (true) {
@@ -302,11 +297,11 @@ pub fn read(file: File, rt: *Runtime, buffer: []u8, offset: ?usize) !usize {
                             continue;
                         },
                         error.Unseekable => unreachable,
-                        error.AccessDenied => ReadError.AccessDenied,
-                        error.NotOpenForReading => ReadError.InvalidFd,
-                        error.InputOutput => ReadError.IoError,
-                        error.IsDir => ReadError.IsDirectory,
-                        else => ReadError.Unexpected,
+                        error.AccessDenied => error.AccessDenied,
+                        error.NotOpenForReading => error.InvalidFd,
+                        error.InputOutput => error.IoError,
+                        error.IsDir => error.IsDirectory,
+                        else => error.Unexpected,
                     };
                 }
             } else {
@@ -319,17 +314,17 @@ pub fn read(file: File, rt: *Runtime, buffer: []u8, offset: ?usize) !usize {
                             Coroutine.yield();
                             continue;
                         },
-                        error.AccessDenied => ReadError.AccessDenied,
-                        error.NotOpenForReading => ReadError.InvalidFd,
-                        error.InputOutput => ReadError.IoError,
-                        error.IsDir => ReadError.IsDirectory,
-                        else => ReadError.Unexpected,
+                        error.AccessDenied => error.AccessDenied,
+                        error.NotOpenForReading => error.InvalidFd,
+                        error.InputOutput => error.IoError,
+                        error.IsDir => error.IsDirectory,
+                        else => error.Unexpected,
                     };
                 }
             }
         };
 
-        if (count == 0) return ReadError.EndOfFile;
+        if (count == 0) return error.EndOfFile;
         return count;
     }
     return .{ .file = file, .buffer = buffer, .offset = offset };
@@ -361,7 +356,7 @@ pub fn write(
     rt: *Runtime,
     buffer: []const u8,
     offset: ?usize,
-) results.WriteError!usize {
+) results.Errors.Write!usize {
     if (rt.aio.features.has_capability(.write)) {
         rt.scheduler.ioAwait(rt.gpa, .{
             .write = .{
@@ -377,7 +372,6 @@ pub fn write(
     } else {
         const std_file = file.to_std();
 
-        const WriteError = results.WriteError;
         // TODO: fix `error.Unseekable` when fd is a fifo
         // TODO: Proper and improved error handling (also why not error.*)
         if (offset) |o| {
@@ -392,14 +386,14 @@ pub fn write(
                         continue;
                     },
                     error.Unseekable => unreachable,
-                    error.DiskQuota => WriteError.DiskQuotaExceeded,
-                    error.FileTooBig => WriteError.FileTooBig,
-                    error.InputOutput => WriteError.IoError,
-                    error.NoSpaceLeft => WriteError.NoSpace,
-                    error.AccessDenied => WriteError.AccessDenied,
-                    error.NotOpenForWriting => WriteError.InvalidFd,
-                    error.BrokenPipe => WriteError.BrokenPipe,
-                    else => WriteError.Unexpected,
+                    error.DiskQuota => error.DiskQuotaExceeded,
+                    error.FileTooBig => error.FileTooBig,
+                    error.InputOutput => error.IoError,
+                    error.NoSpaceLeft => error.NoSpace,
+                    error.AccessDenied => error.AccessDenied,
+                    error.NotOpenForWriting => error.InvalidFd,
+                    error.BrokenPipe => error.BrokenPipe,
+                    else => error.Unexpected,
                 };
             };
         } else {
@@ -414,14 +408,14 @@ pub fn write(
                         Coroutine.yield();
                         continue;
                     },
-                    error.DiskQuota => WriteError.DiskQuotaExceeded,
-                    error.FileTooBig => WriteError.FileTooBig,
-                    error.InputOutput => WriteError.IoError,
-                    error.NoSpaceLeft => WriteError.NoSpace,
-                    error.AccessDenied => WriteError.AccessDenied,
-                    error.NotOpenForWriting => WriteError.InvalidFd,
-                    error.BrokenPipe => WriteError.BrokenPipe,
-                    else => WriteError.Unexpected,
+                    error.DiskQuota => error.DiskQuotaExceeded,
+                    error.FileTooBig => error.FileTooBig,
+                    error.InputOutput => error.IoError,
+                    error.NoSpaceLeft => error.NoSpace,
+                    error.AccessDenied => error.AccessDenied,
+                    error.NotOpenForWriting => error.InvalidFd,
+                    error.BrokenPipe => error.BrokenPipe,
+                    else => error.Unexpected,
                 };
             };
         }
@@ -433,7 +427,7 @@ pub fn write_all(
     rt: *Runtime,
     buffer: []const u8,
     offset: ?usize,
-) results.WriteError!usize {
+) results.Errors.Write!usize {
     var length: usize = 0;
 
     while (length < buffer.len) {
@@ -466,13 +460,12 @@ pub fn stat(file: File, rt: *Runtime) !fs.Stat {
     } else {
         const std_file = file.to_std();
 
-        const StatError = results.StatError;
         const file_stat = std_file.stat(rt.io) catch |e|
             return switch (e) {
-                error.AccessDenied => StatError.AccessDenied,
-                error.SystemResources => StatError.OutOfMemory,
-                error.Unexpected => StatError.Unexpected,
-                error.PermissionDenied => StatError.PermissionDenied,
+                error.AccessDenied => error.AccessDenied,
+                error.SystemResources => error.OutOfMemory,
+                error.Unexpected => error.Unexpected,
+                error.PermissionDenied => error.PermissionDenied,
                 error.Streaming, error.Canceled => unreachable,
             };
 

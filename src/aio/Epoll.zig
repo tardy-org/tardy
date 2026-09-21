@@ -349,8 +349,8 @@ pub fn reap(
     wait: bool,
 ) ![]results.Completion {
     const epoll: *Epoll = @ptrCast(@alignCast(runner));
-    var reaped: usize = 0;
 
+    var reaped: usize = 0;
     while (reaped == 0 and wait) {
         const remaining = completions.len - reaped;
         if (remaining == 0) break;
@@ -412,7 +412,7 @@ pub fn reap(
                     .accept => |*accept| {
                         debug.assert(event.events & linux.EPOLL.IN != 0);
 
-                        const result: results.AcceptResult = result: {
+                        const result: results.Results.Accept = result: {
                             const client_fd = syscall.accept(
                                 accept.socket.handle,
                                 &accept.socket.addr,
@@ -423,7 +423,7 @@ pub fn reap(
                                         job_complete = false;
                                         continue;
                                     },
-                                    else => results.AcceptError.Unexpected,
+                                    else => error.Unexpected,
                                 };
 
                                 break :result .{ .err = err };
@@ -441,10 +441,10 @@ pub fn reap(
                     .connect => {
                         debug.assert(event.events & linux.EPOLL.OUT != 0);
 
-                        const result: results.ConnectResult = result: {
+                        const result: results.Results.Connect = result: {
                             if (event.events & linux.EPOLL.ERR != 0) {
                                 break :result .{
-                                    .err = results.ConnectError.Unexpected,
+                                    .err = error.Unexpected,
                                 };
                             } else {
                                 break :result .actual;
@@ -456,7 +456,7 @@ pub fn reap(
                     .recv => |recv| {
                         debug.assert(event.events & linux.EPOLL.IN != 0);
 
-                        const result: results.RecvResult = result: {
+                        const result: results.Results.Recv = result: {
                             const length = syscall.recv(
                                 recv.socket,
                                 recv.buffer,
@@ -473,7 +473,9 @@ pub fn reap(
                                 break :result .{ .err = err };
                             };
 
-                            if (length == 0) break :result .{ .err = results.RecvError.Closed };
+                            if (length == 0) break :result .{
+                                .err = error.Closed,
+                            };
                             break :result .{ .actual = length };
                         };
 
@@ -482,7 +484,7 @@ pub fn reap(
                     .send => |send| {
                         debug.assert(event.events & linux.EPOLL.OUT != 0);
 
-                        const result: results.SendResult = result: {
+                        const result: results.Results.Send = result: {
                             const length = syscall.send(
                                 send.socket,
                                 send.buffer,

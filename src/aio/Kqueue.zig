@@ -409,8 +409,7 @@ pub fn reap(
                     .connect => {
                         debug.assert(event.filter == posix.system.EVFILT.WRITE);
 
-                        const ConnectError = results.ConnectError;
-                        const result: results.ConnectResult = blk: {
+                        const result: results.Results.Connect = blk: {
                             if (event.flags & posix.system.EV.ERROR != 0) {
                                 const rc = event.data;
                                 const err = switch (posix.errno(rc)) {
@@ -418,20 +417,20 @@ pub fn reap(
                                     .ALREADY,
                                     .INPROGRESS,
                                     => unreachable,
-                                    .ACCES, .PERM => ConnectError.AccessDenied,
-                                    .ADDRINUSE => ConnectError.AddressInUse,
-                                    .ADDRNOTAVAIL => ConnectError.AddressNotAvailable,
-                                    .AFNOSUPPORT => ConnectError.AddressFamilyNotSupported,
-                                    .BADF => ConnectError.InvalidFd,
-                                    .CONNREFUSED => ConnectError.ConnectionRefused,
-                                    .FAULT => ConnectError.InvalidAddress,
-                                    .INTR => ConnectError.Interrupted,
-                                    .ISCONN => ConnectError.AlreadyConnected,
-                                    .NETUNREACH => ConnectError.NetworkUnreachable,
-                                    .NOTSOCK => ConnectError.NotASocket,
-                                    .PROTOTYPE => ConnectError.ProtocolFamilyNotSupported,
-                                    .TIMEDOUT => ConnectError.TimedOut,
-                                    else => ConnectError.Unexpected,
+                                    .ACCES, .PERM => error.AccessDenied,
+                                    .ADDRINUSE => error.AddressInUse,
+                                    .ADDRNOTAVAIL => error.AddressNotAvailable,
+                                    .AFNOSUPPORT => error.AddressFamilyNotSupported,
+                                    .BADF => error.InvalidFd,
+                                    .CONNREFUSED => error.ConnectionRefused,
+                                    .FAULT => error.InvalidAddress,
+                                    .INTR => error.Interrupted,
+                                    .ISCONN => error.AlreadyConnected,
+                                    .NETUNREACH => error.NetworkUnreachable,
+                                    .NOTSOCK => error.NotASocket,
+                                    .PROTOTYPE => error.ProtocolFamilyNotSupported,
+                                    .TIMEDOUT => error.TimedOut,
+                                    else => error.Unexpected,
                                 };
                                 break :blk .{ .err = err };
                             } else break :blk .actual;
@@ -443,6 +442,7 @@ pub fn reap(
                     },
                     .recv => |recv| {
                         debug.assert(event.filter == posix.system.EVFILT.READ);
+
                         const rc = syscall.recvfrom(
                             recv.socket,
                             recv.buffer,
@@ -458,7 +458,7 @@ pub fn reap(
                         break :result if (rc == 0)
                             .{
                                 .recv = .{
-                                    .err = results.RecvError.Closed,
+                                    .err = error.Closed,
                                 },
                             }
                         else
@@ -470,6 +470,7 @@ pub fn reap(
                     },
                     .send => |send| {
                         debug.assert(event.filter == posix.system.EVFILT.WRITE);
+
                         const rc = syscall.send(
                             send.socket,
                             send.buffer,
