@@ -92,17 +92,6 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             params: anytype,
             comptime entry_fn: *const fn (*Runtime, @TypeOf(params)) anyerror!void,
         ) !void {
-            const runtime_count: usize = switch (tardy.options.threading) {
-                .single => 1,
-                .multi => |count| count,
-                .auto => @max(try std.Thread.getCpuCount() / 2 - 1, 1),
-                .all => try std.Thread.getCpuCount(),
-            };
-
-            // for post-spawn syncing
-            var spawned_count: atomic.Value(usize) = .init(0);
-            const spawning_count = runtime_count - 1;
-
             var runtime = try tardy.spawn_runtime(0, .{
                 .parent_async = null,
                 .pooling = tardy.options.pooling,
@@ -111,6 +100,12 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             });
             defer runtime.deinit();
 
+            const runtime_count: usize = switch (tardy.options.threading) {
+                .single => 1,
+                .multi => |count| count,
+                .auto => @max(try std.Thread.getCpuCount() / 2 - 1, 1),
+                .all => try std.Thread.getCpuCount(),
+            };
             debug.assert(runtime_count > 0);
             log.info("thread count: {d}", .{runtime_count});
 
@@ -126,21 +121,21 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                 for (threads.items) |thread| thread.join();
                 threads.deinit(tardy.gpa);
             }
+
             // for in-spawn id assignment
             var spawn_id: atomic.Value(usize) = .init(1);
-
+            // for post-spawn syncing
+            var spawned_count: atomic.Value(usize) = .init(0);
+            const spawning_count = runtime_count - 1;
             for (0..spawning_count) |_| {
-                const current_index = spawn_id.fetchAdd(
-                    1,
-                    .monotonic,
-                );
+                const rt_id = spawn_id.fetchAdd(1, .monotonic);
                 const handle: std.Thread = try .spawn(.{}, struct {
                     fn init(
                         td: *Tardy_t,
                         parent: *AsyncIO,
                         args: @TypeOf(params),
-                        count: *atomic.Value(usize),
-                        total_count: usize,
+                        spawn_count: *atomic.Value(usize),
+                        thread_count: usize,
                         current_id: usize,
                     ) void {
                         var rt = td.spawn_runtime(
@@ -151,17 +146,17 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                                 .size_tasks_initial = td.options.size_tasks_initial,
                                 .size_aio_reap_max = td.options.size_aio_reap_max,
                             },
-                        ) catch |e| {
+                        ) catch |err| {
                             log.err(
                                 "failed to spawn runtime {d}: {t}",
-                                .{ current_id, e },
+                                .{ current_id, err },
                             );
                             return;
                         };
                         defer rt.deinit();
 
-                        _ = count.fetchAdd(1, .acquire);
-                        while (count.load(.acquire) < total_count) {}
+                        _ = spawn_count.fetchAdd(1, .acquire);
+                        while (spawn_count.load(.acquire) < thread_count) {}
 
                         @call(.auto, entry_fn, .{
                             &rt,
@@ -183,8 +178,8 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                         // this is because the runtime is allocate on our stack and
                         // others might be checking our running status or attempting to
                         // wake us.
-                        _ = count.fetchSub(1, .acquire);
-                        while (count.load(.acquire) > 0) td.io.sleep(
+                        _ = spawn_count.fetchSub(1, .acquire);
+                        while (spawn_count.load(.acquire) > 0) td.io.sleep(
                             .fromSeconds(1),
                             .awake,
                         ) catch unreachable;
@@ -195,7 +190,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                     params,
                     &spawned_count,
                     spawning_count,
-                    current_index,
+                    rt_id,
                 });
 
                 threads.appendAssumeCapacity(handle);
