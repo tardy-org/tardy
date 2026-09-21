@@ -9,45 +9,6 @@ pub fn close(handle: posix.fd_t) void {
     }
 }
 
-pub const WriteError = error{
-    DiskQuota,
-    FileTooBig,
-    InputOutput,
-    NoSpaceLeft,
-    DeviceBusy,
-    InvalidArgument,
-
-    /// File descriptor does not hold the required rights to write to it.
-    AccessDenied,
-    PermissionDenied,
-    BrokenPipe,
-    SystemResources,
-    Canceled,
-    NotOpenForWriting,
-
-    /// The process cannot access the file because another process has locked
-    /// a portion of the file. Windows-only.
-    LockViolation,
-
-    /// This error occurs when no global event loop is configured,
-    /// and reading from the file descriptor would block.
-    WouldBlock,
-
-    /// Connection reset by peer.
-    ConnectionResetByPeer,
-
-    /// This error occurs in Linux if the process being written to
-    /// no longer exists.
-    ProcessNotFound,
-    /// This error occurs when a device gets disconnected before or mid-flush
-    /// while it's being written to - errno(6): No such device or address.
-    NoDevice,
-
-    /// The socket type requires that message be sent atomically, and the size of the message
-    /// to be sent made this impossible. The message is not transmitted.
-    MessageOversize,
-} || UnexpectedError || net.Stream.Writer.Error;
-
 /// Write to a file descriptor.
 /// Retries when interrupted by a signal.
 /// Returns the number of bytes written. If nonzero bytes were supplied, this will be nonzero.
@@ -70,7 +31,7 @@ pub const WriteError = error{
 /// well as stuffing the errno codes into the last `4096` values. This is noted on the `write` man page.
 /// The limit on Darwin is `0x7fffffff`, trying to read more than that returns EINVAL.
 /// The corresponding POSIX limit is `maxInt(isize)`.
-pub fn write(fd: posix.fd_t, bytes: []const u8) WriteError!usize {
+pub fn write(fd: posix.fd_t, bytes: []const u8) Errors.Write!usize {
     if (bytes.len == 0) return 0;
     if (native_os == .windows) {
         return ws2.writeFile(fd, bytes, null);
@@ -82,7 +43,11 @@ pub fn write(fd: posix.fd_t, bytes: []const u8) WriteError!usize {
         else => math.maxInt(isize),
     };
     while (true) {
-        const rc = system.write(fd, bytes.ptr, @min(bytes.len, max_count));
+        const rc = system.write(
+            fd,
+            bytes.ptr,
+            @min(bytes.len, max_count),
+        );
         switch (posix.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .INTR => continue,
@@ -107,16 +72,7 @@ pub fn write(fd: posix.fd_t, bytes: []const u8) WriteError!usize {
     }
 }
 
-pub const FcntlError = error{
-    PermissionDenied,
-    FileBusy,
-    ProcessFdQuotaExceeded,
-    Locked,
-    DeadLock,
-    LockedRegionLimitExceeded,
-} || UnexpectedError;
-
-pub fn fcntl(fd: posix.fd_t, cmd: i32, arg: usize) FcntlError!usize {
+pub fn fcntl(fd: posix.fd_t, cmd: i32, arg: usize) Errors.Fcntl!usize {
     while (true) {
         const rc = system.fcntl(fd, cmd, arg);
         switch (posix.errno(rc)) {
@@ -136,35 +92,7 @@ pub fn fcntl(fd: posix.fd_t, cmd: i32, arg: usize) FcntlError!usize {
     }
 }
 
-pub const SocketError = error{
-    /// Permission to create a socket of the specified type and/or
-    /// pro‐tocol is denied.
-    AccessDenied,
-
-    /// The implementation does not support the specified address family.
-    AddressFamilyUnsupported,
-
-    /// Unknown protocol, or protocol family not available.
-    ProtocolFamilyNotAvailable,
-
-    /// The per-process limit on the number of open file descriptors has been reached.
-    ProcessFdQuotaExceeded,
-
-    /// The system-wide limit on the total number of open files has been reached.
-    SystemFdQuotaExceeded,
-
-    /// Insufficient memory is available. The socket cannot be created until sufficient
-    /// resources are freed.
-    SystemResources,
-
-    /// The protocol type or the specified protocol is not supported within this domain.
-    ProtocolUnsupportedByAddressFamily,
-
-    /// The socket type is not supported by the protocol.
-    SocketTypeNotSupported,
-} || UnexpectedError;
-
-pub fn socket(domain: u32, socket_type: u32, protocol: u32) SocketError!socket_t {
+pub fn socket(domain: u32, socket_type: u32, protocol: u32) Errors.Socket!socket_t {
     if (native_os == .windows) {
         var flags: u32 = ws2.WSA_FLAG.OVERLAPPED;
         // set SOCK.CLOEXEC by default
@@ -240,17 +168,7 @@ pub fn socket(domain: u32, socket_type: u32, protocol: u32) SocketError!socket_t
     }
 }
 
-pub const BindError = error{
-    SymLinkLoop,
-    NameTooLong,
-    FileNotFound,
-    NotDir,
-    ReadOnlyFileSystem,
-    AccessDenied,
-} || IpAddress.BindError;
-
-pub fn bind(sock: posix.socket_t, addr: *const Socket.Address) (BindError ||
-    afd.BindError)!void {
+pub fn bind(sock: posix.socket_t, addr: *const Socket.Address) Errors.Bind!void {
     if (native_os == .windows) {
         const rc = ws2.bind(sock, &addr.any, @intCast(addr.len));
         if (rc == ws2.SOCKET_ERROR) {
@@ -296,12 +214,7 @@ pub fn bind(sock: posix.socket_t, addr: *const Socket.Address) (BindError ||
     }
 }
 
-pub const ListenError = error{
-    FileDescriptorNotASocket,
-    OperationUnsupported,
-} || IpAddress.ListenError || std.Io.net.UnixAddress.ListenError;
-
-pub fn listen(sock: socket_t, backlog: u31) ListenError!void {
+pub fn listen(sock: socket_t, backlog: u31) Errors.Listen!void {
     if (native_os == .windows) {
         const rc = ws2.listen(sock, backlog);
         if (rc == ws2.SOCKET_ERROR) {
@@ -332,34 +245,11 @@ pub fn listen(sock: socket_t, backlog: u31) ListenError!void {
     }
 }
 
-pub const AcceptError = error{
-    /// The per-process limit on the number of open file descriptors has been reached.
-    ProcessFdQuotaExceeded,
-    /// The system-wide limit on the total number of open files has been reached.
-    SystemFdQuotaExceeded,
-    /// Not enough free memory. This often means that the memory allocation is limited
-    /// by the socket buffer limits, not by the system memory.
-    SystemResources,
-    /// Either `listen` was never called, or `shutdown` was called (possibly while
-    /// this call was blocking). This allows `shutdown` to be used as a concurrent
-    /// cancellation mechanism.
-    SocketNotListening,
-    /// No connection is already queued and ready to be accepted, and
-    /// the socket is configured as non-blocking.
-    WouldBlock,
-    /// An incoming connection was indicated, but was subsequently terminated by the
-    /// remote peer prior to accepting the call.
-    ConnectionAborted,
-    /// Firewall rules forbid connection.
-    BlockedByFirewall,
-    ProtocolFailure,
-} || UnexpectedError;
-
 pub fn accept(
     sock: socket_t,
     addr: ?*Socket.Address,
     flags: u32,
-) AcceptError!Socket.Handle {
+) Errors.Accept!Socket.Handle {
     if (native_os == .windows) while (true) {
         const rc = ws2.accept(
             sock,
@@ -435,20 +325,11 @@ pub fn accept(
     return accepted_sock;
 }
 
-pub const GetSockNameError = error{
-    /// Insufficient resources were available in the system to perform the operation.
-    SystemResources,
-
-    /// The network subsystem has failed.
-    NetworkSubsystemFailed,
-
-    /// Socket hasn't been bound yet
-    SocketNotBound,
-
-    FileDescriptorNotASocket,
-} || UnexpectedError;
-
-pub fn getsockname(sock: socket_t, addr: *posix.sockaddr, addrlen: *posix.socklen_t) GetSockNameError!void {
+pub fn getsockname(
+    sock: socket_t,
+    addr: *posix.sockaddr,
+    addrlen: *posix.socklen_t,
+) Errors.GetSockName!void {
     // Add a windows native implemenation
     if (native_os == .windows) {
         const rc = ws2.getsockname(
@@ -480,32 +361,7 @@ pub fn getsockname(sock: socket_t, addr: *posix.sockaddr, addrlen: *posix.sockle
     }
 }
 
-pub const RecvFromError = error{
-    /// The socket is marked nonblocking and the requested operation would block, and
-    /// there is no global event loop configured.
-    WouldBlock,
-
-    /// A remote host refused to allow the network connection, typically because it is not
-    /// running the requested service.
-    ConnectionRefused,
-
-    /// Could not allocate kernel memory.
-    SystemResources,
-
-    ConnectionResetByPeer,
-    ConnectionTimedOut,
-
-    /// The UDP message was too big for the buffer and part of it has been discarded
-    MessageTooBig,
-
-    /// The socket is not connected (connection-oriented sockets only).
-    SocketNotConnected,
-
-    /// The other end closed the socket unexpectedly or a read is executed on a shut down socket
-    BrokenPipe,
-} || UnexpectedError;
-
-pub fn recv(sock: socket_t, buf: []u8, flags: u32) RecvFromError!usize {
+pub fn recv(sock: socket_t, buf: []u8, flags: u32) Errors.RecvFrom!usize {
     return recvfrom(sock, buf, flags, null, null);
 }
 
@@ -517,7 +373,7 @@ pub fn recvfrom(
     flags: u32,
     src_addr: ?*posix.sockaddr,
     addrlen: ?*posix.socklen_t,
-) RecvFromError!usize {
+) Errors.RecvFrom!usize {
     // TODO: explore a windows native approach but we can currently go through C
     if (native_os == .windows) {
         return try ws2.recvfrom(
@@ -558,12 +414,10 @@ pub fn recvfrom(
     }
 }
 
-pub const ConnectError = IpAddress.ConnectError || net.UnixAddress.ConnectError;
-
 pub fn connect(
     sock: socket_t,
     addr: *const Socket.Address,
-) ConnectError!void {
+) Errors.Connect!void {
     if (native_os == .windows) {
         const rc = ws2.connect(
             sock,
@@ -622,31 +476,13 @@ pub fn connect(
     }
 }
 
-pub const SetSockOptError = error{
-    /// The socket is already connected, and a specified option cannot be set while the socket is connected.
-    AlreadyConnected,
-
-    /// The option is not supported by the protocol.
-    InvalidProtocolOption,
-
-    /// The send and receive timeout values are too big to fit into the timeout fields in the socket structure.
-    TimeoutTooBig,
-
-    /// Insufficient resources are available in the system to complete the call.
-    SystemResources,
-
-    /// Setting the socket option requires more elevated permissions.
-    PermissionDenied,
-
-    OperationUnsupported,
-    NetworkDown,
-    FileDescriptorNotASocket,
-    SocketNotBound,
-    NoDevice,
-} || UnexpectedError;
-
 /// Set a socket's options.
-pub fn setsockopt(fd: socket_t, level: i32, optname: u32, optval_bytes: []const u8) (SetSockOptError || afd.SetSockError)!void {
+pub fn setsockopt(
+    fd: socket_t,
+    level: i32,
+    optname: u32,
+    optval_bytes: []const u8,
+) (Errors.SetSockOpt || afd.SetSockError)!void {
     if (native_os == .windows) {
         return afd.setSocketOptionAfd(
             fd,
@@ -683,50 +519,6 @@ pub fn setsockopt(fd: socket_t, level: i32, optname: u32, optval_bytes: []const 
     }
 }
 
-pub const SendError = error{
-    /// (For UNIX domain sockets, which are identified by pathname) Write permission is  denied
-    /// on  the destination socket file, or search permission is denied for one of the
-    /// directories the path prefix.  (See path_resolution(7).)
-    /// (For UDP sockets) An attempt was made to send to a network/broadcast address as  though
-    /// it was a unicast address.
-    AccessDenied,
-    /// The socket is marked nonblocking and the requested operation would block, and
-    /// there is no global event loop configured.
-    /// It's also possible to get this error under the following condition:
-    /// (Internet  domain datagram sockets) The socket referred to by sockfd had not previously
-    /// been bound to an address and, upon attempting to bind it to an ephemeral port,  it  was
-    /// determined that all port numbers in the ephemeral port range are currently in use.  See
-    /// the discussion of /proc/sys/net/ipv4/ip_local_port_range in ip(7).
-    WouldBlock,
-
-    /// Another Fast Open is already in progress.
-    FastOpenAlreadyInProgress,
-
-    /// Connection reset by peer.
-    ConnectionResetByPeer,
-
-    /// The  socket  type requires that message be sent atomically, and the size of the message
-    /// to be sent made this impossible. The message is not transmitted.
-    MessageOversize,
-
-    /// The output queue for a network interface was full.  This generally indicates  that  the
-    /// interface  has  stopped sending, but may be caused by transient congestion.  (Normally,
-    /// this does not occur in Linux.  Packets are just silently dropped when  a  device  queue
-    /// overflows.)
-    /// This is also caused when there is not enough kernel memory available.
-    SystemResources,
-
-    /// The  local  end  has been shut down on a connection oriented socket.  In this case, the
-    /// process will also receive a SIGPIPE unless MSG.NOSIGNAL is set.
-    BrokenPipe,
-
-    /// The local network interface used to reach the destination is down.
-    NetworkDown,
-
-    /// The destination address is not listening.
-    ConnectionRefused,
-} || UnexpectedError;
-
 /// Transmit a message to another socket.
 ///
 /// The `send` call may be used only when the socket is in a connected state (so that the intended
@@ -751,8 +543,14 @@ pub fn send(
     sockfd: socket_t,
     buf: []const u8,
     flags: u32,
-) SendError!usize {
-    return sendto(sockfd, buf, flags, null, 0) catch |err| switch (err) {
+) Errors.Send!usize {
+    return sendto(
+        sockfd,
+        buf,
+        flags,
+        null,
+        0,
+    ) catch |err| switch (err) {
         error.AddressFamilyUnsupported => unreachable,
         error.SymLinkLoop => unreachable,
         error.NameTooLong => unreachable,
@@ -766,15 +564,6 @@ pub fn send(
     };
 }
 
-pub const SendToError = SendMsgError || error{
-    /// The destination address is not reachable by the bound address.
-    UnreachableAddress,
-    /// The destination address is not listening.
-    ConnectionRefused,
-    /// Network is unreachable.
-    NetworkUnreachable,
-};
-
 /// Transmit a message to another socket.
 pub fn sendto(
     /// The file descriptor of the sending socket.
@@ -784,7 +573,7 @@ pub fn sendto(
     flags: u32,
     dest_addr: ?*const posix.sockaddr,
     addrlen: posix.socklen_t,
-) SendToError!usize {
+) Errors.SendTo!usize {
     if (native_os == .windows) {
         switch (ws2.sendto(
             sockfd,
@@ -860,32 +649,13 @@ pub fn sendto(
     }
 }
 
-pub const SendMsgError = SendError || error{
-    /// The passed address didn't have the correct address family in its sa_family field.
-    AddressFamilyUnsupported,
-
-    /// Returned when socket is AF.UNIX and the given path has a symlink loop.
-    SymLinkLoop,
-
-    /// Returned when socket is AF.UNIX and the given path length exceeds `max_path_bytes` bytes.
-    NameTooLong,
-
-    /// Returned when socket is AF.UNIX and the given path does not point to an existing file.
-    FileNotFound,
-    NotDir,
-
-    /// The socket is not connected (connection-oriented sockets only).
-    SocketUnconnected,
-    AddressUnavailable,
-};
-
 pub fn sendmsg(
     /// The file descriptor of the sending socket.
     sockfd: socket_t,
     /// Message header and iovecs
     msg: *const posix.msghdr_const,
     flags: u32,
-) SendMsgError!usize {
+) Errors.SendMsg!usize {
     while (true) {
         const rc = system.sendmsg(sockfd, msg, flags);
         // TODO: make windows.ws2_32 easily usable like the previous api
@@ -926,13 +696,8 @@ pub fn sendmsg(
     }
 }
 
-pub const PipeError = error{
-    SystemFdQuotaExceeded,
-    ProcessFdQuotaExceeded,
-} || UnexpectedError;
-
 /// Creates a unidirectional data channel that can be used for interprocess communication.
-pub fn pipe() PipeError![2]posix.fd_t {
+pub fn pipe() Errors.Pipe![2]posix.fd_t {
     var fds: [2]posix.fd_t = undefined;
     switch (posix.errno(system.pipe(&fds))) {
         .SUCCESS => return fds,
@@ -944,7 +709,7 @@ pub fn pipe() PipeError![2]posix.fd_t {
     }
 }
 
-pub fn pipe2(flags: O) PipeError![2]posix.fd_t {
+pub fn pipe2(flags: O) Errors.Pipe![2]posix.fd_t {
     if (@TypeOf(system.pipe2) != void) {
         var fds: [2]posix.fd_t = undefined;
         switch (posix.errno(system.pipe2(&fds, flags))) {
@@ -1070,19 +835,11 @@ fn setSockFlags(sock: socket_t, flags: u32) !void {
     }
 }
 
-pub const PollError = error{
-    /// The network subsystem has failed.
-    NetworkDown,
-
-    /// The kernel had no space to allocate file descriptor tables.
-    SystemResources,
-} || UnexpectedError;
-
 pub const pollfd = if (native_os != .windows) posix.pollfd else ws2.WSAPOLLFD;
 
 pub const POLL = if (native_os != .windows) posix.POLL else ws2.POLL;
 
-pub fn poll(fds: []pollfd, timeout: i32) PollError!usize {
+pub fn poll(fds: []pollfd, timeout: i32) Errors.Poll!usize {
     if (native_os == .windows) {
         while (true) switch (ws2.WSAPoll(
             fds.ptr,
@@ -1100,7 +857,10 @@ pub fn poll(fds: []pollfd, timeout: i32) PollError!usize {
     }
 
     while (true) {
-        const fds_count = math.cast(posix.nfds_t, fds.len) orelse return error.SystemResources;
+        const fds_count = math.cast(
+            posix.nfds_t,
+            fds.len,
+        ) orelse return error.SystemResources;
         const rc = system.poll(fds.ptr, fds_count, timeout);
         switch (posix.errno(rc)) {
             .SUCCESS => return @intCast(rc),
@@ -1124,26 +884,38 @@ pub fn poll(fds: []pollfd, timeout: i32) PollError!usize {
 /// well as stuffing the errno codes into the last `4096` values. This is noted on the `read` man page.
 /// The limit on Darwin is `0x7fffffff`, trying to read more than that returns EINVAL.
 /// The corresponding POSIX limit is `maxInt(isize)`.
-pub fn read(fd: posix.fd_t, buf: []u8) (ReadError || net.Stream.Reader.Error)!usize {
+pub fn read(fd: posix.fd_t, buf: []u8) (Errors.Read || net.Stream.Reader.Error)!usize {
     if (buf.len == 0) return 0;
     if (native_os == .windows) {
         var bufs: [][]u8 = undefined;
         bufs[0] = buf;
 
-        return afd.netReadWindows(fd, bufs) catch |err| switch (err) {
-            error.Canceled => unreachable,
-            else => |s| return s,
-        };
+        return afd.netReadWindows(fd, bufs) catch |err|
+            switch (err) {
+                error.Canceled => unreachable,
+                else => |s| return s,
+            };
     }
 
     // Prevents EINVAL.
     const max_count = switch (native_os) {
         .linux => 0x7ffff000,
-        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => math.maxInt(i32),
+        .driverkit,
+        .ios,
+        .maccatalyst,
+        .macos,
+        .tvos,
+        .visionos,
+        .watchos,
+        => math.maxInt(i32),
         else => math.maxInt(isize),
     };
     while (true) {
-        const rc = system.read(fd, buf.ptr, @min(buf.len, max_count));
+        const rc = system.read(
+            fd,
+            buf.ptr,
+            @min(buf.len, max_count),
+        );
         switch (posix.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .INTR => continue,
@@ -1186,7 +958,10 @@ fn nowWindows(clock: Io.Clock) Io.Timestamp {
             // RtlGetSystemTimePrecise() has a granularity of 100 nanoseconds
             // and uses the NTFS/Windows epoch, which is 1601-01-01.
             const epoch_ns = std.time.epoch.windows * std.time.ns_per_s;
-            return .{ .nanoseconds = @as(i96, windows.ntdll.RtlGetSystemTimePrecise()) * 100 + epoch_ns };
+            return .{
+                .nanoseconds = @as(i96, windows.ntdll.RtlGetSystemTimePrecise()) *
+                    100 + epoch_ns,
+            };
         },
         .awake, .boot => {
             // We don't need to cache QPF as it's internally just a memory read to KUSER_SHARED_DATA
@@ -1209,10 +984,13 @@ fn nowWindows(clock: Io.Clock) Io.Timestamp {
             // 10Mhz (1 qpc tick every 100ns) is a common enough QPF value that we can optimize on it.
             // https://github.com/microsoft/STL/blob/785143a0c73f030238ef618890fd4d6ae2b3a3a0/stl/inc/chrono#L694-L701
             const common_qpf = 10_000_000;
-            if (qpf == common_qpf) return .{ .nanoseconds = qpc * (std.time.ns_per_s / common_qpf) };
+            if (qpf == common_qpf) return .{
+                .nanoseconds = qpc * (std.time.ns_per_s / common_qpf),
+            };
 
             // Convert to ns using fixed point.
-            const scale = @as(u64, std.time.ns_per_s << 32) / @as(u32, @intCast(qpf));
+            const scale = @as(u64, std.time.ns_per_s << 32) /
+                @as(u32, @intCast(qpf));
             const result = (@as(u96, qpc) * scale) >> 32;
             return .{ .nanoseconds = @intCast(result) };
         },
@@ -1255,11 +1033,25 @@ fn clockToPosix(clock: Io.Clock) posix.clockid_t {
     return switch (clock) {
         .real => posix.CLOCK.REALTIME,
         .awake => switch (native_os) {
-            .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => posix.CLOCK.UPTIME_RAW,
+            .driverkit,
+            .ios,
+            .maccatalyst,
+            .macos,
+            .tvos,
+            .visionos,
+            .watchos,
+            => posix.CLOCK.UPTIME_RAW,
             else => posix.CLOCK.MONOTONIC,
         },
         .boot => switch (native_os) {
-            .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => posix.CLOCK.MONOTONIC_RAW,
+            .driverkit,
+            .ios,
+            .maccatalyst,
+            .macos,
+            .tvos,
+            .visionos,
+            .watchos,
+            => posix.CLOCK.MONOTONIC_RAW,
             // On freebsd derivatives, use MONOTONIC_FAST as currently there's
             // no precision tradeoff.
             .freebsd, .dragonfly => posix.CLOCK.MONOTONIC_FAST,
@@ -1283,21 +1075,7 @@ fn timestampFromPosix(timespec: *const posix.timespec) Io.Timestamp {
     };
 }
 
-pub const EpollCreateError = error{
-    /// The  per-user   limit   on   the   number   of   epoll   instances   imposed   by
-    /// /proc/sys/fs/epoll/max_user_instances  was encountered.  See epoll(7) for further
-    /// details.
-    /// Or, The per-process limit on the number of open file descriptors has been reached.
-    ProcessFdQuotaExceeded,
-
-    /// The system-wide limit on the total number of open files has been reached.
-    SystemFdQuotaExceeded,
-
-    /// There was insufficient memory to create the kernel object.
-    SystemResources,
-} || UnexpectedError;
-
-pub fn epoll_create1(flags: u32) EpollCreateError!i32 {
+pub fn epoll_create1(flags: u32) Errors.EpollCreate!i32 {
     const rc = system.epoll_create1(flags);
     return switch (posix.errno(rc)) {
         .SUCCESS => @intCast(rc),
@@ -1309,28 +1087,12 @@ pub fn epoll_create1(flags: u32) EpollCreateError!i32 {
     };
 }
 
-pub const EpollCtlError = error{
-    /// op was EPOLL_CTL_ADD, and the supplied file descriptor fd is  already  registered
-    /// with this epoll instance.
-    FileDescriptorAlreadyPresentInSet,
-    /// fd refers to an epoll instance and this EPOLL_CTL_ADD operation would result in a
-    /// circular loop of epoll instances monitoring one another.
-    OperationCausesCircularLoop,
-    /// op was EPOLL_CTL_MOD or EPOLL_CTL_DEL, and fd is not registered with  this  epoll
-    /// instance.
-    FileDescriptorNotRegistered,
-    /// There was insufficient memory to handle the requested op control operation.
-    SystemResources,
-    /// The  limit  imposed  by /proc/sys/fs/epoll/max_user_watches was encountered while
-    /// trying to register (EPOLL_CTL_ADD) a new file descriptor on  an  epoll  instance.
-    /// See epoll(7) for further details.
-    UserResourceLimitReached,
-    /// The target file fd does not support epoll.  This error can occur if fd refers to,
-    /// for example, a regular file or a directory.
-    FileDescriptorIncompatibleWithEpoll,
-} || UnexpectedError;
-
-pub fn epoll_ctl(epfd: i32, op: u32, fd: i32, event: ?*system.epoll_event) EpollCtlError!void {
+pub fn epoll_ctl(
+    epfd: i32,
+    op: u32,
+    fd: i32,
+    event: ?*system.epoll_event,
+) Errors.EpollCtl!void {
     const rc = system.epoll_ctl(epfd, op, fd, event);
     return switch (posix.errno(rc)) {
         .SUCCESS => {},
@@ -1346,13 +1108,7 @@ pub fn epoll_ctl(epfd: i32, op: u32, fd: i32, event: ?*system.epoll_event) Epoll
     };
 }
 
-pub const EventFdError = error{
-    SystemResources,
-    ProcessFdQuotaExceeded,
-    SystemFdQuotaExceeded,
-} || UnexpectedError;
-
-pub fn eventfd(initval: u32, flags: u32) EventFdError!i32 {
+pub fn eventfd(initval: u32, flags: u32) Errors.EventFd!i32 {
     const rc = system.eventfd(initval, flags);
     return switch (posix.errno(rc)) {
         .SUCCESS => @intCast(rc),
@@ -1365,15 +1121,10 @@ pub fn eventfd(initval: u32, flags: u32) EventFdError!i32 {
     };
 }
 
-pub const TimerFdCreateError = error{
-    PermissionDenied,
-    ProcessFdQuotaExceeded,
-    SystemFdQuotaExceeded,
-    NoDevice,
-    SystemResources,
-} || UnexpectedError;
-
-pub fn timerfd_create(clock_id: system.timerfd_clockid_t, flags: system.TFD) TimerFdCreateError!posix.fd_t {
+pub fn timerfd_create(
+    clock_id: system.timerfd_clockid_t,
+    flags: system.TFD,
+) Errors.TimerFdCreate!posix.fd_t {
     const rc = system.timerfd_create(clock_id, @bitCast(flags));
     return switch (posix.errno(rc)) {
         .SUCCESS => @intCast(rc),
@@ -1387,14 +1138,12 @@ pub fn timerfd_create(clock_id: system.timerfd_clockid_t, flags: system.TFD) Tim
     };
 }
 
-pub const TimerFdSetError = error{Canceled} || UnexpectedError;
-
 pub fn timerfd_settime(
     fd: i32,
     flags: system.TFD.TIMER,
     new_value: *const system.itimerspec,
     old_value: ?*system.itimerspec,
-) TimerFdSetError!void {
+) Errors.TimerFdSet!void {
     const rc = system.timerfd_settime(fd, @bitCast(flags), new_value, old_value);
     return switch (posix.errno(rc)) {
         .SUCCESS => {},
@@ -1406,7 +1155,7 @@ pub fn timerfd_settime(
     };
 }
 
-pub fn timerfd_gettime(fd: i32) TimerFdGetError!system.itimerspec {
+pub fn timerfd_gettime(fd: i32) Errors.TimerFdGet!system.itimerspec {
     var curr_value: system.itimerspec = undefined;
     const rc = system.timerfd_gettime(fd, &curr_value);
     return switch (posix.errno(rc)) {
@@ -1424,7 +1173,12 @@ pub fn timerfd_gettime(fd: i32) TimerFdGetError!system.itimerspec {
 pub fn epoll_wait(epfd: i32, events: []system.epoll_event, timeout: i32) usize {
     while (true) {
         // TODO get rid of the @intCast
-        const rc = system.epoll_wait(epfd, events.ptr, @intCast(events.len), timeout);
+        const rc = system.epoll_wait(
+            epfd,
+            events.ptr,
+            @intCast(events.len),
+            timeout,
+        );
         switch (posix.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .INTR => continue,
@@ -1436,15 +1190,7 @@ pub fn epoll_wait(epfd: i32, events: []system.epoll_event, timeout: i32) usize {
     }
 }
 
-pub const KQueueError = error{
-    /// The per-process limit on the number of open file descriptors has been reached.
-    ProcessFdQuotaExceeded,
-
-    /// The system-wide limit on the total number of open files has been reached.
-    SystemFdQuotaExceeded,
-} || UnexpectedError;
-
-pub fn kqueue() KQueueError!i32 {
+pub fn kqueue() Errors.KQueue!i32 {
     const rc = system.kqueue();
     return switch (posix.errno(rc)) {
         .SUCCESS => @intCast(rc),
@@ -1454,30 +1200,12 @@ pub fn kqueue() KQueueError!i32 {
     };
 }
 
-pub const KEventError = error{
-    /// The process does not have permission to register a filter.
-    AccessDenied,
-
-    /// The event could not be found to be modified or deleted.
-    EventNotFound,
-
-    /// No memory was available to register the event.
-    SystemResources,
-
-    /// The specified process to attach to does not exist.
-    ProcessNotFound,
-
-    /// changelist or eventlist had too many items on it.
-    /// TODO remove this possibility
-    Overflow,
-};
-
 pub fn kevent(
     kq: i32,
     changelist: []const posix.Kevent,
     eventlist: []posix.Kevent,
     timeout: ?*const posix.timespec,
-) KEventError!usize {
+) Errors.KEvent!usize {
     while (true) {
         const rc = system.kevent(
             kq,
@@ -1502,8 +1230,352 @@ pub fn kevent(
     }
 }
 
+pub const Errors = struct {
+    pub const Write = error{
+        DiskQuota,
+        FileTooBig,
+        InputOutput,
+        NoSpaceLeft,
+        DeviceBusy,
+        InvalidArgument,
+
+        /// File descriptor does not hold the required rights to write to it.
+        AccessDenied,
+        PermissionDenied,
+        BrokenPipe,
+        SystemResources,
+        Canceled,
+        NotOpenForWriting,
+
+        /// The process cannot access the file because another process has locked
+        /// a portion of the file. Windows-only.
+        LockViolation,
+
+        /// This error occurs when no global event loop is configured,
+        /// and reading from the file descriptor would block.
+        WouldBlock,
+
+        /// Connection reset by peer.
+        ConnectionResetByPeer,
+
+        /// This error occurs in Linux if the process being written to
+        /// no longer exists.
+        ProcessNotFound,
+        /// This error occurs when a device gets disconnected before or mid-flush
+        /// while it's being written to - errno(6): No such device or address.
+        NoDevice,
+
+        /// The socket type requires that message be sent atomically, and the size of the message
+        /// to be sent made this impossible. The message is not transmitted.
+        MessageOversize,
+    } || Unexpected || net.Stream.Writer.Error;
+
+    pub const Fcntl = error{
+        PermissionDenied,
+        FileBusy,
+        ProcessFdQuotaExceeded,
+        Locked,
+        DeadLock,
+        LockedRegionLimitExceeded,
+    } || Unexpected;
+
+    pub const Socket = error{
+        /// Permission to create a socket of the specified type and/or
+        /// pro‐tocol is denied.
+        AccessDenied,
+
+        /// The implementation does not support the specified address family.
+        AddressFamilyUnsupported,
+
+        /// Unknown protocol, or protocol family not available.
+        ProtocolFamilyNotAvailable,
+
+        /// The per-process limit on the number of open file descriptors has been reached.
+        ProcessFdQuotaExceeded,
+
+        /// The system-wide limit on the total number of open files has been reached.
+        SystemFdQuotaExceeded,
+
+        /// Insufficient memory is available. The socket cannot be created until sufficient
+        /// resources are freed.
+        SystemResources,
+
+        /// The protocol type or the specified protocol is not supported within this domain.
+        ProtocolUnsupportedByAddressFamily,
+
+        /// The socket type is not supported by the protocol.
+        SocketTypeNotSupported,
+    } || Unexpected;
+
+    pub const Bind = error{
+        SymLinkLoop,
+        NameTooLong,
+        FileNotFound,
+        NotDir,
+        ReadOnlyFileSystem,
+        AccessDenied,
+    } || IpAddress.BindError;
+
+    pub const Listen = error{
+        FileDescriptorNotASocket,
+        OperationUnsupported,
+    } || IpAddress.ListenError || std.Io.net.UnixAddress.ListenError;
+
+    pub const Accept = error{
+        /// The per-process limit on the number of open file descriptors has been reached.
+        ProcessFdQuotaExceeded,
+        /// The system-wide limit on the total number of open files has been reached.
+        SystemFdQuotaExceeded,
+        /// Not enough free memory. This often means that the memory allocation is limited
+        /// by the socket buffer limits, not by the system memory.
+        SystemResources,
+        /// Either `listen` was never called, or `shutdown` was called (possibly while
+        /// this call was blocking). This allows `shutdown` to be used as a concurrent
+        /// cancellation mechanism.
+        SocketNotListening,
+        /// No connection is already queued and ready to be accepted, and
+        /// the socket is configured as non-blocking.
+        WouldBlock,
+        /// An incoming connection was indicated, but was subsequently terminated by the
+        /// remote peer prior to accepting the call.
+        ConnectionAborted,
+        /// Firewall rules forbid connection.
+        BlockedByFirewall,
+        ProtocolFailure,
+    } || Unexpected;
+
+    pub const GetSockName = error{
+        /// Insufficient resources were available in the system to perform the operation.
+        SystemResources,
+
+        /// The network subsystem has failed.
+        NetworkSubsystemFailed,
+
+        /// Socket hasn't been bound yet
+        SocketNotBound,
+
+        FileDescriptorNotASocket,
+    } || Unexpected;
+
+    pub const RecvFrom = error{
+        /// The socket is marked nonblocking and the requested operation would block, and
+        /// there is no global event loop configured.
+        WouldBlock,
+
+        /// A remote host refused to allow the network connection, typically because it is not
+        /// running the requested service.
+        ConnectionRefused,
+
+        /// Could not allocate kernel memory.
+        SystemResources,
+
+        ConnectionResetByPeer,
+        ConnectionTimedOut,
+
+        /// The UDP message was too big for the buffer and part of it has been discarded
+        MessageTooBig,
+
+        /// The socket is not connected (connection-oriented sockets only).
+        SocketNotConnected,
+
+        /// The other end closed the socket unexpectedly or a read is executed on a shut down socket
+        BrokenPipe,
+    } || Unexpected;
+
+    pub const Connect = IpAddress.ConnectError || net.UnixAddress.ConnectError;
+
+    pub const SetSockOpt = error{
+        /// The socket is already connected, and a specified option cannot be set while the socket is connected.
+        AlreadyConnected,
+
+        /// The option is not supported by the protocol.
+        InvalidProtocolOption,
+
+        /// The send and receive timeout values are too big to fit into the timeout fields in the socket structure.
+        TimeoutTooBig,
+
+        /// Insufficient resources are available in the system to complete the call.
+        SystemResources,
+
+        /// Setting the socket option requires more elevated permissions.
+        PermissionDenied,
+
+        OperationUnsupported,
+        NetworkDown,
+        FileDescriptorNotASocket,
+        SocketNotBound,
+        NoDevice,
+    } || Unexpected;
+
+    pub const Send = error{
+        /// (For UNIX domain sockets, which are identified by pathname) Write permission is  denied
+        /// on  the destination socket file, or search permission is denied for one of the
+        /// directories the path prefix.  (See path_resolution(7).)
+        /// (For UDP sockets) An attempt was made to send to a network/broadcast address as  though
+        /// it was a unicast address.
+        AccessDenied,
+        /// The socket is marked nonblocking and the requested operation would block, and
+        /// there is no global event loop configured.
+        /// It's also possible to get this error under the following condition:
+        /// (Internet  domain datagram sockets) The socket referred to by sockfd had not previously
+        /// been bound to an address and, upon attempting to bind it to an ephemeral port,  it  was
+        /// determined that all port numbers in the ephemeral port range are currently in use.  See
+        /// the discussion of /proc/sys/net/ipv4/ip_local_port_range in ip(7).
+        WouldBlock,
+
+        /// Another Fast Open is already in progress.
+        FastOpenAlreadyInProgress,
+
+        /// Connection reset by peer.
+        ConnectionResetByPeer,
+
+        /// The  socket  type requires that message be sent atomically, and the size of the message
+        /// to be sent made this impossible. The message is not transmitted.
+        MessageOversize,
+
+        /// The output queue for a network interface was full.  This generally indicates  that  the
+        /// interface  has  stopped sending, but may be caused by transient congestion.  (Normally,
+        /// this does not occur in Linux.  Packets are just silently dropped when  a  device  queue
+        /// overflows.)
+        /// This is also caused when there is not enough kernel memory available.
+        SystemResources,
+
+        /// The  local  end  has been shut down on a connection oriented socket.  In this case, the
+        /// process will also receive a SIGPIPE unless MSG.NOSIGNAL is set.
+        BrokenPipe,
+
+        /// The local network interface used to reach the destination is down.
+        NetworkDown,
+
+        /// The destination address is not listening.
+        ConnectionRefused,
+    } || Unexpected;
+
+    pub const SendMsg = Errors.Send || error{
+        /// The passed address didn't have the correct address family in its sa_family field.
+        AddressFamilyUnsupported,
+
+        /// Returned when socket is AF.UNIX and the given path has a symlink loop.
+        SymLinkLoop,
+
+        /// Returned when socket is AF.UNIX and the given path length exceeds `max_path_bytes` bytes.
+        NameTooLong,
+
+        /// Returned when socket is AF.UNIX and the given path does not point to an existing file.
+        FileNotFound,
+        NotDir,
+
+        /// The socket is not connected (connection-oriented sockets only).
+        SocketUnconnected,
+        AddressUnavailable,
+    };
+
+    pub const SendTo = SendMsg || error{
+        /// The destination address is not reachable by the bound address.
+        UnreachableAddress,
+        /// The destination address is not listening.
+        ConnectionRefused,
+        /// Network is unreachable.
+        NetworkUnreachable,
+    };
+
+    pub const Pipe = error{
+        SystemFdQuotaExceeded,
+        ProcessFdQuotaExceeded,
+    } || Unexpected;
+
+    pub const Poll = error{
+        /// The network subsystem has failed.
+        NetworkDown,
+
+        /// The kernel had no space to allocate file descriptor tables.
+        SystemResources,
+    } || Unexpected;
+
+    pub const Read = std.Io.File.Reader.Error;
+    pub const TimerFdGet = Unexpected;
+
+    pub const EpollCreate = error{
+        /// The  per-user   limit   on   the   number   of   epoll   instances   imposed   by
+        /// /proc/sys/fs/epoll/max_user_instances  was encountered.  See epoll(7) for further
+        /// details.
+        /// Or, The per-process limit on the number of open file descriptors has been reached.
+        ProcessFdQuotaExceeded,
+
+        /// The system-wide limit on the total number of open files has been reached.
+        SystemFdQuotaExceeded,
+
+        /// There was insufficient memory to create the kernel object.
+        SystemResources,
+    } || Unexpected;
+
+    pub const EpollCtl = error{
+        /// op was EPOLL_CTL_ADD, and the supplied file descriptor fd is  already  registered
+        /// with this epoll instance.
+        FileDescriptorAlreadyPresentInSet,
+        /// fd refers to an epoll instance and this EPOLL_CTL_ADD operation would result in a
+        /// circular loop of epoll instances monitoring one another.
+        OperationCausesCircularLoop,
+        /// op was EPOLL_CTL_MOD or EPOLL_CTL_DEL, and fd is not registered with  this  epoll
+        /// instance.
+        FileDescriptorNotRegistered,
+        /// There was insufficient memory to handle the requested op control operation.
+        SystemResources,
+        /// The  limit  imposed  by /proc/sys/fs/epoll/max_user_watches was encountered while
+        /// trying to register (EPOLL_CTL_ADD) a new file descriptor on  an  epoll  instance.
+        /// See epoll(7) for further details.
+        UserResourceLimitReached,
+        /// The target file fd does not support epoll.  This error can occur if fd refers to,
+        /// for example, a regular file or a directory.
+        FileDescriptorIncompatibleWithEpoll,
+    } || Unexpected;
+
+    pub const EventFd = error{
+        SystemResources,
+        ProcessFdQuotaExceeded,
+        SystemFdQuotaExceeded,
+    } || Unexpected;
+
+    pub const TimerFdCreate = error{
+        PermissionDenied,
+        ProcessFdQuotaExceeded,
+        SystemFdQuotaExceeded,
+        NoDevice,
+        SystemResources,
+    } || Unexpected;
+
+    pub const TimerFdSet = error{Canceled} || Unexpected;
+
+    pub const KQueue = error{
+        /// The per-process limit on the number of open file descriptors has been reached.
+        ProcessFdQuotaExceeded,
+
+        /// The system-wide limit on the total number of open files has been reached.
+        SystemFdQuotaExceeded,
+    } || Unexpected;
+
+    pub const KEvent = error{
+        /// The process does not have permission to register a filter.
+        AccessDenied,
+
+        /// The event could not be found to be modified or deleted.
+        EventNotFound,
+
+        /// No memory was available to register the event.
+        SystemResources,
+
+        /// The specified process to attach to does not exist.
+        ProcessNotFound,
+
+        /// changelist or eventlist had too many items on it.
+        /// TODO remove this possibility
+        Overflow,
+    };
+
+    pub const Unexpected = std.Io.UnexpectedError;
+};
+
 const std = @import("std");
-pub const UnexpectedError = std.Io.UnexpectedError;
 const posix = std.posix;
 const system = posix.system;
 const linux = std.os.linux;
@@ -1519,8 +1591,6 @@ const F = system.F;
 const O = system.O;
 const math = std.math;
 const debug = std.debug;
-pub const ReadError = std.Io.File.Reader.Error;
-pub const TimerFdGetError = UnexpectedError;
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 

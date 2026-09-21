@@ -542,12 +542,12 @@ pub fn to_async(poll: *Poll) AsyncIO {
 const log = std.log.scoped(.@"tardy/aio/Poll");
 
 pub const Errors = struct {
-    pub const Connect = syscall.ConnectError || OoM;
+    pub const Connect = syscall.Errors.Connect || OoM;
     pub const Timer = OoM;
     pub const Accept = OoM;
     pub const Recv = OoM;
     pub const Send = OoM;
-    pub const Wake = syscall.WriteError;
+    pub const Wake = syscall.Errors.Write;
     pub const QueueJob = Connect || Wake || Timer || Accept || Recv || Send;
 };
 const TimerPair = struct {

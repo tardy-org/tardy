@@ -119,7 +119,7 @@ fn queue_timer(
     gpa: mem.Allocator,
     task: usize,
     duration: Io.Duration,
-) Error!void {
+) Errors.Timer!void {
     const index = try kqueue.jobs.borrow_hint(gpa, task);
     errdefer kqueue.jobs.release(index);
 
@@ -153,7 +153,7 @@ fn queue_accept(
     gpa: mem.Allocator,
     task: usize,
     socket: *const net.Socket,
-) Error!void {
+) Errors.Accept!void {
     const index = try kqueue.jobs.borrow_hint(gpa, task);
     errdefer kqueue.jobs.release(index);
 
@@ -236,7 +236,7 @@ fn queue_recv(
     task: usize,
     socket: net.Socket.Handle,
     buffer: []u8,
-) Error!void {
+) Errors.Recv!void {
     const index = try kqueue.jobs.borrow_hint(gpa, task);
     errdefer kqueue.jobs.release(index);
 
@@ -273,7 +273,7 @@ fn queue_send(
     task: usize,
     socket: net.Socket.Handle,
     buffer: []const u8,
-) Error!void {
+) Errors.Send!void {
     const index = try kqueue.jobs.borrow_hint(gpa, task);
     errdefer kqueue.jobs.release(index);
 
@@ -534,12 +534,16 @@ pub fn to_async(kqueue: *Kqueue) AsyncIO {
 const log = std.log.scoped(.@"tardy/aio/Kqueue");
 
 pub const Errors = struct {
-    pub const Connect = syscall.ConnectError || Error;
-    pub const Submit = syscall.KEventError;
-    pub const Wake = syscall.KEventError;
+    const Error = error{ChangeQueueFull} || pool.Error;
+
+    pub const Connect = syscall.Errors.Connect || Error;
+    pub const Submit = syscall.Errors.KEvent;
+    pub const Wake = syscall.Errors.KEvent;
     pub const QueueJob = Connect || Submit || Wake || Error;
+    pub const Accept = Error;
+    pub const Recv = Error;
+    pub const Timer = Error;
 };
-const Error = error{ChangeQueueFull} || pool.Error;
 
 const WAKE_IDENT = 1;
 

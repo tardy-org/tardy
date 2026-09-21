@@ -551,14 +551,16 @@ pub fn to_async(epoll: *Epoll) AsyncIO {
 const log = std.log.scoped(.@"tardy/aio/Epoll");
 
 pub const Errors = struct {
-    pub const Timer = syscall.TimerFdCreateError || syscall.TimerFdSetError || Error;
+    const Error = syscall.Errors.EpollCtl || pool.Error;
+
+    pub const Timer = syscall.Errors.TimerFdCreate ||
+        syscall.Errors.TimerFdSet || Error;
     pub const Send = Error;
     pub const Recv = Error;
     pub const Accept = Error;
-    pub const Connect = syscall.ConnectError || Error;
+    pub const Connect = syscall.Errors.Connect || Error;
     pub const QueueJob = Timer || Send || Recv || Accept || Connect;
 };
-pub const Error = syscall.EpollCtlError || pool.Error;
 
 const std = @import("std");
 const debug = std.debug;

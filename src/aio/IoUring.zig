@@ -230,7 +230,7 @@ fn queue_timer(
     gpa: mem.Allocator,
     task: usize,
     duration: Io.Duration,
-) Error!void {
+) Errors.Timer!void {
     const index = try io_uring.jobs.borrow_hint(gpa, task);
     errdefer io_uring.jobs.release(index);
 
@@ -265,7 +265,7 @@ fn queue_open(
     task: usize,
     path: fs.Path,
     flags: AsyncIO.OpenFlags,
-) Error!void {
+) Errors.Open!void {
     const index = try io_uring.jobs.borrow_hint(gpa, task);
     errdefer io_uring.jobs.release(index);
 
@@ -329,7 +329,7 @@ fn queue_delete(
     task: usize,
     path: fs.Path,
     is_dir: bool,
-) Error!void {
+) Errors.Delete!void {
     const index = try io_uring.jobs.borrow_hint(gpa, task);
     errdefer io_uring.jobs.release(index);
 
@@ -369,7 +369,7 @@ fn queue_mkdir(
     task: usize,
     path: fs.Path,
     mode: isize,
-) Error!void {
+) Errors.Mkdir!void {
     const index = try io_uring.jobs.borrow_hint(gpa, task);
     errdefer io_uring.jobs.release(index);
 
@@ -406,7 +406,7 @@ fn queue_stat(
     gpa: mem.Allocator,
     task: usize,
     fd: posix.fd_t,
-) Error!void {
+) Errors.Stat!void {
     const index = try io_uring.jobs.borrow_hint(gpa, task);
     errdefer io_uring.jobs.release(index);
 
@@ -438,7 +438,7 @@ fn queue_read(
     fd: posix.fd_t,
     buffer: []u8,
     offset: ?usize,
-) Error!void {
+) Errors.Read!void {
     const index = try io_uring.jobs.borrow_hint(gpa, task);
     errdefer io_uring.jobs.release(index);
 
@@ -473,7 +473,7 @@ fn queue_write(
     fd: posix.fd_t,
     buffer: []const u8,
     offset: ?usize,
-) Error!void {
+) Errors.Write!void {
     const index = io_uring.jobs.borrow_hint(
         gpa,
         task,
@@ -509,7 +509,7 @@ fn queue_close(
     gpa: mem.Allocator,
     task: usize,
     fd: posix.fd_t,
-) Error!void {
+) Errors.Close!void {
     const index = io_uring.jobs.borrow_hint(
         gpa,
         task,
@@ -531,7 +531,7 @@ fn queue_accept(
     gpa: mem.Allocator,
     task: usize,
     socket: *const net.Socket,
-) Error!void {
+) Errors.Accept!void {
     const index = io_uring.jobs.borrow_hint(
         gpa,
         task,
@@ -569,7 +569,7 @@ fn queue_connect(
     gpa: mem.Allocator,
     task: usize,
     socket: *const net.Socket,
-) Error!void {
+) Errors.Connect!void {
     const index = io_uring.jobs.borrow_hint(
         gpa,
         task,
@@ -600,7 +600,7 @@ fn queue_recv(
     task: usize,
     socket: posix.socket_t,
     buffer: []u8,
-) Error!void {
+) Errors.Recv!void {
     const index = io_uring.jobs.borrow_hint(
         gpa,
         task,
@@ -633,7 +633,7 @@ fn queue_send(
     task: usize,
     socket: posix.socket_t,
     buffer: []const u8,
-) Error!void {
+) Errors.Send!void {
     const index = try io_uring.jobs.borrow_hint(gpa, task);
     errdefer io_uring.jobs.release(index);
 
@@ -652,7 +652,7 @@ fn queue_send(
     _ = try io_uring.uring.send(index, socket, buffer, 0);
 }
 
-fn queue_wake(io_uring: *IoUring, gpa: mem.Allocator) Error!void {
+fn queue_wake(io_uring: *IoUring, gpa: mem.Allocator) Errors.Wake!void {
     const index = try io_uring.jobs.borrow(gpa);
     errdefer io_uring.jobs.release(index);
 
@@ -673,7 +673,7 @@ fn queue_wake(io_uring: *IoUring, gpa: mem.Allocator) Error!void {
     );
 }
 
-fn wake(runner: *anyopaque) Errors.Wake!void {
+fn wake(runner: *anyopaque) syscall.Errors.Write!void {
     const uring: *IoUring = @ptrCast(@alignCast(runner));
     const bytes: []const u8 = "00000000";
     var i: usize = 0;
@@ -1295,9 +1295,23 @@ pub fn to_async(io_uring: *IoUring) AsyncIO {
 }
 
 pub const Errors = struct {
+    const Error = error{SubmissionQueueFull} || pool.Error;
+
     pub const Reap = Submit || Error;
     pub const QueueJob = Error || Submit;
-    pub const Wake = syscall.WriteError;
+    pub const Wake = Error;
+    pub const Delete = Error;
+    pub const Stat = Error;
+    pub const Connect = Error;
+    pub const Accept = Error;
+    pub const Recv = Error;
+    pub const Send = Error;
+    pub const Timer = Error;
+    pub const Open = Error;
+    pub const Mkdir = Error;
+    pub const Read = Error;
+    pub const Write = Error;
+    pub const Close = Error;
 
     pub const Init = error{
         EntriesZero,
@@ -1346,10 +1360,6 @@ pub const Errors = struct {
         Unexpected,
     };
 };
-
-pub const Error = error{
-    SubmissionQueueFull,
-} || pool.Error;
 
 const log = std.log.scoped(.@"tardy/aio/IoUring");
 
