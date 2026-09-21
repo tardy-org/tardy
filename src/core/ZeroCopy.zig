@@ -1,34 +1,36 @@
 pub fn ZeroCopy(comptime T: type) type {
     return struct {
         const ZeroCopy_t = @This();
-        ptr: [*]T,
-        len: usize,
-        capacity: usize,
+        list: std.ArrayList(T),
 
         pub fn init(gpa: mem.Allocator, capacity: usize) !ZeroCopy_t {
-            const slice = try gpa.alloc(T, capacity);
+            var new: std.ArrayList(T) = try .initCapacity(gpa, capacity);
+            new.items.len = 0;
+
             return .{
-                .ptr = slice.ptr,
-                .len = 0,
-                .capacity = capacity,
+                .list = new,
             };
         }
 
         pub fn deinit(zc: *ZeroCopy_t, gpa: mem.Allocator) void {
-            gpa.free(zc.ptr[0..zc.capacity]);
+            zc.list.deinit(gpa);
         }
 
-        pub fn as_slice(zc: *const ZeroCopy_t) []T {
-            return zc.ptr[0..zc.len];
+        pub fn slice(zc: *const ZeroCopy_t) []T {
+            return zc.list.items[0..];
+        }
+
+        pub fn len(zc: *const ZeroCopy_t) usize {
+            return zc.list.items.len;
         }
 
         pub fn subslice(zc: *const ZeroCopy_t, options: SubsliceOptions) []T {
             const start: usize = options.start orelse 0;
-            const end: usize = options.end orelse zc.len;
+            const end: usize = options.end orelse zc.list.items.len;
             debug.assert(start <= end);
-            debug.assert(end <= zc.len);
+            debug.assert(end <= zc.list.items.len);
 
-            return zc.ptr[start..end];
+            return zc.list.items[start..end];
         }
 
         /// This returns a slice that you can write into for zero-copy uses.
@@ -37,84 +39,47 @@ pub fn ZeroCopy(comptime T: type) type {
         /// The write area that is returned is ONLY valid until the next call of
         /// `get_write_area` or mark_written.
         pub fn get_write_area(zc: *ZeroCopy_t, gpa: mem.Allocator, size: usize) ![]T {
-            const available_space = zc.capacity - zc.len;
+            const available_space = zc.list.capacity - zc.list.items.len;
             if (available_space >= size) {
-                return zc.ptr[zc.len..][0..size];
-            } else {
-                const old_slice = zc.ptr[0..zc.capacity];
-                const new_size = try std.math.ceilPowerOfTwo(
-                    usize,
-                    zc.capacity + size,
-                );
-
-                if (gpa.remap(
-                    zc.ptr[0..zc.capacity],
-                    new_size,
-                )) |new| {
-                    zc.ptr = new.ptr;
-                    zc.capacity = new.len;
-                } else if (gpa.resize(
-                    zc.ptr[0..zc.capacity],
-                    new_size,
-                )) {
-                    zc.capacity = new_size;
-                } else {
-                    const new_slice = try gpa.alloc(T, new_size);
-                    @memcpy(new_slice[0..zc.len], zc.ptr[0..zc.len]);
-                    gpa.free(old_slice);
-
-                    zc.ptr = new_slice.ptr;
-                    zc.capacity = new_slice.len;
-                }
-
-                debug.assert(zc.capacity - zc.len >= size);
-                return zc.ptr[zc.len .. zc.len + size];
+                return zc.get_write_area_assume_space(size);
             }
+
+            try zc.list.ensureUnusedCapacity(gpa, size);
+
+            return zc.get_write_area_assume_space(size);
         }
 
         pub fn get_write_area_assume_space(zc: *const ZeroCopy_t, size: usize) []T {
-            debug.assert(zc.capacity - zc.len >= size);
-            return zc.ptr[zc.len .. zc.len + size];
+            debug.assert(zc.list.capacity - zc.list.items.len >= size);
+            return zc.list.items.ptr[zc.list.items.len..][0..size];
         }
 
         pub fn mark_written(zc: *ZeroCopy_t, length: usize) void {
-            debug.assert(zc.len + length <= zc.capacity);
-            zc.len += length;
+            debug.assert(zc.list.items.len + length <= zc.list.capacity);
+            zc.list.items.len += length;
         }
 
         pub fn shrink_retaining_capacity(zc: *ZeroCopy_t, new_size: usize) void {
-            debug.assert(new_size <= zc.len);
-            zc.len = new_size;
+            zc.list.shrinkRetainingCapacity(new_size);
         }
 
         pub fn shrink_clear_and_free(
             zc: *ZeroCopy_t,
             gpa: mem.Allocator,
             new_size: usize,
-        ) !void {
-            debug.assert(new_size <= zc.len);
-            if (!gpa.resize(
-                zc.ptr[0..zc.capacity],
-                new_size,
-            )) {
-                const slice = try gpa.realloc(
-                    zc.ptr[0..zc.capacity],
-                    new_size,
-                );
-                zc.ptr = slice.ptr;
-            }
-            zc.capacity = new_size;
-            zc.len = 0;
+        ) void {
+            zc.list.shrinkAndFree(gpa, new_size);
+            zc.clear_retaining_capacity();
         }
 
         pub fn clear_retaining_capacity(zc: *ZeroCopy_t) void {
-            zc.len = 0;
+            zc.list.items.len = 0;
         }
 
         pub fn clear_and_free(zc: *ZeroCopy_t, gpa: mem.Allocator) void {
-            gpa.free(zc.ptr[0..zc.capacity]);
-            zc.len = 0;
-            zc.capacity = 0;
+            zc.deinit(gpa);
+            zc.clear_retaining_capacity();
+            zc.list.capacity = 0;
         }
     };
 }
@@ -139,7 +104,7 @@ test "ZeroCopy: First" {
     try testing.expectEqualSlices(
         u8,
         garbage[0..],
-        zc.as_slice()[0..write_area.len],
+        zc.subslice(.{ .end = write_area.len }),
     );
 }
 
@@ -154,36 +119,58 @@ test "ZeroCopy: Growth" {
     @memcpy(write_area, &large_data);
     zc.mark_written(write_area.len);
 
-    try testing.expect(zc.capacity >= 32);
+    try testing.expect(zc.list.capacity >= 32);
     try testing.expectEqualSlices(
         u8,
         large_data[0..],
-        zc.as_slice(),
+        zc.slice(),
     );
 }
 
 test "ZeroCopy: Multiple Writes" {
     const gpa = testing.allocator;
 
-    var zc: ZeroCopy(u8) = try .init(gpa, 64);
+    const hello = "Hello, ";
+    const world = "World!";
+
+    var zc: ZeroCopy(u8) = try .init(gpa, hello.len + world.len);
     defer zc.deinit(gpa);
 
-    const data1 = "Hello, ";
-    const data2 = "World!";
+    {
+        defer zc.clear_retaining_capacity();
 
-    const area1 = try zc.get_write_area(gpa, data1.len);
-    @memcpy(area1, data1);
-    zc.mark_written(area1.len);
+        const area1 = try zc.get_write_area(gpa, hello.len);
+        @memcpy(area1, hello);
+        zc.mark_written(area1.len);
 
-    const area2 = try zc.get_write_area(gpa, data2.len);
-    @memcpy(area2, data2);
-    zc.mark_written(area2.len);
+        const area2 = try zc.get_write_area(gpa, world.len);
+        @memcpy(area2, world);
+        zc.mark_written(area2.len);
 
-    try testing.expectEqualSlices(
-        u8,
-        "Hello, World!",
-        zc.as_slice(),
-    );
+        try testing.expectEqualSlices(
+            u8,
+            "Hello, World!",
+            zc.slice(),
+        );
+    }
+
+    {
+        // without `mark_written`, the same area gets overwritten
+        const area1 = try zc.get_write_area(gpa, hello.len);
+        @memcpy(area1, hello);
+
+        // returns same area
+        const area2 = try zc.get_write_area(gpa, world.len);
+        @memcpy(area2, world);
+        zc.mark_written(area1.len + area2.len);
+
+        // previous `World!` is still in buffer
+        try testing.expectEqualSlices(
+            u8,
+            "World! World!",
+            zc.slice(),
+        );
+    }
 }
 
 test "ZeroCopy: Zero Size Write" {
@@ -193,8 +180,9 @@ test "ZeroCopy: Zero Size Write" {
 
     const area = try zc.get_write_area(gpa, 0);
     try testing.expect(area.len == 0);
+
     zc.mark_written(0);
-    try testing.expect(zc.len == 0);
+    try testing.expect(zc.list.items.len == 0);
 }
 
 const std = @import("std");
