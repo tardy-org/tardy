@@ -108,10 +108,13 @@ pub fn queue_job(
             send.buffer,
         ),
         .open, .delete, .mkdir, .stat, .read, .write, .close => unreachable,
-    }) catch |e| if (e == error.ChangeQueueFull) {
-        try submit(runner);
-        try queue_job(runner, gpa, task, job);
-    } else return e;
+    }) catch |err| switch (err) {
+        error.ChangeQueueFull => {
+            try submit(runner);
+            try queue_job(runner, gpa, task, job);
+        },
+        else => return err,
+    };
 }
 
 fn queue_timer(
@@ -211,9 +214,9 @@ fn queue_connect(
         syscall.connect(
             socket.handle,
             &socket.addr,
-        ) catch |e| switch (e) {
+        ) catch |err| switch (err) {
             error.WouldBlock => {},
-            else => |err| return err,
+            else => |e| return e,
         };
 
         const event = &kqueue.changes[kqueue.change_count];
@@ -455,18 +458,13 @@ pub fn reap(
                             },
                         };
 
-                        break :result if (rc == 0)
-                            .{
-                                .recv = .{
-                                    .err = error.Closed,
-                                },
-                            }
-                        else
-                            break :result .{
-                                .recv = .{
-                                    .actual = @intCast(rc),
-                                },
-                            };
+                        break :result if (rc == 0) .{
+                            .recv = .{
+                                .err = error.Closed,
+                            },
+                        } else break :result .{ .recv = .{
+                            .actual = @intCast(rc),
+                        } };
                     },
                     .send => |send| {
                         debug.assert(event.filter == posix.system.EVFILT.WRITE);
@@ -476,11 +474,9 @@ pub fn reap(
                             send.buffer,
                             0,
                         ) catch |err| {
-                            break :result .{
-                                .send = .{
-                                    .err = err,
-                                },
-                            };
+                            break :result .{ .send = .{
+                                .err = err,
+                            } };
                         };
 
                         break :result .{

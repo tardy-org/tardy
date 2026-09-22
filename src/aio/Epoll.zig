@@ -209,9 +209,9 @@ fn queue_connect(
     syscall.connect(
         socket.handle,
         &socket.addr,
-    ) catch |e| switch (e) {
+    ) catch |err| switch (err) {
         error.WouldBlock => {},
-        else => |err| return err,
+        else => |e| return e,
     };
 
     var event: linux.epoll_event = .{
@@ -287,11 +287,11 @@ fn add_or_mod_fd(
     fd: posix.fd_t,
     event: *linux.epoll_event,
 ) syscall.Errors.EpollCtl!void {
-    epoll.add_fd(fd, event) catch |e| switch (e) {
+    epoll.add_fd(fd, event) catch |err| switch (err) {
         error.FileDescriptorAlreadyPresentInSet => {
             try epoll.mod_fd(fd, event);
         },
-        else => |err| return err,
+        else => |e| return e,
     };
 }
 
@@ -385,8 +385,8 @@ pub fn reap(
                         _ = syscall.read(
                             epoll.wake_event_fd,
                             buffer[0..],
-                        ) catch |e| {
-                            log.err("wake failed: {}", .{e});
+                        ) catch |err| {
+                            log.err("wake failed: {}", .{err});
                             unreachable;
                         };
 
@@ -402,8 +402,8 @@ pub fn reap(
                         _ = syscall.read(
                             timer_fd,
                             buffer[0..],
-                        ) catch |e| {
-                            log.debug("timer failed: {}", .{e});
+                        ) catch |err| {
+                            log.debug("timer failed: {}", .{err});
                             unreachable;
                         };
 
@@ -417,8 +417,8 @@ pub fn reap(
                                 accept.socket.handle,
                                 &accept.socket.addr,
                                 0,
-                            ) catch |e| {
-                                const err = switch (e) {
+                            ) catch |err| {
+                                const e = switch (err) {
                                     error.WouldBlock => {
                                         job_complete = false;
                                         continue;
@@ -426,7 +426,7 @@ pub fn reap(
                                     else => error.Unexpected,
                                 };
 
-                                break :result .{ .err = err };
+                                break :result .{ .err = e };
                             };
 
                             break :result .{ .actual = .{
@@ -461,16 +461,16 @@ pub fn reap(
                                 recv.socket,
                                 recv.buffer,
                                 0,
-                            ) catch |e| {
-                                const err = switch (e) {
+                            ) catch |err| {
+                                const e = switch (err) {
                                     error.WouldBlock => {
                                         job_complete = false;
                                         continue;
                                     },
-                                    else => |err| err,
+                                    else => |e| e,
                                 };
 
-                                break :result .{ .err = err };
+                                break :result .{ .err = e };
                             };
 
                             if (length == 0) break :result .{
@@ -489,16 +489,16 @@ pub fn reap(
                                 send.socket,
                                 send.buffer,
                                 0,
-                            ) catch |e| {
-                                const err = switch (e) {
+                            ) catch |err| {
+                                const e = switch (err) {
                                     error.WouldBlock => {
                                         job_complete = false;
                                         continue;
                                     },
-                                    else => |err| err,
+                                    else => |e| e,
                                 };
 
-                                break :result .{ .err = err };
+                                break :result .{ .err = e };
                             };
 
                             break :result .{ .actual = length };

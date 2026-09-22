@@ -216,12 +216,12 @@ fn queue_job(
             send.socket,
             send.buffer,
         ),
-    }) catch |e| switch (e) {
+    }) catch |err| switch (err) {
         error.SubmissionQueueFull => {
             try submit(runner);
             try queue_job(runner, gpa, task, job);
         },
-        else => |err| return err,
+        else => |e| return e,
     };
 }
 
@@ -684,9 +684,9 @@ fn submit(runner: *anyopaque) Errors.Submit!void {
     const uring: *IoUring = @ptrCast(@alignCast(runner));
 
     _ = while (true) {
-        break uring.uring.submit() catch |e| switch (e) {
+        break uring.uring.submit() catch |err| switch (err) {
             error.SignalInterrupt => continue,
-            else => |err| return err,
+            else => |e| return e,
         };
     };
 }
@@ -702,12 +702,10 @@ fn reap(
     const uring_nr: u32 = if (wait) 1 else 0;
 
     const count = while (true) {
-        break uring.uring.copy_cqes(uring.cqes[0..], uring_nr) catch |e|
-            {
-                switch (e) {
-                    error.SignalInterrupt => continue,
-                    else => |err| return err,
-                }
+        break uring.uring.copy_cqes(uring.cqes[0..], uring_nr) catch |err|
+            switch (err) {
+                error.SignalInterrupt => continue,
+                else => |e| return e,
             };
     };
 
@@ -753,8 +751,8 @@ fn reap(
                     }
 
                     const result: results.Results.Accept = result: {
-                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
-                        break :result switch (e) {
+                        const err: linux.E = @fromBackingInt(@intCast(-cqe.res));
+                        break :result switch (err) {
                             .AGAIN => .{
                                 .err = error.WouldBlock,
                             },
@@ -793,8 +791,8 @@ fn reap(
                     };
 
                     const result: results.Results.Connect = result: {
-                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
-                        break :result switch (e) {
+                        const err: linux.E = @fromBackingInt(@intCast(-cqe.res));
+                        break :result switch (err) {
                             .ACCES, .PERM => .{
                                 .err = error.AccessDenied,
                             },
@@ -852,8 +850,8 @@ fn reap(
                     if (cqe.res == 0) break :blk .{ .recv = .{ .err = error.Closed } };
 
                     const result: results.Results.Recv = result: {
-                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
-                        break :result switch (e) {
+                        const err: linux.E = @fromBackingInt(@intCast(-cqe.res));
+                        break :result switch (err) {
                             .NOTSOCK, .INVAL, .FAULT, .BADF => unreachable,
                             .AGAIN => .{
                                 .err = error.WouldBlock,
@@ -882,8 +880,8 @@ fn reap(
                     if (cqe.res >= 0) break :blk .{ .send = .{ .actual = @intCast(cqe.res) } };
 
                     const result: results.Results.Send = result: {
-                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
-                        break :result switch (e) {
+                        const err: linux.E = @fromBackingInt(@intCast(-cqe.res));
+                        break :result switch (err) {
                             .OPNOTSUPP,
                             .FAULT,
                             .NOTCONN,
@@ -928,8 +926,8 @@ fn reap(
                     };
 
                     const result: results.Results.Mkdir = result: {
-                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
-                        break :result switch (e) {
+                        const err: linux.E = @fromBackingInt(@intCast(-cqe.res));
+                        break :result switch (err) {
                             .ACCES => .{
                                 .err = error.AccessDenied,
                             },
@@ -981,8 +979,8 @@ fn reap(
                     };
 
                     const result: results.Results.Open = result: {
-                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
-                        break :result switch (e) {
+                        const err: linux.E = @fromBackingInt(@intCast(-cqe.res));
+                        break :result switch (err) {
                             .ACCES, .PERM => .{
                                 .err = error.AccessDenied,
                             },
@@ -1060,11 +1058,13 @@ fn reap(
                     };
                 },
                 .delete => {
-                    if (cqe.res == 0) break :blk .{ .delete = .{ .actual = {} } };
+                    if (cqe.res == 0) break :blk .{
+                        .delete = .{ .actual = {} },
+                    };
 
                     const result: results.Results.Delete = result: {
-                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
-                        break :result switch (e) {
+                        const err: linux.E = @fromBackingInt(@intCast(-cqe.res));
+                        break :result switch (err) {
                             // unlink
                             .ACCES => .{
                                 .err = error.AccessDenied,
@@ -1130,8 +1130,8 @@ fn reap(
                     };
 
                     const result: results.Results.Read = result: {
-                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
-                        break :result switch (e) {
+                        const err: linux.E = @fromBackingInt(@intCast(-cqe.res));
+                        break :result switch (err) {
                             .AGAIN => .{
                                 .err = error.WouldBlock,
                             },
@@ -1166,8 +1166,8 @@ fn reap(
                     };
 
                     const result: results.Results.Write = result: {
-                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
-                        break :result switch (e) {
+                        const err: linux.E = @fromBackingInt(@intCast(-cqe.res));
+                        break :result switch (err) {
                             .INVAL => unreachable,
                             .AGAIN => .{
                                 .err = error.WouldBlock,
@@ -1231,8 +1231,8 @@ fn reap(
                     }
 
                     const result: results.Results.Stat = result: {
-                        const e: linux.E = @fromBackingInt(@intCast(-cqe.res));
-                        break :result switch (e) {
+                        const err: linux.E = @fromBackingInt(@intCast(-cqe.res));
+                        break :result switch (err) {
                             .ACCES => .{
                                 .err = error.AccessDenied,
                             },

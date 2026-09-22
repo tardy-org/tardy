@@ -37,10 +37,10 @@ pub fn init(gpa: mem.Allocator, options: AsyncIO.Options) !Poll {
             );
             errdefer syscall.close(write_end);
 
-            syscall.connect(write_end, &addr) catch |e| {
-                switch (e) {
+            syscall.connect(write_end, &addr) catch |err| {
+                switch (err) {
                     error.WouldBlock => {},
-                    else => |err| return err,
+                    else => |e| return e,
                 }
             };
 
@@ -203,9 +203,9 @@ fn queue_connect(
     syscall.connect(
         socket.handle,
         &socket.addr,
-    ) catch |e| switch (e) {
+    ) catch |err| switch (err) {
         error.WouldBlock => {},
-        else => |err| return err,
+        else => |e| return e,
     };
 
     try poll.fd_list.append(gpa, .{
@@ -369,8 +369,8 @@ pub fn reap(
                                 posix.SOCK.NONBLOCK
                             else
                                 0,
-                        ) catch |e| {
-                            const err = switch (e) {
+                        ) catch |err| {
+                            const e = switch (err) {
                                 error.WouldBlock => {
                                     log.debug(
                                         "accept wouldblock - not removing",
@@ -380,15 +380,15 @@ pub fn reap(
                                     continue;
                                 },
                                 error.ConnectionAborted,
-                                => error.ConnectionAborted,
+                                error.ProcessFdQuotaExceeded,
+                                error.SystemFdQuotaExceeded,
+                                => |e| e,
                                 error.SocketNotListening => error.NotListening,
-                                error.ProcessFdQuotaExceeded => error.ProcessFdQuotaExceeded,
-                                error.SystemFdQuotaExceeded => error.SystemFdQuotaExceeded,
                                 else => error.Unexpected,
                             };
 
                             break :result .{ .accept = .{
-                                .err = err,
+                                .err = e,
                             } };
                         };
 
@@ -429,8 +429,8 @@ pub fn reap(
                             recv.socket,
                             recv.buffer,
                             0,
-                        ) catch |e| {
-                            const err = switch (e) {
+                        ) catch |err| {
+                            const e = switch (err) {
                                 error.WouldBlock => {
                                     log.debug(
                                         "recv wouldblock - not removing",
@@ -444,7 +444,7 @@ pub fn reap(
                             };
 
                             break :result .{ .recv = .{
-                                .err = err,
+                                .err = e,
                             } };
                         };
 
@@ -470,9 +470,9 @@ pub fn reap(
                             send.socket,
                             send.buffer,
                             0,
-                        ) catch |e| {
-                            log.err("send failed with {}", .{e});
-                            const err = switch (e) {
+                        ) catch |err| {
+                            log.err("send failed with {}", .{err});
+                            const e = switch (err) {
                                 error.WouldBlock => {
                                     log.debug(
                                         "send wouldblock - not removing",
@@ -488,7 +488,7 @@ pub fn reap(
                             };
 
                             break :result .{ .send = .{
-                                .err = err,
+                                .err = e,
                             } };
                         };
 
