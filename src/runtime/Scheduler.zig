@@ -2,23 +2,24 @@ pub const Scheduler = @This();
 
 tasks: pool.Pool(Task),
 runnable: usize,
+// index to frames that are `.done` or `.errored`
 released: std.ArrayList(usize),
 triggers: atomic.Bitset,
 
-pub fn init(gpa: mem.Allocator, size: usize, pooling: pool.Kind) !Scheduler {
+pub fn init(gpa: mem.Allocator, task_size: usize, pooling: pool.Kind) !Scheduler {
     var tasks: pool.Pool(Task) = try .init(
         gpa,
-        size,
+        task_size,
         pooling,
     );
     errdefer tasks.deinit(gpa);
 
-    var released: std.ArrayList(usize) = try .initCapacity(gpa, size);
+    var released: std.ArrayList(usize) = try .initCapacity(gpa, task_size);
     errdefer released.deinit(gpa);
 
     const triggers: atomic.Bitset = try .init(
         gpa,
-        size,
+        task_size,
         false,
     );
     errdefer triggers.deinit(gpa);
@@ -41,8 +42,8 @@ pub fn deinit(sched: *Scheduler, gpa: mem.Allocator, io: std.Io) void {
     sched.triggers.deinit(gpa, io);
 }
 
-pub fn set_runnable(sched: *Scheduler, index: usize) void {
-    const task = sched.tasks.get_ptr(index);
+pub fn set_runnable(sched: *Scheduler, task_index: usize) void {
+    const task = sched.tasks.get_ptr(task_index);
     debug.assert(task.state != .runnable);
     task.state = .runnable;
     sched.runnable += 1;
@@ -50,8 +51,8 @@ pub fn set_runnable(sched: *Scheduler, index: usize) void {
 
 pub fn trigger_await(sched: *Scheduler) void {
     const rt: *Runtime = @fieldParentPtr("scheduler", sched);
-    const index = rt.current_task.?;
-    const task = sched.tasks.get_ptr(index);
+    const task_index = rt.current_task.?;
+    const task = sched.tasks.get_ptr(task_index);
 
     // To waiting...
     task.state = .wait_for_trigger;
@@ -66,9 +67,9 @@ pub fn trigger(
     sched: *Scheduler,
     gpa: mem.Allocator,
     io: std.Io,
-    index: usize,
+    task_index: usize,
 ) OoM!void {
-    try sched.triggers.set(gpa, io, index);
+    try sched.triggers.set(gpa, io, task_index);
 }
 
 // This is only safe to call from the Runtime that the Frame is running on.
@@ -78,15 +79,15 @@ pub fn ioAwait(
     job: AsyncIO.Submission,
 ) AsyncIO.Errors.QueueJob!void {
     const rt: *Runtime = @fieldParentPtr("scheduler", sched);
-    const index = rt.current_task.?;
-    const task = sched.tasks.get_ptr(index);
+    const task_index = rt.current_task.?;
+    const task = sched.tasks.get_ptr(task_index);
 
     // To waiting...
     task.state = .wait_for_io;
     sched.runnable -= 1;
 
     // Queue the related I/O job.
-    try rt.aio.queue_job(gpa, index, job);
+    try rt.aio.queue_job(gpa, task_index, job);
     Coroutine.yield();
 }
 
@@ -97,7 +98,7 @@ pub fn spawn(
     args: meta.ArgsTuple(@TypeOf(coroutine_fn)),
     stack_size: ?Coroutine.Stack,
 ) !void {
-    const index = blk: {
+    const task_index = blk: {
         if (sched.released.pop()) |index| {
             break :blk sched.tasks.borrow_assume_unset(index);
         } else {
@@ -113,24 +114,25 @@ pub fn spawn(
     );
 
     const item: Task = .{
-        .index = index,
+        .index = task_index,
         .frame = frame,
         .state = .dead,
     };
-    const item_ptr = sched.tasks.get_ptr(index);
+    const item_ptr = sched.tasks.get_ptr(task_index);
     item_ptr.* = item;
-    sched.set_runnable(index);
+
+    sched.set_runnable(task_index);
 }
 
-pub fn release(sched: *Scheduler, gpa: mem.Allocator, index: usize) !void {
+pub fn release(sched: *Scheduler, gpa: mem.Allocator, task_index: usize) !void {
     // must be runnable to set?
-    const task = sched.tasks.get_ptr(index);
+    const task = sched.tasks.get_ptr(task_index);
     debug.assert(task.state == .runnable);
     task.state = .dead;
     sched.runnable -= 1;
 
-    sched.tasks.release(index);
-    try sched.released.append(gpa, index);
+    sched.tasks.release(task_index);
+    try sched.released.append(gpa, task_index);
 }
 
 const TaskWithJob = struct {

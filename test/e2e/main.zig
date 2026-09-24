@@ -49,8 +49,8 @@ pub fn main(init: std.process.Init) !void {
         p.seed_string = seed_string;
         p.seed = seed;
 
-        p.size_tasks_initial = rand.intRangeAtMost(usize, 1, 64);
-        p.size_aio_reap_max = rand.intRangeAtMost(usize, 1, p.size_tasks_initial * 2);
+        p.initial_tasks_size = rand.intRangeAtMost(usize, 1, 64);
+        p.aio_reap_size_max = rand.intRangeAtMost(usize, 1, p.initial_tasks_size * 2);
         break :blk p;
     };
     log.debug("{f}", .{std.json.fmt(shared, .{
@@ -60,8 +60,8 @@ pub fn main(init: std.process.Init) !void {
     var td: Tardy = try .init(init.gpa, init.io, .{
         .threading = .{ .multi = 2 },
         .pooling = .grow,
-        .size_tasks_initial = shared.size_tasks_initial,
-        .size_aio_reap_max = shared.size_aio_reap_max,
+        .initial_tasks_size = shared.initial_tasks_size,
+        .aio_reap_size_max = shared.aio_reap_size_max,
     });
     defer td.deinit();
 

@@ -165,8 +165,8 @@ pub fn accept(sock: *const Socket, rt: *Runtime) Errors.Accept!Socket {
             },
         });
 
-        const index = rt.current_task.?;
-        const task = rt.scheduler.tasks.get(index);
+        const task_index = rt.current_task.?;
+        const task = rt.scheduler.tasks.get(task_index);
         return try task.result.accept.unwrap();
     } else {
         var addr: Socket.Address = switch (sock.addr.family()) {
@@ -215,8 +215,8 @@ pub fn connect(sock: *const Socket, rt: *Runtime) Errors.Connect!void {
             },
         });
 
-        const index = rt.current_task.?;
-        const task = rt.scheduler.tasks.get(index);
+        const task_index = rt.current_task.?;
+        const task = rt.scheduler.tasks.get(task_index);
         try task.result.connect.unwrap();
     } else {
         while (true) {
@@ -243,8 +243,8 @@ pub fn recv(sock: *const Socket, rt: *Runtime, buffer: []u8) Errors.Recv!usize {
             },
         });
 
-        const index = rt.current_task.?;
-        const task = rt.scheduler.tasks.get(index);
+        const task_index = rt.current_task.?;
+        const task = rt.scheduler.tasks.get(task_index);
         return try task.result.recv.unwrap();
     } else {
         const count: usize = blk: while (true) {
@@ -290,8 +290,8 @@ pub fn send(sock: *const Socket, rt: *Runtime, buffer: []const u8) Errors.Send!u
             },
         });
 
-        const index = rt.current_task.?;
-        const task = rt.scheduler.tasks.get(index);
+        const task_index = rt.current_task.?;
+        const task = rt.scheduler.tasks.get(task_index);
         return try task.result.send.unwrap();
     } else {
         const count: usize = blk: while (true) {

@@ -15,8 +15,8 @@ pub const Job = struct {
         recv: RecvJob,
     },
 
-    index: usize = 0,
-    task: usize = 0,
+    job_index: usize = 0,
+    task_index: usize = 0,
 };
 
 const TimerJob = union(enum) {

@@ -61,7 +61,7 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
 
                 const completions = try tardy.gpa.alloc(
                     results.Completion,
-                    tardy.options.size_aio_reap_max,
+                    tardy.options.aio_reap_size_max,
                 );
                 errdefer tardy.gpa.free(completions);
 
@@ -73,8 +73,8 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             return try .init(tardy.gpa, tardy.io, aio, .{
                 .id = id,
                 .pooling = tardy.options.pooling,
-                .size_tasks_initial = tardy.options.size_tasks_initial,
-                .size_aio_reap_max = tardy.options.size_aio_reap_max,
+                .initial_tasks_size = tardy.options.initial_tasks_size,
+                .aio_reap_size_max = tardy.options.aio_reap_size_max,
             });
         }
 
@@ -95,8 +95,8 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             var runtime = try tardy.spawn_runtime(0, .{
                 .parent_async = null,
                 .pooling = tardy.options.pooling,
-                .size_tasks_initial = tardy.options.size_tasks_initial,
-                .size_aio_reap_max = tardy.options.size_aio_reap_max,
+                .initial_task_size = tardy.options.initial_tasks_size,
+                .aio_reap_size_max = tardy.options.aio_reap_size_max,
             });
             defer runtime.deinit();
 
@@ -143,8 +143,8 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                             .{
                                 .parent_async = parent,
                                 .pooling = td.options.pooling,
-                                .size_tasks_initial = td.options.size_tasks_initial,
-                                .size_aio_reap_max = td.options.size_aio_reap_max,
+                                .initial_task_size = td.options.initial_tasks_size,
+                                .aio_reap_size_max = td.options.aio_reap_size_max,
                             },
                         ) catch |err| {
                             log.err(
@@ -161,17 +161,17 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
                         @call(.auto, entry_fn, .{
                             &rt,
                             args,
-                        }) catch |e| {
+                        }) catch |err| {
                             log.err(
                                 "{d} - entry error={t}",
-                                .{ rt.id, e },
+                                .{ rt.id, err },
                             );
                             rt.stop();
                         };
 
-                        rt.run() catch |e| log.err(
+                        rt.run() catch |err| log.err(
                             "{d} - runtime error={t}",
-                            .{ rt.id, e },
+                            .{ rt.id, err },
                         );
 
                         // wait for the rest to stop before cleaning ourselves up.
@@ -202,11 +202,14 @@ pub fn Tardy(comptime selected_aio: AsyncIO.Kind) type {
             @call(.auto, entry_fn, .{
                 &runtime,
                 params,
-            }) catch |e| {
-                log.err("0 - entry error={t}", .{e});
+            }) catch |err| {
+                log.err("0 - entry error={t}", .{err});
                 runtime.stop();
             };
-            runtime.run() catch |e| log.err("0 - runtime error={t}", .{e});
+            runtime.run() catch |err| log.err(
+                "0 - runtime error={t}",
+                .{err},
+            );
         }
 
         /// This spawns in and enters into the runtime in a new Thread, allowing for
@@ -260,12 +263,12 @@ const Options = struct {
     /// If our pooling is static, this will be the maximum limit.
     ///
     /// Default: 1024
-    size_tasks_initial: usize = 1024,
+    initial_tasks_size: usize = 1024,
     /// Maximum number of aio completions we can reap
     /// with a single call of reap().
     ///
     /// Default: 1024
-    size_aio_reap_max: usize = 1024,
+    aio_reap_size_max: usize = 1024,
 };
 
 const std = @import("std");

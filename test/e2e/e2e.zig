@@ -4,6 +4,6 @@ pub const Params = struct {
     seed: u64,
 
     // Tardy Initalization
-    size_tasks_initial: usize,
-    size_aio_reap_max: usize,
+    initial_tasks_size: usize,
+    aio_reap_size_max: usize,
 };

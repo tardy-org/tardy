@@ -1,13 +1,13 @@
 pub const Task = @This();
 
-// 1 byte
-state: State = .dead,
-// no idea on bytes.
-result: results.Result = .none,
 // 8 bytes
 index: usize,
 // 8 bytes
 frame: *tardy.Coroutine,
+// 144 bytes.
+result: results.Result = .none,
+// 1 byte
+state: State = .dead,
 
 pub const State = union(enum) {
     /// Waiting for a Runtime Trigger.
@@ -19,8 +19,6 @@ pub const State = union(enum) {
     /// Dead.
     dead,
 };
-
-const std = @import("std");
 
 const tardy = @import("../root.zig");
 const results = tardy.results;

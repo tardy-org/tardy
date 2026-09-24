@@ -1,9 +1,3 @@
-const std = @import("std");
-
-const tardy = @import("../root.zig");
-const fs = tardy.fs;
-const Socket = tardy.net.Socket;
-
 pub fn Resulted(comptime T: type, comptime E: type) type {
     return union(enum) {
         const Resulted_t = @This();
@@ -12,8 +6,8 @@ pub fn Resulted(comptime T: type, comptime E: type) type {
 
         pub fn unwrap(result: *const Resulted_t) E!T {
             switch (result.*) {
-                .actual => |a| return a,
-                .err => |e| return e,
+                .actual => |actual| return actual,
+                .err => |err| return err,
             }
         }
     };
@@ -216,9 +210,6 @@ pub const Results = struct {
 };
 
 pub const Result = union(enum) {
-    none,
-    /// If we want to wake the runtime up.
-    wake,
     /// If we have returned a stat object.
     stat: Results.Stat,
     accept: Results.Accept,
@@ -230,12 +221,26 @@ pub const Result = union(enum) {
     delete: Results.Delete,
     read: Results.Read,
     write: Results.Write,
-    close,
     /// If we have returned a ptr.
     ptr: ?*anyopaque,
+    close,
+    /// If we want to wake the runtime up.
+    wake,
+    none,
+
+    comptime {
+        debug.assert(@sizeOf(Result) == 144);
+    }
 };
 
 pub const Completion = struct {
-    task: usize,
+    task_index: usize,
     result: Result,
 };
+
+const std = @import("std");
+const debug = std.debug;
+
+const tardy = @import("../root.zig");
+const fs = tardy.fs;
+const Socket = tardy.net.Socket;

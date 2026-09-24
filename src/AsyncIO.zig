@@ -30,12 +30,12 @@ pub fn deinit(async_io: *AsyncIO, gpa: mem.Allocator, io: Io) void {
 pub fn queue_job(
     async_io: *AsyncIO,
     gpa: mem.Allocator,
-    task: usize,
+    task_index: usize,
     sub: Submission,
 ) Errors.QueueJob!void {
     debug.assert(async_io.attached);
-    log.debug("queuing up job={t} at index={d}", .{ sub, task });
-    try async_io.vtable.queue_job(async_io.runner, gpa, task, sub);
+    log.debug("queuing up job={t} at index={d}", .{ sub, task_index });
+    try async_io.vtable.queue_job(async_io.runner, gpa, task_index, sub);
 }
 
 pub fn wake(async_io: *AsyncIO, io: Io) !void {
@@ -151,9 +151,9 @@ pub const Options = struct {
     parent_async: ?*const AsyncIO = null,
     // Pooling
     pooling: core.pool.Kind,
-    size_tasks_initial: usize,
+    initial_task_size: usize,
     /// Maximum number of completions reaped.
-    size_aio_reap_max: usize,
+    aio_reap_size_max: usize,
 };
 
 const Op = enum(u16) {

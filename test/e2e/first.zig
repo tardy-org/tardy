@@ -13,7 +13,7 @@ pub fn start_frame(rt: *Runtime, shared_params: *const e2e.Params) !void {
     const rand = prng.random();
 
     const rand_int = rand.intRangeAtMost(usize, 1, 2);
-    const chain_count = shared_params.size_tasks_initial * rand_int;
+    const chain_count = shared_params.initial_tasks_size * rand_int;
     file_chain_counter = chain_count;
 
     log.debug("creating file chains... ({d})", .{chain_count});

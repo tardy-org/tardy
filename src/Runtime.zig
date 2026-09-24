@@ -22,7 +22,7 @@ pub fn init(
 ) !Runtime {
     const scheduler: Scheduler = try .init(
         gpa,
-        options.size_tasks_initial,
+        options.initial_tasks_size,
         options.pooling,
     );
 
@@ -53,10 +53,16 @@ pub fn wake(rt: *Runtime) !void {
 
 /// Trigger a waiting (`.wait_for_trigger`) Task.
 /// Safe to call from a different Runtime.
-pub fn trigger(rt: *Runtime, index: usize) !void {
+pub fn trigger(rt: *Runtime, task_index: usize) !void {
     if (rt.running) {
-        log.debug("{d} - triggering {d}", .{ rt.id, index });
-        try rt.scheduler.trigger(rt.gpa, rt.io, index);
+        const task = rt.scheduler.tasks.get_ptr(task_index);
+        log.debug("{d} - triggering task={t} at index={d}", .{
+            rt.id,
+            task.result,
+            task_index,
+        });
+
+        try rt.scheduler.trigger(rt.gpa, rt.io, task_index);
         try rt.wake();
     }
 }
@@ -93,11 +99,11 @@ fn run_task(rt: *Runtime, task: *Task) !void {
 
     switch (frame.status) {
         .done => {
-            // remember: task is invalid IF it resizes.
+            // remember: `task_index` is invalid IF it resizes.
             // so we only hit that condition sometimes in here.
-            const index = rt.current_task.?;
+            const task_index = rt.current_task.?;
             // If the frame is done, clean it up.
-            try rt.scheduler.release(rt.gpa, index);
+            try rt.scheduler.release(rt.gpa, task_index);
             // frees the heap-allocated stack.
             //
             // this should be evaluted as it does have a perf impact but
@@ -110,9 +116,9 @@ fn run_task(rt: *Runtime, task: *Task) !void {
             if (rt.scheduler.tasks.empty()) rt.running = false;
         },
         .errored => {
-            const index = rt.current_task.?;
+            const task_index = rt.current_task.?;
             log.warn("cleaning up failed frame...", .{});
-            try rt.scheduler.release(rt.gpa, index);
+            try rt.scheduler.release(rt.gpa, task_index);
             frame.deinit(rt.gpa);
         },
         else => {},
@@ -130,30 +136,37 @@ pub fn run(rt: *Runtime) !void {
         var iter = rt.scheduler.tasks.dirty.iterator(.{
             .kind = .set,
         });
-        while (iter.next()) |index| {
-            log.debug("{d} - processing index={d}", .{ rt.id, index });
-            const task = rt.scheduler.tasks.get_ptr(index);
+        while (iter.next()) |task_index| {
+            const task = rt.scheduler.tasks.get_ptr(task_index);
+            log.debug("{d} - processing task={t} at index={d}", .{
+                rt.id,
+                task.result,
+                task_index,
+            });
+
             switch (task.state) {
                 .runnable => {
-                    log.debug("{d} - running index={d}", .{
+                    log.debug("{d} - running task={t} at index={d}", .{
                         rt.id,
-                        index,
+                        task.result,
+                        task_index,
                     });
                     try rt.run_task(task);
                     rt.current_task = null;
                 },
                 .wait_for_trigger => if (rt.scheduler.triggers.is_set(
                     rt.io,
-                    index,
+                    task_index,
                 )) {
-                    log.debug("{d} - trigger={d} | state={t}", .{
+                    log.debug("{d} - trigger={t} at index={d} | state={t}", .{
                         rt.id,
-                        index,
+                        task.result,
+                        task_index,
                         task.state,
                     });
 
-                    rt.scheduler.triggers.unset(rt.io, index);
-                    rt.scheduler.set_runnable(index);
+                    rt.scheduler.triggers.unset(rt.io, task_index);
+                    rt.scheduler.set_runnable(task_index);
                 },
                 .wait_for_io => continue,
                 .dead => unreachable,
@@ -167,12 +180,11 @@ pub fn run(rt: *Runtime) !void {
         // I/O Section
         try rt.aio.submit();
 
-        // If we don't have any runnable tasks, we just want to wait for an Async I/O.
-        // Otherwise, we want to just reap whatever completion we have and continue
-        // running.
         const wait_for_io = rt.scheduler.runnable == 0;
         log.debug("{d} - Wait for I/O: {}", .{ rt.id, wait_for_io });
 
+        // If we don't have any runnable tasks, then we wait for an Async I/O,
+        // reap the completed task and continue running.
         const completions = try rt.aio.reap(
             rt.gpa,
             wait_for_io,
@@ -185,12 +197,22 @@ pub fn run(rt: *Runtime) !void {
                 continue;
             }
 
-            const index = completion.task;
-            log.debug("{d} - completion={d}", .{ rt.id, index });
-            const task = rt.scheduler.tasks.get_ptr(index);
+            const task_index = completion.task_index;
+            const task = rt.scheduler.tasks.get_ptr(task_index);
+
+            log.debug("{d} - completed task={t} I/O at index {d}", .{
+                rt.id,
+                task.result,
+                task_index,
+            });
+
+            // task should have been waiting for I/O which has now completed
+            // and was retreived with `reap`
             debug.assert(task.state == .wait_for_io);
             task.result = completion.result;
-            rt.scheduler.set_runnable(index);
+
+            // let task continue to run to completion after it was yielded in `ioAwait`
+            rt.scheduler.set_runnable(task_index);
         }
 
         if (rt.scheduler.runnable == 0 and !force_woken) {
@@ -205,8 +227,8 @@ const log = std.log.scoped(.@"tardy/Runtime");
 const Options = struct {
     id: usize,
     pooling: pool.Kind,
-    size_tasks_initial: usize,
-    size_aio_reap_max: usize,
+    initial_tasks_size: usize,
+    aio_reap_size_max: usize,
 };
 
 const std = @import("std");
