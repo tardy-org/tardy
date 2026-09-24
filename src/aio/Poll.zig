@@ -428,7 +428,10 @@ pub fn reap(
                         const count = syscall.recv(
                             recv.socket,
                             recv.buffer,
-                            posix.MSG.DONTWAIT,
+                            if (native_os != .windows)
+                                posix.MSG.DONTWAIT
+                            else
+                                0,
                         ) catch |err| {
                             const e = switch (err) {
                                 error.WouldBlock => {
@@ -469,7 +472,10 @@ pub fn reap(
                         const count = syscall.send(
                             send.socket,
                             send.buffer,
-                            posix.MSG.DONTWAIT,
+                            if (native_os != .windows)
+                                posix.MSG.DONTWAIT
+                            else
+                                0,
                         ) catch |err| {
                             log.err("send failed with {}", .{err});
                             const e = switch (err) {
