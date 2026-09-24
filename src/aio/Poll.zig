@@ -7,7 +7,7 @@ fd_job_map: array_hash_map.Auto(fs.File.Handle, Job),
 timers: TimerQueue,
 
 pub fn init(gpa: mem.Allocator, options: AsyncIO.Options) !Poll {
-    const size = options.size_tasks_initial + 1;
+    const size = options.initial_task_size + 1;
 
     // 0 is read, 1 is write.
     const pipe: [2]fs.File.Handle = blk: {
@@ -71,9 +71,9 @@ pub fn init(gpa: mem.Allocator, options: AsyncIO.Options) !Poll {
             .revents = 0,
         });
         try fd_job_map.put(gpa, @ptrCast(pipe[0]), .{
-            .index = 0,
+            .job_index = 0,
             .type = .wake,
-            .task = 0,
+            .task_index = 0,
         });
     } else {
         try fd_list.append(gpa, .{
@@ -82,9 +82,9 @@ pub fn init(gpa: mem.Allocator, options: AsyncIO.Options) !Poll {
             .revents = 0,
         });
         try fd_job_map.put(gpa, pipe[0], .{
-            .index = 0,
+            .job_index = 0,
             .type = .wake,
-            .task = 0,
+            .task_index = 0,
         });
     }
 
@@ -118,7 +118,7 @@ fn deinit(runner: *anyopaque, gpa: mem.Allocator) void {
 pub fn queue_job(
     runner: *anyopaque,
     gpa: mem.Allocator,
-    task: usize,
+    task_index: usize,
     job: AsyncIO.Submission,
 ) Errors.QueueJob!void {
     const poll: *Poll = @ptrCast(@alignCast(runner));
@@ -126,28 +126,28 @@ pub fn queue_job(
     try switch (job) {
         .timer => |timer| poll.queue_timer(
             gpa,
-            task,
+            task_index,
             timer,
         ),
         .accept => |accept| poll.queue_accept(
             gpa,
-            task,
+            task_index,
             accept.socket,
         ),
         .connect => |connect| poll.queue_connect(
             gpa,
-            task,
+            task_index,
             connect.socket,
         ),
         .recv => |recv| poll.queue_recv(
             gpa,
-            task,
+            task_index,
             recv.socket,
             recv.buffer,
         ),
         .send => |send| poll.queue_send(
             gpa,
-            task,
+            task_index,
             send.socket,
             send.buffer,
         ),
@@ -158,20 +158,20 @@ pub fn queue_job(
 fn queue_timer(
     poll: *Poll,
     gpa: mem.Allocator,
-    task: usize,
+    task_index: usize,
     duration: Io.Duration,
 ) Errors.Timer!void {
     const current = syscall.now(.real);
     try poll.timers.push(gpa, .{
         .duration = current.addDuration(duration),
-        .task = task,
+        .task_index = task_index,
     });
 }
 
 fn queue_accept(
     poll: *Poll,
     gpa: mem.Allocator,
-    task: usize,
+    task_index: usize,
     socket: *const net.Socket,
 ) Errors.Accept!void {
     try poll.fd_list.append(gpa, .{
@@ -180,7 +180,7 @@ fn queue_accept(
         .revents = 0,
     });
     try poll.fd_job_map.put(gpa, socket.handle, .{
-        .index = 0,
+        .job_index = 0,
         .type = .{
             .accept = .{
                 .socket = .{
@@ -190,14 +190,14 @@ fn queue_accept(
                 },
             },
         },
-        .task = task,
+        .task_index = task_index,
     });
 }
 
 fn queue_connect(
     poll: *Poll,
     gpa: mem.Allocator,
-    task: usize,
+    task_index: usize,
     socket: *const net.Socket,
 ) Errors.Connect!void {
     syscall.connect(
@@ -214,20 +214,20 @@ fn queue_connect(
         .revents = 0,
     });
     try poll.fd_job_map.put(gpa, socket.handle, .{
-        .index = 0,
+        .job_index = 0,
         .type = .{
             .connect = .{
                 .socket = socket,
             },
         },
-        .task = task,
+        .task_index = task_index,
     });
 }
 
 fn queue_recv(
     poll: *Poll,
     gpa: mem.Allocator,
-    task: usize,
+    task_index: usize,
     socket: net.Socket.Handle,
     buffer: []u8,
 ) Errors.Recv!void {
@@ -237,21 +237,21 @@ fn queue_recv(
         .revents = 0,
     });
     try poll.fd_job_map.put(gpa, socket, .{
-        .index = 0,
+        .job_index = 0,
         .type = .{
             .recv = .{
                 .socket = socket,
                 .buffer = buffer,
             },
         },
-        .task = task,
+        .task_index = task_index,
     });
 }
 
 fn queue_send(
     poll: *Poll,
     gpa: mem.Allocator,
-    task: usize,
+    task_index: usize,
     socket: net.Socket.Handle,
     buffer: []const u8,
 ) Errors.Send!void {
@@ -261,14 +261,14 @@ fn queue_send(
         .revents = 0,
     });
     try poll.fd_job_map.put(gpa, socket, .{
-        .index = 0,
+        .job_index = 0,
         .type = .{
             .send = .{
                 .socket = socket,
                 .buffer = buffer,
             },
         },
-        .task = task,
+        .task_index = task_index,
     });
 }
 
@@ -305,7 +305,7 @@ pub fn reap(
             const timer = poll.timers.pop().?;
             completions[reaped] = .{
                 .result = .none,
-                .task = timer.task,
+                .task_index = timer.task_index,
             };
             reaped += 1;
         }
@@ -328,18 +328,18 @@ pub fn reap(
         var ready = poll_result;
         var i = poll.fd_list.items.len;
         while (i > 0) : (i -= 1) {
-            const index = i - 1;
+            const job_index = i - 1;
             if (reaped >= completions.len) break;
             if (ready == 0) break;
 
-            const pfd = poll.fd_list.items[index];
+            const pfd = poll.fd_list.items[job_index];
             log.debug("revents={x}", .{pfd.revents});
             if (pfd.revents == 0) continue;
             const job = poll.fd_job_map.getPtr(pfd.fd).?;
 
             var remove: bool = true;
             defer if (remove) {
-                _ = poll.fd_list.swapRemove(index);
+                _ = poll.fd_list.swapRemove(job_index);
                 _ = poll.fd_job_map.swapRemove(pfd.fd);
                 ready -= 1;
             };
@@ -510,7 +510,7 @@ pub fn reap(
 
             completions[reaped] = .{
                 .result = result,
-                .task = job.task,
+                .task_index = job.task_index,
             };
             reaped += 1;
         }
@@ -552,7 +552,7 @@ pub const Errors = struct {
 };
 const TimerPair = struct {
     duration: Io.Timestamp,
-    task: usize,
+    task_index: usize,
 };
 
 const TimerQueue = std.PriorityQueue(

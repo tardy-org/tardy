@@ -14,24 +14,24 @@ pub fn init(gpa: mem.Allocator, options: AsyncIO.Options) !Kqueue {
 
     const events = try gpa.alloc(
         posix.Kevent,
-        options.size_aio_reap_max,
+        options.aio_reap_size_max,
     );
     const changes = try gpa.alloc(
         posix.Kevent,
-        options.size_aio_reap_max,
+        options.aio_reap_size_max,
     );
     var jobs: pool.Pool(Job) = try .init(
         gpa,
-        options.size_tasks_initial + 1,
+        options.initial_task_size + 1,
         options.pooling,
     );
 
-    const index = jobs.borrow_assume_unset(0);
-    const item = jobs.get_ptr(index);
+    const job_index = jobs.borrow_assume_unset(0);
+    const item = jobs.get_ptr(job_index);
     item.* = .{
-        .index = 0,
+        .job_index = 0,
         .type = .wake,
-        .task = undefined,
+        .task_index = undefined,
     };
 
     const event: posix.Kevent = .{
@@ -74,7 +74,7 @@ pub fn deinit(runner: *anyopaque, gpa: mem.Allocator) void {
 pub fn queue_job(
     runner: *anyopaque,
     gpa: mem.Allocator,
-    task: usize,
+    task_index: usize,
     job: AsyncIO.Submission,
 ) Errors.QueueJob!void {
     const kqueue: *Kqueue = @ptrCast(@alignCast(runner));
@@ -82,28 +82,28 @@ pub fn queue_job(
     (switch (job) {
         .timer => |timer| kqueue.queue_timer(
             gpa,
-            task,
+            task_index,
             timer,
         ),
         .accept => |accept| kqueue.queue_accept(
             gpa,
-            task,
+            task_index,
             accept.socket,
         ),
         .connect => |connect| kqueue.queue_connect(
             gpa,
-            task,
+            task_index,
             connect.socket,
         ),
         .recv => |recv| kqueue.queue_recv(
             gpa,
-            task,
+            task_index,
             recv.socket,
             recv.buffer,
         ),
         .send => |send| kqueue.queue_send(
             gpa,
-            task,
+            task_index,
             send.socket,
             send.buffer,
         ),
@@ -111,7 +111,7 @@ pub fn queue_job(
     }) catch |err| switch (err) {
         error.ChangeQueueFull => {
             try submit(runner);
-            try queue_job(runner, gpa, task, job);
+            try queue_job(runner, gpa, task_index, job);
         },
         else => return err,
     };
@@ -120,17 +120,17 @@ pub fn queue_job(
 fn queue_timer(
     kqueue: *Kqueue,
     gpa: mem.Allocator,
-    task: usize,
+    task_index: usize,
     duration: Io.Duration,
 ) Errors.Timer!void {
-    const index = try kqueue.jobs.borrow_hint(gpa, task);
-    errdefer kqueue.jobs.release(index);
+    const job_index = try kqueue.jobs.borrow_hint(gpa, task_index);
+    errdefer kqueue.jobs.release(job_index);
 
-    const item = kqueue.jobs.get_ptr(index);
+    const item = kqueue.jobs.get_ptr(job_index);
     item.* = .{
-        .index = index,
+        .job_index = job_index,
         .type = .{ .timer = .none },
-        .task = task,
+        .task_index = task_index,
     };
 
     // kqueue uses milliseconds.
@@ -141,12 +141,12 @@ fn queue_timer(
         kqueue.change_count += 1;
 
         event.* = .{
-            .ident = index,
+            .ident = job_index,
             .filter = posix.system.EVFILT.TIMER,
             .flags = posix.system.EV.ADD | posix.system.EV.ONESHOT,
             .fflags = 0,
             .data = milliseconds,
-            .udata = index,
+            .udata = job_index,
         };
     } else return error.ChangeQueueFull;
 }
@@ -154,15 +154,15 @@ fn queue_timer(
 fn queue_accept(
     kqueue: *Kqueue,
     gpa: mem.Allocator,
-    task: usize,
+    task_index: usize,
     socket: *const net.Socket,
 ) Errors.Accept!void {
-    const index = try kqueue.jobs.borrow_hint(gpa, task);
-    errdefer kqueue.jobs.release(index);
+    const job_index = try kqueue.jobs.borrow_hint(gpa, task_index);
+    errdefer kqueue.jobs.release(job_index);
 
-    const item = kqueue.jobs.get_ptr(index);
+    const item = kqueue.jobs.get_ptr(job_index);
     item.* = .{
-        .index = index,
+        .job_index = job_index,
         .type = .{
             .accept = .{
                 .socket = .{
@@ -172,7 +172,7 @@ fn queue_accept(
                 },
             },
         },
-        .task = task,
+        .task_index = task_index,
     };
 
     if (kqueue.change_count < kqueue.changes.len) {
@@ -185,7 +185,7 @@ fn queue_accept(
             .flags = posix.system.EV.ADD | posix.system.EV.ONESHOT,
             .fflags = 0,
             .data = 0,
-            .udata = index,
+            .udata = job_index,
         };
     } else return error.ChangeQueueFull;
 }
@@ -193,21 +193,21 @@ fn queue_accept(
 fn queue_connect(
     kqueue: *Kqueue,
     gpa: mem.Allocator,
-    task: usize,
+    task_index: usize,
     socket: *const net.Socket,
 ) Errors.Connect!void {
-    const index = try kqueue.jobs.borrow_hint(gpa, task);
-    errdefer kqueue.jobs.release(index);
+    const job_index = try kqueue.jobs.borrow_hint(gpa, task_index);
+    errdefer kqueue.jobs.release(job_index);
 
-    const item = kqueue.jobs.get_ptr(index);
+    const item = kqueue.jobs.get_ptr(job_index);
     item.* = .{
-        .index = index,
+        .job_index = job_index,
         .type = .{
             .connect = .{
                 .socket = socket,
             },
         },
-        .task = task,
+        .task_index = task_index,
     };
 
     if (kqueue.change_count < kqueue.changes.len) {
@@ -228,7 +228,7 @@ fn queue_connect(
             .flags = posix.system.EV.ADD | posix.system.EV.ONESHOT,
             .fflags = 0,
             .data = 0,
-            .udata = index,
+            .udata = job_index,
         };
     } else return error.ChangeQueueFull;
 }
@@ -236,23 +236,23 @@ fn queue_connect(
 fn queue_recv(
     kqueue: *Kqueue,
     gpa: mem.Allocator,
-    task: usize,
+    task_index: usize,
     socket: net.Socket.Handle,
     buffer: []u8,
 ) Errors.Recv!void {
-    const index = try kqueue.jobs.borrow_hint(gpa, task);
-    errdefer kqueue.jobs.release(index);
+    const job_index = try kqueue.jobs.borrow_hint(gpa, task_index);
+    errdefer kqueue.jobs.release(job_index);
 
-    const item = kqueue.jobs.get_ptr(index);
+    const item = kqueue.jobs.get_ptr(job_index);
     item.* = .{
-        .index = index,
+        .job_index = job_index,
         .type = .{
             .recv = .{
                 .socket = socket,
                 .buffer = buffer,
             },
         },
-        .task = task,
+        .task_index = task_index,
     };
 
     if (kqueue.change_count < kqueue.changes.len) {
@@ -265,7 +265,7 @@ fn queue_recv(
             .flags = posix.system.EV.ADD | posix.system.EV.ONESHOT,
             .fflags = 0,
             .data = 0,
-            .udata = index,
+            .udata = job_index,
         };
     } else return error.ChangeQueueFull;
 }
@@ -273,23 +273,23 @@ fn queue_recv(
 fn queue_send(
     kqueue: *Kqueue,
     gpa: mem.Allocator,
-    task: usize,
+    task_index: usize,
     socket: net.Socket.Handle,
     buffer: []const u8,
 ) Errors.Send!void {
-    const index = try kqueue.jobs.borrow_hint(gpa, task);
-    errdefer kqueue.jobs.release(index);
+    const job_index = try kqueue.jobs.borrow_hint(gpa, task_index);
+    errdefer kqueue.jobs.release(job_index);
 
-    const item = kqueue.jobs.get_ptr(index);
+    const item = kqueue.jobs.get_ptr(job_index);
     item.* = .{
-        .index = index,
+        .job_index = job_index,
         .type = .{
             .send = .{
                 .socket = socket,
                 .buffer = buffer,
             },
         },
-        .task = task,
+        .task_index = task_index,
     };
 
     if (kqueue.change_count < kqueue.changes.len) {
@@ -302,7 +302,7 @@ fn queue_send(
             .flags = posix.system.EV.ADD | posix.system.EV.ONESHOT,
             .fflags = 0,
             .data = 0,
-            .udata = index,
+            .udata = job_index,
         };
     } else return error.ChangeQueueFull;
 }
@@ -498,7 +498,7 @@ pub fn reap(
 
             completions[reaped] = .{
                 .result = result,
-                .task = job.task,
+                .task_index = job.task_index,
             };
             reaped += 1;
         }
