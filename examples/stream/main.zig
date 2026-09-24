@@ -76,8 +76,8 @@ pub fn main(init: std.process.Init) !void {
     var td: Tardy = try .init(init.gpa, init.io, .{
         .threading = .single,
         .pooling = .static,
-        .size_tasks_initial = 2,
-        .size_aio_reap_max = 1,
+        .initial_tasks_size = 2,
+        .aio_reap_size_max = 1,
     });
     defer td.deinit();
 

@@ -64,8 +64,8 @@ pub fn main(init: std.process.Init) !void {
     // - unbounded in terms of spawnable tasks
     var td: Tardy = try .init(init.gpa, init.io, .{
         .pooling = .static,
-        .size_tasks_initial = 256,
-        .size_aio_reap_max = 256,
+        .initial_tasks_size = 256,
+        .aio_reap_size_max = 256,
     });
     defer td.deinit();
 
