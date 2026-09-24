@@ -548,7 +548,7 @@ fn queue_accept(
         socket.handle,
         &client.any,
         &client.len,
-        0,
+        posix.SOCK.CLOEXEC,
     );
 
     const item = io_uring.jobs.get_ptr(job_index);
@@ -732,7 +732,7 @@ fn reap(
 
         const result: results.Result = blk: {
             if (cqe.res < 0) {
-                log.debug("{d} - task={t} has error status on SQE: {t}", .{
+                log.debug("{d} - task={t} has error status={t} on SQE", .{
                     job.job_index,
                     job.type,
                     @as(linux.E, @fromBackingInt(@intCast(-cqe.res))),
@@ -750,30 +750,30 @@ fn reap(
                 },
                 .close => break :blk .close,
                 .accept => |accept| {
-                    if (cqe.res >= 0) log.debug(
-                        "new accept client_fd is {} with address ({f})",
-                        .{ cqe.res, accept.socket.addr },
-                    );
+                    if (cqe.res >= 0) {
+                        log.debug(
+                            "new accept client_fd is {} with address ({f})",
+                            .{ cqe.res, accept.socket.addr },
+                        );
 
-                    switch (accept.socket.kind) {
-                        .tcp, .unix => break :blk .{
-                            .accept = .{
-                                .actual = .{
-                                    .handle = cqe.res,
-                                    .addr = accept.socket.addr,
-                                    .kind = accept.socket.kind,
+                        switch (accept.socket.kind) {
+                            .tcp, .unix => break :blk .{
+                                .accept = .{
+                                    .actual = .{
+                                        .handle = cqe.res,
+                                        .addr = accept.socket.addr,
+                                        .kind = accept.socket.kind,
+                                    },
                                 },
                             },
-                        },
-                        .udp => unreachable,
+                            .udp => unreachable,
+                        }
                     }
 
                     const result: results.Results.Accept = result: {
                         const err: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (err) {
-                            .AGAIN => .{
-                                .err = error.WouldBlock,
-                            },
+                            .AGAIN => @panic("EAGAIN is handled by IoUring"),
                             .BADF => .{
                                 .err = error.InvalidFd,
                             },
@@ -859,21 +859,21 @@ fn reap(
                     break :blk .{ .connect = result };
                 },
                 .recv => {
-                    if (cqe.res > 0) break :blk .{
+                    if (cqe.res > 0) break :blk .{ .recv = .{
+                        .actual = @intCast(cqe.res),
+                    } };
+
+                    if (cqe.res == 0) break :blk .{
                         .recv = .{
-                            .actual = @intCast(cqe.res),
+                            .err = error.Closed,
                         },
                     };
-
-                    if (cqe.res == 0) break :blk .{ .recv = .{ .err = error.Closed } };
 
                     const result: results.Results.Recv = result: {
                         const err: linux.E = @fromBackingInt(@intCast(-cqe.res));
                         break :result switch (err) {
                             .NOTSOCK, .INVAL, .FAULT, .BADF => unreachable,
-                            .AGAIN => .{
-                                .err = error.WouldBlock,
-                            },
+                            .AGAIN => @panic("EGAIN is handled by IoUring"),
                             .CONNRESET => .{
                                 .err = error.Closed,
                             },
@@ -895,7 +895,11 @@ fn reap(
                     break :blk .{ .recv = result };
                 },
                 .send => {
-                    if (cqe.res >= 0) break :blk .{ .send = .{ .actual = @intCast(cqe.res) } };
+                    if (cqe.res >= 0) break :blk .{
+                        .send = .{
+                            .actual = @intCast(cqe.res),
+                        },
+                    };
 
                     const result: results.Results.Send = result: {
                         const err: linux.E = @fromBackingInt(@intCast(-cqe.res));
@@ -913,9 +917,7 @@ fn reap(
                             .ACCES => .{
                                 .err = error.AccessDenied,
                             },
-                            .AGAIN => .{
-                                .err = error.WouldBlock,
-                            },
+                            .AGAIN => @panic("EAGAIN is handled by IoUring"),
                             .ALREADY => .{
                                 .err = error.FastOpenAlreadyInProgress,
                             },

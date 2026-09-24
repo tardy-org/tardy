@@ -416,7 +416,7 @@ pub fn reap(
                             const client_fd = syscall.accept(
                                 accept.socket.handle,
                                 &accept.socket.addr,
-                                0,
+                                posix.SOCK.NONBLOCK | posix.SOCK.CLOEXEC,
                             ) catch |err| {
                                 const e = switch (err) {
                                     error.WouldBlock => {
@@ -460,7 +460,8 @@ pub fn reap(
                             const length = syscall.recv(
                                 recv.socket,
                                 recv.buffer,
-                                0,
+                                // TODO: support MSG_CMSG_CLOEXEC
+                                posix.MSG.DONTWAIT,
                             ) catch |err| {
                                 const e = switch (err) {
                                     error.WouldBlock => {
@@ -488,7 +489,7 @@ pub fn reap(
                             const length = syscall.send(
                                 send.socket,
                                 send.buffer,
-                                0,
+                                posix.MSG.DONTWAIT,
                             ) catch |err| {
                                 const e = switch (err) {
                                     error.WouldBlock => {

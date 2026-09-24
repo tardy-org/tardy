@@ -392,11 +392,23 @@ pub fn reap(
                         const client_fd = syscall.accept(
                             accept.socket.handle,
                             &accept.socket.addr,
-                            0,
-                        ) catch |err| break :result .{
-                            .accept = .{
-                                .err = err,
-                            },
+                            posix.SOCK.NONBLOCK | posix.SOCK.CLOEXEC,
+                        ) catch |err| {
+                            const e = switch (err) {
+                                error.WouldBlock => {
+                                    log.debug(
+                                        "accept wouldblock - not removing",
+                                        .{},
+                                    );
+                                    job_complete = false;
+                                    continue;
+                                },
+                                else => |e| e,
+                            };
+
+                            break :result .{ .accept = .{
+                                .err = e,
+                            } };
                         };
 
                         break :result .{
@@ -446,16 +458,26 @@ pub fn reap(
                     .recv => |recv| {
                         debug.assert(event.filter == posix.system.EVFILT.READ);
 
-                        const rc = syscall.recvfrom(
+                        const rc = syscall.recv(
                             recv.socket,
                             recv.buffer,
-                            0,
-                            null,
-                            null,
-                        ) catch |err| break :result .{
-                            .recv = .{
-                                .err = err,
-                            },
+                            posix.MSG.DONTWAIT,
+                        ) catch |err| {
+                            const e = switch (err) {
+                                error.WouldBlock => {
+                                    log.debug(
+                                        "recv wouldblock - not removing",
+                                        .{},
+                                    );
+                                    job_complete = false;
+                                    continue;
+                                },
+                                else => |e| e,
+                            };
+
+                            break :result .{ .recv = .{
+                                .err = e,
+                            } };
                         };
 
                         break :result if (rc == 0) .{
@@ -472,10 +494,22 @@ pub fn reap(
                         const rc = syscall.send(
                             send.socket,
                             send.buffer,
-                            0,
+                            posix.MSG.DONTWAIT,
                         ) catch |err| {
+                            const e = switch (err) {
+                                error.WouldBlock => {
+                                    log.debug(
+                                        "send wouldblock - not removing",
+                                        .{},
+                                    );
+                                    job_complete = false;
+                                    continue;
+                                },
+                                else => |e| e,
+                            };
+
                             break :result .{ .send = .{
-                                .err = err,
+                                .err = e,
                             } };
                         };
 
