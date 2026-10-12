@@ -8,9 +8,10 @@ jobs: pool.Pool(Job),
 
 pub fn init(gpa: mem.Allocator, options: AsyncIO.Options) !Epoll {
     const size = options.initial_task_size + 1;
-    const epoll_fd = try syscall.epoll_create1(0);
-    debug.assert(epoll_fd > -1);
+
+    const epoll_fd = try syscall.epoll_create1(linux.EPOLL.CLOEXEC);
     errdefer syscall.close(epoll_fd);
+    debug.assert(epoll_fd > -1);
 
     const wake_event_fd: posix.fd_t = try syscall.eventfd(
         0,

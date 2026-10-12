@@ -188,8 +188,15 @@ fn EntryFn(
             );
             const args_ptr: *Args = @ptrFromInt(args_addr);
 
-            @call(.auto, coroutine_fn, args_ptr.*) catch |e| {
-                log.warn("frame failed | {any}", .{e});
+            @call(
+                .auto,
+                coroutine_fn,
+                args_ptr.*,
+            ) catch |err| {
+                log.warn(
+                    "Coroutine frame fn: `* const {any}` failed | {any}",
+                    .{ @TypeOf(coroutine_fn), err },
+                );
                 frame_ptr.status = .errored;
                 Coroutine.yield();
                 unreachable;
