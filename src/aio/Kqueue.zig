@@ -100,6 +100,7 @@ pub fn queue_job(
             task_index,
             recv.socket,
             recv.buffer,
+            recv.flags,
         ),
         .send => |send| kqueue.queue_send(
             gpa,
@@ -239,6 +240,7 @@ fn queue_recv(
     task_index: usize,
     socket: net.Socket.Handle,
     buffer: []u8,
+    flags: u32,
 ) Errors.Recv!void {
     const job_index = try kqueue.jobs.borrow_hint(gpa, task_index);
     errdefer kqueue.jobs.release(job_index);
@@ -250,6 +252,7 @@ fn queue_recv(
             .recv = .{
                 .socket = socket,
                 .buffer = buffer,
+                .flags = flags,
             },
         },
         .task_index = task_index,
@@ -461,7 +464,7 @@ pub fn reap(
                         const rc = syscall.recv(
                             recv.socket,
                             recv.buffer,
-                            posix.MSG.DONTWAIT,
+                            posix.MSG.DONTWAIT | recv.flags,
                         ) catch |err| {
                             const e = switch (err) {
                                 error.WouldBlock => {

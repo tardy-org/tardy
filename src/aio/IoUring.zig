@@ -212,6 +212,7 @@ fn queue_job(
             task_index,
             recv.socket,
             recv.buffer,
+            recv.flags,
         ),
         .send => |send| uring.queue_send(
             gpa,
@@ -603,6 +604,7 @@ fn queue_recv(
     task_index: usize,
     socket: posix.socket_t,
     buffer: []u8,
+    flags: u32,
 ) Errors.Recv!void {
     const job_index = io_uring.jobs.borrow_hint(
         gpa,
@@ -617,6 +619,7 @@ fn queue_recv(
             .recv = .{
                 .socket = socket,
                 .buffer = buffer,
+                .flags = flags,
             },
         },
         .task_index = task_index,
@@ -630,7 +633,7 @@ fn queue_recv(
         job_index,
         socket,
         .{ .buffer = buffer },
-        0,
+        flags,
     );
 }
 
@@ -717,12 +720,12 @@ fn reap(
     // either wait for atleast 1 or just take whats there.
     const uring_nr: u32 = if (wait) 1 else 0;
 
-    const count = while (true) {
-        break uring.uring.copy_cqes(uring.cqes[0..], uring_nr) catch |err|
-            switch (err) {
-                error.SignalInterrupt => continue,
-                else => |e| return e,
-            };
+    const count = while (true) break uring.uring.copy_cqes(
+        uring.cqes[0..],
+        uring_nr,
+    ) catch |err| switch (err) {
+        error.SignalInterrupt => continue,
+        else => |e| return e,
     };
 
     for (uring.cqes[0..count], 0..) |cqe, cqe_index| {
@@ -859,9 +862,11 @@ fn reap(
                     break :blk .{ .connect = result };
                 },
                 .recv => {
-                    if (cqe.res > 0) break :blk .{ .recv = .{
-                        .actual = @intCast(cqe.res),
-                    } };
+                    if (cqe.res > 0) break :blk .{
+                        .recv = .{
+                            .actual = @intCast(cqe.res),
+                        },
+                    };
 
                     if (cqe.res == 0) break :blk .{
                         .recv = .{

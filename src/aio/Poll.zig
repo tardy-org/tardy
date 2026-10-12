@@ -144,6 +144,7 @@ pub fn queue_job(
             task_index,
             recv.socket,
             recv.buffer,
+            recv.flags,
         ),
         .send => |send| poll.queue_send(
             gpa,
@@ -230,6 +231,7 @@ fn queue_recv(
     task_index: usize,
     socket: net.Socket.Handle,
     buffer: []u8,
+    flags: u32,
 ) Errors.Recv!void {
     try poll.fd_list.append(gpa, .{
         .fd = socket,
@@ -242,6 +244,7 @@ fn queue_recv(
             .recv = .{
                 .socket = socket,
                 .buffer = buffer,
+                .flags = flags,
             },
         },
         .task_index = task_index,
@@ -429,7 +432,7 @@ pub fn reap(
                             recv.socket,
                             recv.buffer,
                             if (native_os != .windows)
-                                posix.MSG.DONTWAIT
+                                posix.MSG.DONTWAIT | recv.flags
                             else
                                 0,
                         ) catch |err| {
@@ -556,10 +559,6 @@ pub const Errors = struct {
     pub const Wake = syscall.Errors.Write;
     pub const QueueJob = Connect || Wake || Timer || Accept || Recv || Send;
 };
-const TimerPair = struct {
-    duration: Io.Timestamp,
-    task_index: usize,
-};
 
 const TimerQueue = std.PriorityQueue(
     TimerPair,
@@ -570,6 +569,11 @@ const TimerQueue = std.PriorityQueue(
         }
     }.compare,
 );
+
+const TimerPair = struct {
+    duration: Io.Timestamp,
+    task_index: usize,
+};
 
 const std = @import("std");
 const Io = std.Io;

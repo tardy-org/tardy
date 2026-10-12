@@ -69,6 +69,7 @@ const SendJob = struct {
 const RecvJob = struct {
     socket: net.Socket.Handle,
     buffer: []u8,
+    flags: u32,
 };
 
 const std = @import("std");

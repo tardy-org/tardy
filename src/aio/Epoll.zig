@@ -101,6 +101,7 @@ pub fn queue_job(
             task_index,
             recv.socket,
             recv.buffer,
+            recv.flags,
         ),
         .send => |send| epoll.queue_send(
             gpa,
@@ -228,6 +229,7 @@ fn queue_recv(
     task_index: usize,
     socket: net.Socket.Handle,
     buffer: []u8,
+    flags: u32,
 ) Errors.Recv!void {
     const job_index = try epoll.jobs.borrow_hint(gpa, task_index);
     errdefer epoll.jobs.release(job_index);
@@ -239,6 +241,7 @@ fn queue_recv(
             .recv = .{
                 .socket = socket,
                 .buffer = buffer,
+                .flags = flags,
             },
         },
         .task_index = task_index,
@@ -461,7 +464,7 @@ pub fn reap(
                                 recv.socket,
                                 recv.buffer,
                                 // TODO: support MSG_CMSG_CLOEXEC
-                                posix.MSG.DONTWAIT,
+                                posix.MSG.DONTWAIT | recv.flags,
                             ) catch |err| {
                                 const e = switch (err) {
                                     error.WouldBlock => {

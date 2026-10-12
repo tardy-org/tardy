@@ -234,12 +234,18 @@ pub fn connect(sock: *const Socket, rt: *Runtime) Errors.Connect!void {
     }
 }
 
-pub fn recv(sock: *const Socket, rt: *Runtime, buffer: []u8) Errors.Recv!usize {
+pub fn recv(
+    sock: *const Socket,
+    rt: *Runtime,
+    buffer: []u8,
+    flags: u32,
+) Errors.Recv!usize {
     if (rt.aio.features.has_capability(.recv)) {
         try rt.scheduler.ioAwait(rt.gpa, .{
             .recv = .{
                 .socket = sock.handle,
                 .buffer = buffer,
+                .flags = flags,
             },
         });
 
@@ -251,7 +257,7 @@ pub fn recv(sock: *const Socket, rt: *Runtime, buffer: []u8) Errors.Recv!usize {
             break :blk syscall.recv(
                 sock.handle,
                 buffer,
-                0,
+                flags,
             ) catch |err| return switch (err) {
                 error.WouldBlock => {
                     Coroutine.yield();

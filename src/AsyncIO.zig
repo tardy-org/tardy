@@ -230,6 +230,7 @@ pub const Submission = union(Op) {
     recv: struct {
         socket: net.Socket.Handle,
         buffer: []u8,
+        flags: u32,
     },
     send: struct {
         socket: net.Socket.Handle,
