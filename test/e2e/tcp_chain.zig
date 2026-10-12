@@ -112,10 +112,10 @@ pub const Server = struct {
                     chain.socket = socket;
                 },
                 .recv => {
-                    const length = chain.socket.?.recv(rt, chain.buffer) catch |e|
-                        switch (e) {
+                    const length = chain.socket.?.recv(rt, chain.buffer, 0) catch |err|
+                        switch (err) {
                             error.Closed => break :chain,
-                            else => |err| return err,
+                            else => |e| return e,
                         };
 
                     for (chain.buffer[0..length]) |item| debug.assert(item == 123);
@@ -170,10 +170,11 @@ pub const Client = struct {
             switch (current_step) {
                 .connect => try socket.connect(rt),
                 .recv => {
-                    const length = socket.recv(rt, chain.buffer) catch |e| switch (e) {
-                        error.Closed => break :chain,
-                        else => |err| return err,
-                    };
+                    const length = socket.recv(rt, chain.buffer, 0) catch |err|
+                        switch (err) {
+                            error.Closed => break :chain,
+                            else => |e| return e,
+                        };
 
                     for (chain.buffer[0..length]) |item| debug.assert(item == 123);
                 },
