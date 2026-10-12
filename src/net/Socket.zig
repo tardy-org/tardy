@@ -669,16 +669,19 @@ pub const Reader = struct {
         );
         const w_dest = limit.slice(try w.writableSliceGreedy(1));
 
-        const n = r.socket.recv(r.rt, w_dest) catch |err|
-            switch (err) {
-                error.Closed => {
-                    return error.EndOfStream;
-                },
-                else => {
-                    r.err = err;
-                    return error.ReadFailed;
-                },
-            };
+        const n = r.socket.recv(
+            r.rt,
+            w_dest,
+            0,
+        ) catch |err| switch (err) {
+            error.Closed => {
+                return error.EndOfStream;
+            },
+            else => {
+                r.err = err;
+                return error.ReadFailed;
+            },
+        };
 
         r.pos += n;
         w.advance(n);

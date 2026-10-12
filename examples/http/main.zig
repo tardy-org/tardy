@@ -29,7 +29,7 @@ fn main_frame(rt: *Runtime, server: *const Socket) !void {
     var buffer: [1024]u8 = undefined;
     var recv_length: usize = 0;
     while (true) {
-        recv_length += socket.recv(rt, &buffer) catch |e| {
+        recv_length += socket.recv(rt, &buffer, 0) catch |e| {
             log.err("Failed to recv on socket | {}", .{e});
             return;
         };
