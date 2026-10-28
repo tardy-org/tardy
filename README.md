@@ -18,7 +18,7 @@ tardy is a thread-local, I/O driven runtime for Zig, providing the core implemen
 
 ## Installing
 
-Main line Compatible Zig Version: `0.17.0-dev.2248+3f6a02acd`
+Main line Compatible Zig Version: `0.18.0-dev.738+ae9a8acc7`
 
 ```elvish
 zig fetch --save 'git+https://github.com/tardy-org/tardy?ref=main#commit_hash'
@@ -26,9 +26,9 @@ zig fetch --save 'git+https://github.com/tardy-org/tardy?ref=main#commit_hash'
 
 **Else**
 
-Latest Release: `0.3.2` support stable Zig Version `0.16.0`
+Latest Release: `0.3.3` support stable Zig Version `0.17.0`
 ```elvish
-zig fetch --save git+https://github.com/tardy-org/tardy#v0.3.2
+zig fetch --save git+https://github.com/tardy-org/tardy#v0.3.3
 ```
 
 You can then add the dependency in your `build.zig` file:

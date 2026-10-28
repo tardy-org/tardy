@@ -1,8 +1,8 @@
 .{
     .name = .tardy,
     .fingerprint = 0x36d7fa71822bdceb,
-    .version = "0.3.3-dev",
-    .minimum_zig_version = "0.17.0-dev.2248+3f6a02acd",
+    .version = "0.3.3",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{},
     .paths = .{
         "README.md",
