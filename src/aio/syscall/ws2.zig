@@ -270,7 +270,7 @@ extern "ws2_32" fn WSAStartup(
 
 pub fn wsaStartup(major_version: windows.WORD, minor_version: windows.WORD) !void {
     var wsa_data: WSADATA = undefined;
-    const version = minor_version << 8 | major_version;
+    const version = (minor_version << 8) | major_version;
     const status = WSAStartup(version, &wsa_data);
     switch (status) {
         .SUCCESS => return,
