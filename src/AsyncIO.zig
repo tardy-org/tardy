@@ -171,7 +171,7 @@ const Op = enum(u16) {
     send = 1 << 11,
 };
 
-pub const Features = packed struct(u16) {
+pub const Features = bitpack struct(u16) {
     bitmask: u16,
 
     pub fn init(features: []const Op) Features {
