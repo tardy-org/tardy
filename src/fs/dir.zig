@@ -283,7 +283,7 @@ pub fn delete_tree(dir: Dir, rt: *Runtime, subpath: [:0]const u8) !void {
 
     const base_std_dir = base_dir.to_std();
     var walker = try base_std_dir.walk(rt.gpa);
-    defer walker.deinit();
+    defer walker.deinit(rt.io);
 
     while (try walker.next(rt.io)) |entry| {
         const new_dir = Dir.from_std(entry.dir);
