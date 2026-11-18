@@ -240,6 +240,7 @@ pub fn recv(
     buffer: []u8,
     flags: u32,
 ) Errors.Recv!usize {
+    if (buffer.len == 0) return 0;
     if (rt.aio.features.has_capability(.recv)) {
         try rt.scheduler.ioAwait(rt.gpa, .{
             .recv = .{
@@ -263,11 +264,11 @@ pub fn recv(
                     Coroutine.yield();
                     continue;
                 },
+                error.ConnectionResetByPeer, error.BrokenPipe => error.Closed,
                 else => error.Unexpected,
             };
         };
 
-        if (count == 0) return error.Closed;
         return count;
     }
 }
@@ -276,11 +277,13 @@ pub fn recv_all(sock: *const Socket, rt: *Runtime, buffer: []u8) Errors.Recv!usi
     var length: usize = 0;
 
     while (length < buffer.len) {
-        const count = sock.recv(rt, buffer[length..]) catch |err|
-            switch (err) {
-                error.Closed => return length,
-                else => |e| return e,
-            };
+        const count = sock.recv(
+            rt,
+            buffer[length..],
+        ) catch |err| switch (err) {
+            error.Closed => return length,
+            else => |e| return e,
+        };
         defer length += count;
     }
 
@@ -288,6 +291,7 @@ pub fn recv_all(sock: *const Socket, rt: *Runtime, buffer: []u8) Errors.Recv!usi
 }
 
 pub fn send(sock: *const Socket, rt: *Runtime, buffer: []const u8) Errors.Send!usize {
+    if (buffer.len == 0) return 0;
     if (rt.aio.features.has_capability(.send)) {
         try rt.scheduler.ioAwait(rt.gpa, .{
             .send = .{
@@ -310,9 +314,7 @@ pub fn send(sock: *const Socket, rt: *Runtime, buffer: []const u8) Errors.Send!u
                     Coroutine.yield();
                     continue;
                 },
-                error.ConnectionResetByPeer,
-                error.BrokenPipe,
-                => error.Closed,
+                error.ConnectionResetByPeer, error.BrokenPipe => error.Closed,
                 else => error.Unexpected,
             };
         };
@@ -329,11 +331,13 @@ pub fn send_all(
     var length: usize = 0;
 
     while (length < buffer.len) {
-        const count = sock.send(rt, buffer[length..]) catch |err|
-            switch (err) {
-                error.Closed => return length,
-                else => |e| return e,
-            };
+        const count = sock.send(
+            rt,
+            buffer[length..],
+        ) catch |err| switch (err) {
+            error.Closed => return length,
+            else => |e| return e,
+        };
         defer length += count;
     }
 
