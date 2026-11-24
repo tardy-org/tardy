@@ -108,8 +108,10 @@ pub fn yield() void {
 }
 
 fn stackUsed(frame: *Coroutine) usize {
-    if (builtin.mode != .debug) @compileError("only available in Debug mode");
-    // Debug mode fills freed/unused memory with 0xAA
+    comptime if (!builtin.optimize.runtimeSafety())
+        @compileError("only available in debug and safe optimization mode");
+
+    // Runtime safe mode fills freed/unused memory with 0xAA
     const canary_byte: u8 = 0xAA;
     // Stack grows downward — scan from bottom for the first non-0xAA byte
     const stack = frame.stack_mem;
@@ -151,7 +153,7 @@ pub const Stack = enum(u32) {
 
     /// This is a best effort guess and will be updated
     /// consistently to match most real world usage
-    pub const auto: Stack = switch (builtin.mode) {
+    pub const auto: Stack = switch (builtin.optimize) {
         .debug => if (is_unix) .@"256KiB" else .@"2MiB",
         .safe => if (is_unix) .@"128KiB" else .@"1MiB",
         .fast => if (is_unix) .@"32KiB" else .@"256KiB",
@@ -202,7 +204,7 @@ fn EntryFn(
                 unreachable;
             };
 
-            if (builtin.mode == .debug) {
+            if (builtin.optimize.runtimeSafety()) {
                 log.debug(
                     "Coroutine \nfn: `* const {any}`\nUsed {Bi} / {Bi} bytes of stack",
                     .{
