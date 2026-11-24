@@ -13,9 +13,9 @@ pub fn init(gpa: mem.Allocator, options: AsyncIO.Options) !Poll {
     const pipe: [2]fs.File.Handle = blk: {
         if (comptime native_os == .windows) {
             const server = try syscall.socket(
-                posix.AF.INET,
-                posix.SOCK.STREAM,
-                posix.IPPROTO.IP,
+                ws2_32.AF.INET,
+                ws2_32.SOCK.STREAM,
+                ws2_32.IPPROTO.IP,
             );
             defer syscall.close(server);
 
@@ -31,9 +31,9 @@ pub fn init(gpa: mem.Allocator, options: AsyncIO.Options) !Poll {
             );
 
             const write_end = try syscall.socket(
-                posix.AF.INET,
-                posix.SOCK.STREAM,
-                posix.IPPROTO.IP,
+                ws2_32.AF.INET,
+                ws2_32.SOCK.STREAM,
+                ws2_32.IPPROTO.IP,
             );
             errdefer syscall.close(write_end);
 
@@ -593,3 +593,4 @@ const AsyncIO = tardy.AsyncIO;
 const results = tardy.results;
 const Job = @import("job.zig").Job;
 const syscall = @import("syscall.zig");
+const ws2_32 = std.os.windows.ws2_32;

@@ -1,7 +1,7 @@
 pub const Path = union(enum) {
     /// Relative to given Directory
     rel: struct {
-        dir: posix.fd_t,
+        dir: syscall.fd_t,
         path: [:0]const u8,
     },
     /// Absolute Path
@@ -49,3 +49,6 @@ const Io = std.Io;
 
 pub const Dir = @import("fs/dir.zig");
 pub const File = @import("fs/file.zig");
+
+const tardy = @import("root.zig");
+const syscall = tardy.AsyncIO.syscall;

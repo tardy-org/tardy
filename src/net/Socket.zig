@@ -25,17 +25,17 @@ pub fn init(options: Options) !Socket {
 
 pub fn initWithAddress(options: Options, addr: Address.Config) !Socket {
     const sock_type: u32, const protocol: u32 = switch (options) {
-        .tcp => .{ posix.SOCK.STREAM, posix.IPPROTO.TCP },
-        .udp => .{ posix.SOCK.DGRAM, posix.IPPROTO.UDP },
-        .unix => .{ posix.SOCK.STREAM, posix.IPPROTO.IP },
+        .tcp => .{ SOCK.STREAM, IPPROTO.TCP },
+        .udp => .{ SOCK.DGRAM, IPPROTO.UDP },
+        .unix => .{ SOCK.STREAM, IPPROTO.IP },
     };
 
     const family: u32 = switch (addr) {
         .ip => |ip| switch (ip) {
-            .ip4 => posix.AF.INET,
-            .ip6 => posix.AF.INET6,
+            .ip4 => AF.INET,
+            .ip6 => AF.INET6,
         },
-        .unix => posix.AF.UNIX,
+        .unix => AF.UNIX,
     };
 
     const flags: u32 = if (builtin.os.tag != .windows)
@@ -56,23 +56,23 @@ pub fn initWithAddress(options: Options, addr: Address.Config) !Socket {
             // https://stackoverflow.com/a/14388707
             try syscall.setsockopt(
                 socket,
-                posix.SOL.SOCKET,
-                posix.SO.REUSEADDR,
+                SOL.SOCKET,
+                SO.REUSEADDR,
                 &mem.toBytes(@as(u32, 1)),
             );
 
-            if (@hasDecl(posix.SO, "REUSEPORT_LB")) {
+            if (@hasDecl(SO, "REUSEPORT_LB")) {
                 try syscall.setsockopt(
                     socket,
-                    posix.SOL.SOCKET,
-                    posix.SO.REUSEPORT_LB,
+                    SOL.SOCKET,
+                    SO.REUSEPORT_LB,
                     &mem.toBytes(@as(u32, 1)),
                 );
-            } else if (@hasDecl(posix.SO, "REUSEPORT")) {
+            } else if (@hasDecl(SO, "REUSEPORT")) {
                 try syscall.setsockopt(
                     socket,
-                    posix.SOL.SOCKET,
-                    posix.SO.REUSEPORT,
+                    SOL.SOCKET,
+                    SO.REUSEPORT,
                     &mem.toBytes(@as(u32, 1)),
                 );
             }
@@ -83,10 +83,10 @@ pub fn initWithAddress(options: Options, addr: Address.Config) !Socket {
     return .{
         .handle = socket,
         .addr = blk: {
-            const sockaddr, const socklen = addr.toPosix();
+            const sock_addr, const sock_len = addr.toPosix();
             break :blk .{
-                .any = sockaddr,
-                .len = socklen,
+                .any = sock_addr,
+                .len = sock_len,
             };
         },
 
@@ -175,7 +175,7 @@ pub fn accept(sock: *const Socket, rt: *Runtime) Errors.Accept!Socket {
             .unix => .unix,
         };
 
-        const new_handle: posix.socket_t = blk: while (true) {
+        const new_handle: syscall.socket_t = blk: while (true) {
             break :blk syscall.accept(
                 sock.handle,
                 &addr,
@@ -386,51 +386,48 @@ pub const Kind = enum(u8) {
 };
 
 pub const Native = extern union {
-    any: posix.sockaddr,
-    in: posix.sockaddr.in,
-    in6: posix.sockaddr.in6,
-    un: posix.sockaddr.un,
+    any: sockaddr,
+    in: sockaddr.in,
+    in6: sockaddr.in6,
+    un: sockaddr.un,
 };
 
 pub const Address = extern struct {
-    any: posix.sockaddr,
-    len: posix.socklen_t,
+    any: sockaddr,
+    len: socklen_t,
 
     pub const localhost: Address = blk: {
         const loopback: [4]u8 = .{ 127, 0, 0, 1 };
-        const in: posix.sockaddr.in = .{
+        const in: sockaddr.in = .{
             .addr = @bitCast(loopback),
             .port = 0,
         };
-        const addr: posix.sockaddr = @as(
-            *const posix.sockaddr,
-            @ptrCast(@alignCast(&in)),
-        ).*;
+        const addr: sockaddr = @as(*const sockaddr, @ptrCast(@alignCast(&in))).*;
 
         var ip4: Address = mem.zeroes(Address);
-        ip4.len = @sizeOf(posix.sockaddr.in);
+        ip4.len = @sizeOf(sockaddr.in);
         ip4.any = addr;
         break :blk ip4;
     };
 
     pub const wildcard: Address = blk: {
         var ip4: Address = mem.zeroes(Address);
-        ip4.any.family = posix.AF.INET;
-        ip4.len = @sizeOf(posix.sockaddr.in);
+        ip4.any.family = AF.INET;
+        ip4.len = @sizeOf(sockaddr.in);
         break :blk ip4;
     };
 
     pub const unix: Address = blk: {
         var un: Address = mem.zeroes(Address);
-        un.any.family = posix.AF.UNIX;
-        un.len = @sizeOf(posix.sockaddr.un);
+        un.any.family = AF.UNIX;
+        un.len = @sizeOf(sockaddr.un);
         break :blk un;
     };
 
     pub const wildcard64: Address = blk: {
         var ip6: Address = mem.zeroes(Address);
-        ip6.any.family = posix.AF.INET6;
-        ip6.len = @sizeOf(posix.sockaddr.in6);
+        ip6.any.family = AF.INET6;
+        ip6.len = @sizeOf(sockaddr.in6);
         break :blk ip6;
     };
 
@@ -444,9 +441,9 @@ pub const Address = extern struct {
 
     pub fn family(addr: Address) Family {
         return switch (addr.any.family) {
-            posix.AF.INET => .ip4,
-            posix.AF.INET6 => .ip6,
-            posix.AF.UNIX => .unix,
+            AF.INET => .ip4,
+            AF.INET6 => .ip6,
+            AF.UNIX => .unix,
             else => unreachable,
         };
     }
@@ -457,9 +454,9 @@ pub const Address = extern struct {
     }
 
     pub const Family = enum(u8) {
-        ip4 = posix.AF.INET,
-        ip6 = posix.AF.INET6,
-        unix = posix.AF.UNIX,
+        ip4 = AF.INET,
+        ip6 = AF.INET6,
+        unix = AF.UNIX,
     };
 
     const Config = union(enum) {
@@ -478,10 +475,10 @@ pub const Address = extern struct {
             }
         }
 
-        pub fn fromAny(addr: *const posix.sockaddr) Address.Config {
+        pub fn fromAny(addr: *const sockaddr) Address.Config {
             switch (addr.family) {
-                posix.AF.INET => {
-                    const sock: *const posix.sockaddr.in = @ptrCast(@alignCast(addr));
+                AF.INET => {
+                    const sock: *const sockaddr.in = @ptrCast(@alignCast(addr));
                     return .{
                         .ip = .{
                             .ip4 = .{
@@ -491,8 +488,8 @@ pub const Address = extern struct {
                         },
                     };
                 },
-                posix.AF.INET6 => {
-                    const sock6: *const posix.sockaddr.in6 = @ptrCast(@alignCast(addr));
+                AF.INET6 => {
+                    const sock6: *const sockaddr.in6 = @ptrCast(@alignCast(addr));
                     return .{
                         .ip = .{
                             .ip6 = .{
@@ -506,8 +503,8 @@ pub const Address = extern struct {
                         },
                     };
                 },
-                posix.AF.UNIX => {
-                    const sockun: *const posix.sockaddr.un = @ptrCast(@alignCast(addr));
+                AF.UNIX => {
+                    const sockun: *const sockaddr.un = @ptrCast(@alignCast(addr));
                     return .{
                         .unix = .{
                             .path = mem.sliceTo(&sockun.path, 0x0),
@@ -519,42 +516,42 @@ pub const Address = extern struct {
         }
 
         pub fn toPosix(addr: *const Address.Config) struct {
-            posix.sockaddr,
-            posix.socklen_t,
+            sockaddr,
+            socklen_t,
         } {
             switch (addr.*) {
                 .ip => |ip| {
                     switch (ip) {
                         .ip4 => |ip4| {
-                            const saddr: posix.sockaddr.in = .{
+                            const saddr: sockaddr.in = .{
                                 .addr = @bitCast(ip4.bytes),
                                 .port = mem.nativeToBig(u16, ip4.port),
                             };
-                            const raw: *const posix.sockaddr =
+                            const raw: *const sockaddr =
                                 @ptrCast(@alignCast(&saddr));
-                            return .{ raw.*, @sizeOf(posix.sockaddr.in) };
+                            return .{ raw.*, @sizeOf(sockaddr.in) };
                         },
                         .ip6 => |ip6| {
-                            const saddr: posix.sockaddr.in6 = .{
+                            const saddr: sockaddr.in6 = .{
                                 .addr = ip6.bytes,
                                 .flowinfo = ip6.flow,
                                 .scope_id = ip6.interface.index,
                                 .port = mem.nativeToBig(u16, ip6.port),
                             };
-                            const raw: *const posix.sockaddr =
+                            const raw: *const sockaddr =
                                 @ptrCast(@alignCast(&saddr));
-                            return .{ raw.*, @sizeOf(posix.sockaddr.in6) };
+                            return .{ raw.*, @sizeOf(sockaddr.in6) };
                         },
                     }
                 },
                 .unix => |un| {
-                    var saddr: posix.sockaddr.un = .{
+                    var saddr: sockaddr.un = .{
                         .path = @splat(0x0),
                     };
                     @memcpy(saddr.path[0..un.path.len], un.path[0..]);
-                    const raw: *const posix.sockaddr =
+                    const raw: *const sockaddr =
                         @ptrCast(@alignCast(&saddr));
-                    return .{ raw.*, @sizeOf(posix.sockaddr.un) };
+                    return .{ raw.*, @sizeOf(sockaddr.un) };
                 },
             }
         }
@@ -731,6 +728,7 @@ const std = @import("std");
 const debug = std.debug;
 const Io = std.Io;
 const net = Io.net;
+const ws2_32 = std.os.windows.ws2_32;
 const posix = std.posix;
 const mem = std.mem;
 pub const Handle = net.Socket.Handle;
@@ -740,6 +738,13 @@ const tardy = @import("../root.zig");
 const results = tardy.results;
 const AsyncIO = tardy.AsyncIO;
 const syscall = AsyncIO.syscall;
+const sockaddr = syscall.sockaddr;
+const socklen_t = syscall.socklen_t;
+const AF = syscall.AF;
+const SOCK = syscall.SOCK;
+const IPPROTO = syscall.IPPROTO;
+const SOL = syscall.SOL;
+const SO = syscall.SO;
 const Coroutine = tardy.Coroutine;
 const Runtime = tardy.Runtime;
 const log = std.log.scoped(.@"tardy/net/Socket");

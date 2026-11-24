@@ -1,6 +1,6 @@
 pub const Dir = @This();
 
-handle: std.posix.fd_t,
+handle: syscall.fd_t,
 
 /// Create a std.fs.Dir from a Dir.
 pub fn to_std(dir: Dir) Io.Dir {

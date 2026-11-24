@@ -1,12 +1,12 @@
 /// Ensures that the `std.posix.fd_t` is valid.
-pub fn is_valid(fd: std.posix.fd_t) bool {
+pub fn is_valid(fd: syscall.fd_t) bool {
     switch (comptime os) {
         .windows => return fd != INVALID_FD,
         else => return fd >= 0,
     }
 }
 
-pub fn to_nonblock(fd: std.posix.fd_t) !void {
+pub fn to_nonblock(fd: syscall.fd_t) !void {
     if (comptime os == .windows) {
         // windows doesn't have non-blocking I/O w/o overlapped.
     } else {
